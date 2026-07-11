@@ -4780,6 +4780,9 @@ if(success){
                         <span style="margin-left: 6px; color: #555; font-size: 13px;">移动选中到</span>
                         <select id="batchMoveSelect" style="padding: 3px 6px; border-radius: 4px; border: 1px solid #ddd; max-width: 160px;" ${selectedCount === 0 ? 'disabled' : ''}>${batchMoveOpts}</select>
                         <button class="btn btn-success btn-sm" onclick="moveSelectedChannels()" ${selectedCount === 0 ? 'disabled' : ''}>移动 (${selectedCount})</button>
+                        <span style="margin-left: 6px; color: #555; font-size: 13px;">组内排序</span>
+                        <button class="btn btn-sm" onclick="moveSelectedToEdge('top')" ${selectedCount === 0 || isNameSorted ? 'disabled' : ''} title="${isNameSorted ? '该分组为「名称自动排序」，切换为手动排序后才能整块移动' : '把选中的频道整块移到本分组最前'}">⤒ 移到最前 (${selectedCount})</button>
+                        <button class="btn btn-sm" onclick="moveSelectedToEdge('bottom')" ${selectedCount === 0 || isNameSorted ? 'disabled' : ''} title="${isNameSorted ? '该分组为「名称自动排序」，切换为手动排序后才能整块移动' : '把选中的频道整块移到本分组最后'}">⤓ 移到最后 (${selectedCount})</button>
                         <button class="btn btn-primary btn-sm" onclick="toggleBatchMode()">退出批量</button>
                     `;
                 } else {
@@ -5645,6 +5648,49 @@ if(success){
                 }
             } catch (error) {
                 showStatus('移动失败: ' + error.message, 'error');
+            }
+        }
+
+        // 批量把选中的频道整块移到当前分组的最前 / 最后（组内排序，issue #83）
+        // 相比逐个拖拽，可一次把一整批（如整源频道）作为一块塞到组首/组尾
+        async function moveSelectedToEdge(edge) {
+            if (selectedChannels.size === 0) return;
+            if (isViewingDeleted || myPlaylistData.length === 0 || selectedGroupIndex >= myPlaylistData.length) return;
+            const group = myPlaylistData[selectedGroupIndex];
+            if (!group || !Array.isArray(group.channels)) return;
+            // 名称自动排序的分组会忽略 channelOrder，整块移动不生效——直接拦住（UI 上按钮也已置灰）
+            if (myPlaylistConfig.groupSortMode && myPlaylistConfig.groupSortMode[group.name] === 'name') {
+                showStatus('该分组为「名称自动排序」，请先切换为手动排序', 'error');
+                return;
+            }
+
+            // 选中的整块与其余频道，各自保持当前显示顺序
+            const picked = group.channels.filter(c => selectedChannels.has(c.id));
+            const rest = group.channels.filter(c => !selectedChannels.has(c.id));
+            if (picked.length === 0) return;
+            group.channels = edge === 'top' ? [...picked, ...rest] : [...rest, ...picked];
+
+            // 持久化该显示分组的频道顺序（键为 原始分组::频道ID，与拖拽排序完全一致）
+            if (!myPlaylistConfig.channelOrder) myPlaylistConfig.channelOrder = {};
+            myPlaylistConfig.channelOrder[group.name] = group.channels.map(c => `${c.originalGroup}::${c.id}`);
+
+            renderGroupDetail(); // 保留批量模式与选中态，仅重渲染详情区
+
+            const n = picked.length;
+            try {
+                const response = await fetch(mpConfigUrl(), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(myPlaylistConfig)
+                });
+                const result = await response.json();
+                if (result.success) {
+                    showStatus(`已将 ${n} 个频道移到${edge === 'top' ? '最前' : '最后'}`, 'success');
+                } else {
+                    showStatus('排序保存失败', 'error');
+                }
+            } catch (error) {
+                showStatus('排序保存失败: ' + error.message, 'error');
             }
         }
 
