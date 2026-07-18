@@ -104,13 +104,15 @@ services:
 
 > 💾 **数据持久化（强烈建议）**：上面的 `volumes` + `mdataDir` 会把系统配置、咪咕账号、外部订阅源、我的频道（分组顺序/隐藏/归类/排序）等都存到宿主机的 `./data` 目录。**不挂载的话，`docker compose down`、重建容器或 `docker compose pull` 升级镜像时这些配置会全部丢失、恢复默认。**
 >
-> 若你之前已部署且容器里已有配置，升级前先备份出来再挂卷：
+> 若你之前已部署且容器里已有配置，升级前先备份出来再挂卷。**建议直接备份整个数据目录**（包含系统配置、外部订阅源、我的频道、多配置档 `my-playlist-config.*.json`、账号、EPG 源、台标缓存等全部文件，单拷个别 json 容易漏）：
 >
 > ```bash
 > mkdir -p ./data
-> docker cp iptv:/migu/system-config.json ./data/ 2>/dev/null || true
-> docker cp iptv:/migu/my-playlist-config.json ./data/ 2>/dev/null || true
-> docker cp iptv:/migu/external-sources.json ./data/ 2>/dev/null || true
+> # 较新版本镜像（数据在 /migu/data）：整目录拷出，一步到位
+> docker cp iptv:/migu/data/. ./data/ 2>/dev/null || true
+> # 旧版本镜像（数据在 /migu 根目录）：逐个拷贝配置文件
+> for f in system-config.json my-playlist-config.json my-playlist-profiles.json external-sources.json epg-sources.json users.json; do \
+>   docker cp "iptv:/migu/$f" ./data/ 2>/dev/null || true; done
 > # 然后再用带 volumes 的 compose 重新 up -d
 > ```
 
@@ -149,8 +151,10 @@ docker pull akiralereal/iptv:1.3.1
 #### 快速运行（游客模式）
 
 ```bash
-docker run -d -p 1905:1905 --name iptv akiralereal/iptv:latest
+docker run -d -p 1905:1905 -v "$(pwd)/data:/migu/data" --name iptv akiralereal/iptv:latest
 ```
+
+> `-v` 把配置持久化到宿主机 `./data`，删除/重建容器、升级镜像都不丢配置；省略它则配置只存在容器的匿名卷里，换容器即丢。
 
 #### 自定义配置运行
 
