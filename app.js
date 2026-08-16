@@ -245,7 +245,9 @@ const server = http.createServer(async (req, res) => {
           result = parseLocalContentAPI(data.contentBase64)
         } else if (data.action === 'probeStart') {
           // 失效检测（issue #88）：按源探测频道连通性。异步任务 + probeStatus 轮询，避免大订阅同步请求超时
-          const src = externalSourceManager.sources?.sources?.[data.index]
+          // 优先按源稳定 id 定位：前端排序防抖窗口内 index 可能与服务端不一致，按 index 会测错源；旧调用回退 index
+          const srcList = externalSourceManager.sources?.sources || []
+          const src = data.id ? srcList.find(s => s && s.id === data.id) : srcList[data.index]
           if (!src) {
             result = { success: false, message: '源不存在' }
           } else {
@@ -258,7 +260,7 @@ const server = http.createServer(async (req, res) => {
             }
             result = channels.length === 0
               ? { success: false, message: '该源没有可检测的频道（请先导入/保存）' }
-              : startProbe(data.index, src.name || '未命名源', channels)
+              : startProbe(srcList.indexOf(src), src.name || '未命名源', channels)
           }
         } else if (data.action === 'probeStatus') {
           result = getProbeStatus()

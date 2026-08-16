@@ -38,6 +38,8 @@ async function probeOnce(url, signal) {
     const alive = res.status >= 200 && res.status < 400
     return { status: alive ? 'alive' : 'dead', code: res.status, ttfbMs: Date.now() - started }
   } catch (e) {
+    // 外层取消（停止检测/关闭弹窗）导致的中断不算失效：纯超时时外层 signal 不会是 aborted，可区分
+    if (signal?.aborted) return { status: 'skip', code: 'cancelled', ttfbMs: null }
     return { status: 'dead', code: e?.name === 'AbortError' ? 'timeout' : (e?.cause?.code || e?.code || 'error'), ttfbMs: null }
   } finally {
     clearTimeout(timer)

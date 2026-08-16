@@ -559,6 +559,19 @@ class ExternalSourceManager {
   }
 
   /**
+   * 长耗时 await（网页抓取/订阅拉取）期间，前端整份保存（源排序/编辑）会用新数组替换 this.sources，
+   * 进入时快照的 index 与对象引用都随之失效——直接按快照回写会把结果写进错误的源并落盘。
+   * 回写前用本方法按稳定 id 在当前配置树里重新定位目标源；源已被删除时返回 null，
+   * 调用方应放弃写入（丢一次抓取结果比写错源安全）。
+   */
+  relocateSource(source) {
+    if (!source) return null
+    const cur = source.id ? this.sources.sources.find(s => s && s.id === source.id) : null
+    if (cur) return cur
+    return this.sources.sources.includes(source) ? source : null
+  }
+
+  /**
    * 添加新的外部源
    */
   addSource(sourceConfig) {
@@ -638,8 +651,10 @@ class ExternalSourceManager {
         for (const candidate of candidates) {
           const isValid = await validateM3u8(candidate, { referer: source.webUrl })
           if (isValid) {
-            this.sources.sources[index].m3u8Url = candidate
-            this.sources.sources[index].lastUpdated = new Date().toISOString()
+            const cur = this.relocateSource(source)
+            if (!cur) return { success: false, message: '源已被删除，放弃写入抓取结果' }
+            cur.m3u8Url = candidate
+            cur.lastUpdated = new Date().toISOString()
             this.saveSources()
             printGreen(`${source.name} 更新成功: ${candidate}`)
             return { success: true, m3u8Url: candidate }
@@ -647,8 +662,10 @@ class ExternalSourceManager {
         }
         // 校验失败时选择最有可能正确的链接（优先选择链接最长的，通常包含完整参数）
         const fallback = candidates.sort((a, b) => b.length - a.length)[0]
-        this.sources.sources[index].m3u8Url = fallback
-        this.sources.sources[index].lastUpdated = new Date().toISOString()
+        const cur = this.relocateSource(source)
+        if (!cur) return { success: false, message: '源已被删除，放弃写入抓取结果' }
+        cur.m3u8Url = fallback
+        cur.lastUpdated = new Date().toISOString()
         this.saveSources()
         printYellow(`${source.name} m3u8校验失败，已保存最长链接（共${candidates.length}个候选）`)
         printGrey(`  选中: ${fallback.substring(0, 100)}...`)
@@ -689,38 +706,42 @@ class ExternalSourceManager {
     try {
       printBlue(`更新订阅源: ${source.name} (${source.subscriptionUrl})`)
       const channels = await fetchAndParseM3u(source.subscriptionUrl)
-      
-      this.sources.sources[index].parsedChannels = channels
-      this.sources.sources[index].lastUpdated = new Date().toISOString()
-      this.sources.sources[index]._failCount = 0
+
+      const cur = this.relocateSource(source)
+      if (!cur) return { success: false, message: '源已被删除，放弃写入订阅结果' }
+      cur.parsedChannels = channels
+      cur.lastUpdated = new Date().toISOString()
+      cur._failCount = 0
       this.saveSources()
-      
+
       printGreen(`${source.name} 订阅更新成功，共 ${channels.length} 个频道`)
       return { success: true, channelCount: channels.length }
     } catch (error) {
       printRed(`${source.name} 订阅更新失败: ${error.message}`)
-      
+
+      // 回写前按 id 重新定位（await 期间快照 index 可能已失效）；源已被删则不写
+      const cur = this.relocateSource(source)
       // 如果已有缓存的频道数据，保留旧数据并设置短延迟避免每小时重试
-      const hasCache = Array.isArray(source.parsedChannels) && source.parsedChannels.length > 0
+      const hasCache = cur && Array.isArray(cur.parsedChannels) && cur.parsedChannels.length > 0
       if (hasCache) {
-        printYellow(`${source.name} 保留上次缓存的 ${source.parsedChannels.length} 个频道`)
+        printYellow(`${source.name} 保留上次缓存的 ${cur.parsedChannels.length} 个频道`)
         // 设置 lastUpdated 为当前时间减去 refreshInterval 的一半，避免立即重试
-        const halfInterval = ((source.refreshInterval || 1440) / 2) * 60 * 1000
-        this.sources.sources[index].lastUpdated = new Date(Date.now() - halfInterval).toISOString()
+        const halfInterval = ((cur.refreshInterval || 1440) / 2) * 60 * 1000
+        cur.lastUpdated = new Date(Date.now() - halfInterval).toISOString()
         this.saveSources()
-      } else {
+      } else if (cur) {
         // 没有缓存：递增失败计数，用于退避重试
-        const failCount = (source._failCount || 0) + 1
-        this.sources.sources[index]._failCount = failCount
+        const failCount = (cur._failCount || 0) + 1
+        cur._failCount = failCount
         // 失败超过3次后，设置短 lastUpdated 避免每小时都发起请求
         if (failCount > 3) {
           const backoffMinutes = Math.min(failCount * 30, 360) // 最长6小时退避
-          this.sources.sources[index].lastUpdated = new Date(Date.now() - ((source.refreshInterval || 1440) - backoffMinutes) * 60 * 1000).toISOString()
+          cur.lastUpdated = new Date(Date.now() - ((cur.refreshInterval || 1440) - backoffMinutes) * 60 * 1000).toISOString()
           this.saveSources()
           printYellow(`${source.name} 已连续失败 ${failCount} 次，${backoffMinutes} 分钟后重试`)
         }
       }
-      
+
       return { success: false, message: error.message }
     }
   }
@@ -761,9 +782,12 @@ class ExternalSourceManager {
     let skipped = 0
     let hasWork = false
     
-    for (let i = 0; i < this.sources.sources.length; i++) {
-      const source = this.sources.sources[i]
-      
+    // 快照当前源列表再遍历：循环里有多次 await，期间前端整份保存可能换序/增删源，
+    // 按活动数组的下标遍历会更新到错误的源。每轮更新前按 id 重新定位当前下标，源已被删则跳过。
+    const snapshot = [...this.sources.sources]
+    for (let i = 0; i < snapshot.length; i++) {
+      const source = snapshot[i]
+
       // 跳过禁用的源
       if (!source.enabled) {
         skipped++
@@ -797,15 +821,21 @@ class ExternalSourceManager {
         hasWork = true
       }
       
-      const result = await this.updateSource(i)
+      // 按 id 解析源的当前下标（await 间隔里可能被换序/删除）
+      const curIndex = this.sources.sources.findIndex(s => s === source || (source.id && s && s.id === source.id))
+      if (curIndex === -1) {
+        skipped++
+        continue
+      }
+      const result = await this.updateSource(curIndex)
       results.push({
-        index: i,
+        index: curIndex,
         name: source.name,
         ...result
       })
-      
+
       // 避免请求过快，添加延迟
-      if (i < this.sources.sources.length - 1) {
+      if (i < snapshot.length - 1) {
         await new Promise(resolve => setTimeout(resolve, 2000))
       }
     }

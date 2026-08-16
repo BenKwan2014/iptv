@@ -3080,8 +3080,8 @@
                         <span class="external-mode-badge ${modeClass}">${modeText}</span>
                         <span style="color: ${statusColor};">${statusIcon}</span>
                         <span style="margin-left:auto; display:inline-flex; gap:2px;">
-                            <button class="external-order-btn" onclick="event.stopPropagation(); moveExternalSource(${index}, -1)" ${index === 0 ? 'disabled' : ''} title="上移：列表顺序 = 播放列表输出顺序 = 播放器同名频道「源1/源2」顺序，偏好的源放前面">▲</button>
-                            <button class="external-order-btn" onclick="event.stopPropagation(); moveExternalSource(${index}, 1)" ${index === externalConfig.sources.length - 1 ? 'disabled' : ''} title="下移">▼</button>
+                            <button class="external-order-btn" onclick="event.stopPropagation(); moveExternalSource(${index}, -1)" ${index === 0 || updatingSourceIndex !== null ? 'disabled' : ''} title="上移：列表顺序 = 播放列表输出顺序 = 播放器同名频道「源1/源2」顺序，偏好的源放前面">▲</button>
+                            <button class="external-order-btn" onclick="event.stopPropagation(); moveExternalSource(${index}, 1)" ${index === externalConfig.sources.length - 1 || updatingSourceIndex !== null ? 'disabled' : ''} title="下移">▼</button>
                         </span>
                     </div>
                 `;
@@ -3103,6 +3103,9 @@
         // 只影响自定义源之间的先后；咪咕/内置源固定在自定义源之前（合并顺序：咪咕 > 内置 > 自定义）。
         let sourceOrderSaveTimer = null;
         function moveExternalSource(index, dir) {
+            // 导入/抓取进行中禁止换序：服务端按开始时的 index 快照回写结果，
+            // 换序后整份保存会让结果写进错误的源并落盘（与 importSubscription 的守卫同口径）
+            if (updatingSourceIndex !== null) { showStatus('请等待当前导入/抓取完成后再调整顺序', 'error'); return; }
             const arr = externalConfig.sources;
             const target = index + dir;
             if (!arr || target < 0 || target >= arr.length) return;
@@ -3120,10 +3123,21 @@
         async function saveExternalSourceOrder() {
             sourceOrderSaveTimer = null;
             try {
+                // 以服务端最新配置为底、按前端顺序重排后保存：页面副本可能已过期（服务端自动刷新过
+                // 订阅的 parsedChannels），整份 POST 旧副本会把服务端的新数据回滚成页面打开时的旧值
+                let payload = externalConfig;
+                try {
+                    const latestRes = await fetch(API_PREFIX + '/api/external-sources');
+                    const latest = normalizeExternalConfig(await latestRes.json());
+                    const orderIds = externalConfig.sources.map(s => s.id);
+                    const pos = id => { const i = orderIds.indexOf(id); return i === -1 ? orderIds.length : i; };
+                    latest.sources.sort((a, b) => pos(a.id) - pos(b.id));   // 稳定排序：并发新增的未知源保持相对顺序、排在最后
+                    payload = latest;
+                } catch (e) { /* 拉取失败退回旧行为：整份保存本地副本，保证排序不丢 */ }
                 const response = await fetch(API_PREFIX + '/api/external-sources', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'save', sources: externalConfig })
+                    body: JSON.stringify({ action: 'save', sources: payload })
                 });
                 const result = await response.json();
                 if (response.ok && result.success !== false) {
@@ -3162,11 +3176,15 @@
         let lastProbeData = null;
 
         async function startSourceProbe(index) {
+            const src = externalConfig.sources[index];
+            // 按源稳定 id 定位而非 index：排序防抖窗口内（或顺序保存失败后）前后端 index 可能不一致，
+            // 按 index 会检测到相邻的另一个源。未保存过的新源无 id（服务端也没有它的数据），先保存再测
+            if (!src || !src.id) { showStatus('请先保存该源再检测', 'error'); return; }
             try {
                 const res = await fetch(API_PREFIX + '/api/external-sources', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'probeStart', index })
+                    body: JSON.stringify({ action: 'probeStart', id: src.id })
                 });
                 const r = await res.json();
                 if (!r.success) { showStatus(r.message || '启动检测失败', 'error'); return; }
@@ -3198,7 +3216,8 @@
                 if (r.data.state === 'done') {
                     if (probePollTimer) { clearInterval(probePollTimer); probePollTimer = null; }
                     document.getElementById('sourceProbeCancelBtn').style.display = 'none';
-                    const hasDead = (r.data.dead || []).length > 0;
+                    // 已取消的任务不提供一键隐藏：中断时的失效清单不完整，且在途请求可能被误判
+                    const hasDead = (r.data.dead || []).length > 0 && !r.data.cancelled;
                     document.getElementById('sourceProbeHideBtn').style.display = hasDead ? 'inline-block' : 'none';
                 }
             } catch (e) { /* 单次轮询失败忽略，下一秒自动重试 */ }
@@ -3271,6 +3290,14 @@
             if (dead.length === 0) return;
             const deadUrls = new Set(dead.map(ch => ch.url).filter(Boolean));
             try {
+                // 必须确认当前档配置已成功加载：否则下面的整份 POST 会把默认空骨架存上去，清掉该档全部自定义
+                if (!myPlaylistConfigLoaded) {
+                    await loadMyPlaylistConfig();
+                    if (!myPlaylistConfigLoaded) {
+                        showStatus('当前档配置未加载成功，请刷新页面后重试', 'error');
+                        return;
+                    }
+                }
                 if (!myPlaylistOriginalData || myPlaylistOriginalData.length === 0) {
                     await loadMyPlaylist(false);
                 }
@@ -4430,6 +4457,7 @@ if(success){
         // ========== 我的频道管理 ==========
         let myPlaylistData = [];
         let myPlaylistOriginalData = []; // 原始完整数据（用于显示被删除的频道）
+        let myPlaylistConfigLoaded = false; // 当前档配置是否已从服务端成功加载（防止把默认空骨架整份 POST 覆盖真实配置）
         let myPlaylistConfig = {
             channelGroupMap: {},
             channelRenameMap: {},
@@ -4610,6 +4638,7 @@ if(success){
             selectedGroupIndex = 0;
             isViewingDeleted = false;
             lastEditedChannelId = null; // 切档清除编辑高亮，避免跨档误高亮同 id 频道 (issue #50)
+            myPlaylistConfigLoaded = false; // 切档后旧档的加载标志不可沿用
             await loadMyPlaylistConfig();
             await loadMyPlaylist();
             // 同步顶部主按钮档名 + 弹窗列表高亮（弹窗若开着）
@@ -4745,9 +4774,10 @@ if(success){
             try {
                 const response = await fetch(mpConfigUrl());
                 const result = await response.json();
-                
+
                 if (result.success) {
                     myPlaylistConfig = result.data;
+                    myPlaylistConfigLoaded = true;
                 }
             } catch (error) {
                 console.error('加载配置失败:', error);
