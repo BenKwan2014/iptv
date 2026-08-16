@@ -39,7 +39,10 @@ function findSystemChrome() {
  * @param {boolean} headless
  */
 async function launchBrowser(headless) {
-  const baseArgs = ['--no-sandbox', '--disable-setuid-sandbox']
+  // --disable-blink-features=AutomationControlled：部分站点（如 vtvgo.vn，邮件反馈）检测到
+  // 自动化特征后直接不渲染页面（白屏），关掉该特征让无头抓取与真实浏览器行为一致；
+  // --autoplay-policy：允许播放器免手势自动起播（多数直播页要起播才发起 m3u8 请求）
+  const baseArgs = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled', '--autoplay-policy=no-user-gesture-required']
 
   // 1) 显式指定
   const explicit = process.env.PUPPETEER_EXECUTABLE_PATH || process.env.mchromePath
@@ -126,9 +129,11 @@ async function extractM3u8FromWeb(url, options = {}) {
     browser = await launchBrowser(headless)
     
     const page = await browser.newPage()
-    
-    // 设置用户代理
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+
+    // 隐藏 webdriver 指纹 + 使用完整版 Chrome UA：navigator.webdriver=true 和
+    // 裸 UA（没有 Chrome/xx 版本号）是站点识别无头爬虫的两大特征，命中后有的站直接白屏（vtvgo.vn 实测）
+    await page.evaluateOnNewDocument(() => { Object.defineProperty(navigator, 'webdriver', { get: () => undefined }) })
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36')
     
     // 监听网络请求，捕获 m3u8 链接
     const m3u8Links = []
@@ -165,9 +170,33 @@ async function extractM3u8FromWeb(url, options = {}) {
     }
     
     // 等待 m3u8 链接出现
-    printBlue(`等待 m3u8 链接...`)  
+    printBlue(`等待 m3u8 链接...`)
     await new Promise(resolve => setTimeout(resolve, waitTime))
-    
+
+    // 仍没嗅探到 m3u8：多数直播页要一次「播放」动作才开始拉流。未配置播放按钮选择器时，
+    // 兜底尝试常见播放器的播放按钮，或直接对 video 元素静音起播，再多等几秒
+    if (m3u8Links.length === 0 && !playButtonSelector) {
+      const triggered = await page.evaluate(() => {
+        const selectors = ['.vjs-big-play-button', '.jw-display-icon-display', '.dplayer-play-icon', '[class*="btn-play"]', '[class*="play-btn"]', '[class*="play_btn"]']
+        for (const s of selectors) {
+          const el = document.querySelector(s)
+          if (el) { el.click(); return s }
+        }
+        const v = document.querySelector('video')
+        if (v) {
+          v.muted = true
+          const p = v.play()
+          if (p && p.catch) p.catch(() => {})
+          return 'video.play()'
+        }
+        return null
+      }).catch(() => null)
+      if (triggered) {
+        printBlue(`尝试触发播放: ${triggered}`)
+        await new Promise(resolve => setTimeout(resolve, 4000))
+      }
+    }
+
     // 也可以尝试查找页面中的 m3u8 链接。URL 里不可能出现原始的 "<>\"'" 字符，用它们
     // 作为边界，避免把地址后面的引号/标签一起吞进来。
     const { videoSrcLinks, textLinks } = await page.evaluate(() => {
