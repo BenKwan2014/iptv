@@ -131,4 +131,22 @@ check('繁体 → 简体 归一（issue #62）', () => {
   assert.equal(logoMatchName('體育'), '体育')                // 台标匹配名也转简体
 })
 
+// 8) issue #97：凤凰系长短名收敛，内置长名（凤凰卫视中文台）与外部 EPG 短名（凤凰中文）能配对
+check('凤凰系长短名收敛（issue #97）', () => {
+  // 内置列表长名 ↔ 肥羊 EPG 短名
+  assert.equal(normalizeKey('凤凰卫视中文台'), normalizeKey('凤凰中文'))
+  assert.equal(normalizeKey('凤凰卫视资讯台'), normalizeKey('凤凰资讯'))
+  assert.equal(normalizeKey('凤凰卫视香港台'), normalizeKey('凤凰香港'))
+  assert.equal(normalizeKey('凤凰卫视电影台'), normalizeKey('凤凰电影'))
+  // 中间写法与繁体也收敛到同一 key
+  assert.equal(normalizeKey('凤凰资讯台'), normalizeKey('凤凰资讯'))
+  assert.equal(normalizeKey('鳳凰衛視資訊台'), normalizeKey('凤凰资讯'))
+  assert.equal(normalizeKey('鳳凰衛視中文台'), normalizeKey('凤凰中文'))
+  assert.equal(normalizeKey('凤凰中文HD'), normalizeKey('凤凰卫视中文台'))
+  // 不同凤凰频道互不误并；裸「凤凰卫视」不收敛到任何具体频道
+  assert.notEqual(normalizeKey('凤凰中文'), normalizeKey('凤凰资讯'))
+  assert.notEqual(normalizeKey('凤凰卫视'), normalizeKey('凤凰中文'))
+  assert.notEqual(normalizeKey('凤凰卫视'), normalizeKey('凤凰资讯'))
+})
+
 console.log(`\n全部通过：${passed} 组 ✅`)

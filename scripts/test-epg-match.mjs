@@ -69,4 +69,19 @@ check('多 display-name 别名都建入映射', () => {
   assert.ok(map.get('hunan').has(normalizeKey('湖南卫视')))
 })
 
-console.log(`\n全部通过：${passed}/4 ✅`)
+// 5) issue #97：肥羊等外部 EPG 用凤凰短名（凤凰中文/凤凰资讯），播放列表用长名（凤凰卫视中文台），归一后仍能命中
+const xmlPhoenix = `<tv>
+  <channel id="凤凰中文"><display-name>凤凰中文</display-name></channel>
+  <channel id="凤凰资讯"><display-name>凤凰资讯</display-name></channel>
+  <programme channel="凤凰中文" start="1"><title>凤凰早班车</title></programme>
+  <programme channel="凤凰资讯" start="1"><title>时事直通车</title></programme>
+  <programme channel="凤凰资讯" start="2"><title>凤凰全球连线</title></programme>
+</tv>`
+check('凤凰长短名（凤凰卫视中文台 ↔ 凤凰中文）：命中', () => {
+  const wanted = new Set([normalizeKey('凤凰卫视中文台'), normalizeKey('凤凰卫视资讯台')])
+  const byKey = parseProgrammes(xmlPhoenix, wanted)
+  assert.equal(byKey.get(normalizeKey('凤凰卫视中文台'))?.length, 1)
+  assert.equal(byKey.get(normalizeKey('凤凰卫视资讯台'))?.length, 2)
+})
+
+console.log(`\n全部通过：${passed}/5 ✅`)
