@@ -2047,7 +2047,7 @@
                     <div class="system-config-item">
                         <label>公网地址</label>
                         <input type="text" id="sysHost" placeholder="http://example.com:xxxx">
-                        <div class="system-config-hint">选填，未指定端口时自动使用上方的服务端口</div>
+                        <div class="system-config-hint">选填。填 <code>http(s)://…</code> 完整地址时<strong>原样使用</strong>（不写端口即 80/443，适合内网穿透/反向代理）；只填 ip/域名则自动补 http:// 和上方的服务端口</div>
                     </div>
                     <div class="system-config-item">
                         <label>访问密码</label>
@@ -4310,9 +4310,15 @@ if(success){
                 const port = parseInt(document.getElementById('sysPort').value) || 1905;
                 let host = document.getElementById('sysHost').value.trim();
                 
-                // 智能处理公网地址：如果没有指定端口，自动添加服务端口
-                if (host && !host.match(/:\d+$/)) {
-                    host = `${host}:${port}`;
+                // 智能处理公网地址（邮件反馈：内网穿透/反代走 80/443 时不能强补端口）：
+                // - 带 http(s):// 的完整地址：原样使用，不补端口（未写端口即标准端口 80/443）
+                // - 只填 ip/域名（无协议）：补 http:// 与服务端口（保持旧行为，NAT 直转场景开箱即用）
+                // 注意：老用户此前保存的值已把端口拼进存储值（如 http://x.com:1905），再次保存不受影响
+                if (host && !/^https?:\/\//i.test(host)) {
+                    host = `http://${host}`;
+                    if (!host.match(/:\d+$/)) {
+                        host = `${host}:${port}`;
+                    }
                 }
                 
                 const adminPathInput = document.getElementById('sysAdminPath').value;
