@@ -323,6 +323,7 @@ A：这是 **H.265（HEVC）编码兼容性**问题——咪咕视频流默认�
 | madminPath | admin | string | 管理页面自定义路径，如填 `console` 则用 `/console` 访问后台（`/admin` 失效）<br>保留字 api/player/favicon.ico 与非法值会回退 admin |
 | menableHDR | true | boolean | 是否开启 HDR（vivid/4kvivid）<br>设 `false` 关闭 |
 | menableH265 | true | boolean | 是否开启 H.265 原画<br>有兼容性问题（如浏览器无画面）时设 `false` 关闭 |
+| menableClientDispatch | false | boolean | 咪咕客户端就近取流：**服务器与观看设备不同运营商**（如服务器移动宽带、电视联通网络）导致咪咕频道跨网卡顿 / 播不了时设 `true`<br>开启后播放地址由播放器所在网络就近选择 CDN 节点；同网部署无需开启 |
 | mupdateInterval | 8 | number | 节目单 / 源更新间隔（小时），不建议过短 |
 | mrefreshToken | true | boolean | 是否每月刷新咪咕 token<br>**可能导致封号**，可设 `false` 关闭 |
 | mblank | false | boolean | 空白模式总开关，设 `true` 后下面三项内容开关**默认翻转为关**（一行得到空白部署）<br>细粒度开关显式设值时优先于本项，如 `mblank=true` + `menableMigu=true` 可单独保留咪咕 |

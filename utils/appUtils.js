@@ -1,7 +1,7 @@
 import { get302URL, getAndroidURL, getAndroidURL720p, printLoginInfo } from "./androidURL.js";
 import { readFileSync } from "./fileUtil.js";
 import { dataPath } from "./paths.js";
-import { host, pass, rateType, token, userId, enableTvgNormalize } from "../config.js";
+import { host, pass, rateType, token, userId, enableTvgNormalize, enableClientDispatch } from "../config.js";
 import { printDebug, printGreen, printGrey, printRed, printYellow } from "./colorOut.js";
 import { readConfig, parseInterfaceTxt, applyConfig, generateM3u8, generateTxt } from "./playlistConfig.js";
 
@@ -188,9 +188,16 @@ async function channel(url, urlUserId, urlToken) {
   printDebug(`添加加密字段后链接 ${resObj.url}`)
 
   if (resObj.url != "") {
-    const location = await get302URL(resObj)
-    if (location != "") {
-      resObj.url = location
+    // 客户端就近取流（issue #82）：不在服务端解析调度地址，直接把 gslbmgsplive 调度地址 302 给播放器，
+    // 由观看设备的网络就近分配 CDN 节点——服务器与观看设备运营商不同时，服务端解析会拿到「服务器侧运营商」
+    // 的节点，跨网访问卡顿/播不了。调度地址与解析后节点地址携带同一组鉴权参数，时效一致，缓存逻辑照用。
+    if (enableClientDispatch) {
+      printDebug("客户端就近取流：跳过服务端节点解析，直接下发调度地址")
+    } else {
+      const location = await get302URL(resObj)
+      if (location != "") {
+        resObj.url = location
+      }
     }
   }
   printLoginInfo(resObj)

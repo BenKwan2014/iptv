@@ -2027,6 +2027,13 @@
                     </div>
                     <div class="system-config-item">
                         <label>
+                            <input type="checkbox" id="sysEnableClientDispatch">
+                            咪咕客户端就近取流（跨运营商观看时开启）
+                        </label>
+                        <div class="system-config-hint">💡 适用场景：<strong>服务器和观看设备不在同一运营商网络</strong>（如服务器接移动宽带、电视用联通网络）时，咪咕频道加载慢 / 播不了。开启后播放地址交给<strong>播放器所在网络</strong>就近选择 CDN 节点，跨网观看即可流畅。同网部署无需开启（默认关）；保存后即时生效，无需重启。</div>
+                    </div>
+                    <div class="system-config-item">
+                        <label>
                             <input type="checkbox" id="sysEnableDisplayNameUnify">
                             统一频道显示名（合并不同源的同台命名）
                         </label>
@@ -3865,6 +3872,7 @@
             document.getElementById('sysEnableBuiltInSources').checked = systemConfig.enableBuiltInSources !== false;
             document.getElementById('sysEnableBuiltInSubscriptions').checked = systemConfig.enableBuiltInSubscriptions !== false;
             document.getElementById('sysEnableDisplayNameUnify').checked = systemConfig.enableDisplayNameUnify === true;
+            document.getElementById('sysEnableClientDispatch').checked = systemConfig.enableClientDispatch === true;
             renderEnvOverrideWarning();
         }
 
@@ -3876,7 +3884,8 @@
                 userId: '咪咕账号ID', token: '咪咕Token', port: '端口', host: '公网地址',
                 rateType: '画质', pass: '访问密码', enableHDR: 'HDR', enableH265: 'H.265',
                 programInfoUpdateInterval: '更新间隔', refreshToken: 'token刷新', adminPath: '管理页面路径',
-                enableMigu: '启用咪咕源', enableBuiltInSources: '启用内置单频道源', enableBuiltInSubscriptions: '启用内置订阅源'
+                enableMigu: '启用咪咕源', enableBuiltInSources: '启用内置单频道源', enableBuiltInSubscriptions: '启用内置订阅源',
+                enableClientDispatch: '客户端就近取流'
             };
             const overrides = systemConfig.envOverrides || {};
             const names = Object.keys(overrides).filter(k => overrides[k]).map(k => labels[k] || k);
@@ -4023,7 +4032,8 @@ if(success){
                     enableMigu: document.getElementById('sysEnableMigu').checked,
                     enableBuiltInSources: document.getElementById('sysEnableBuiltInSources').checked,
                     enableBuiltInSubscriptions: document.getElementById('sysEnableBuiltInSubscriptions').checked,
-                    enableDisplayNameUnify: document.getElementById('sysEnableDisplayNameUnify').checked
+                    enableDisplayNameUnify: document.getElementById('sysEnableDisplayNameUnify').checked,
+                    enableClientDispatch: document.getElementById('sysEnableClientDispatch').checked
                 };
 
                 const response = await fetch(API_PREFIX + '/api/system-config', {

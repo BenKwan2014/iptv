@@ -7,7 +7,7 @@ import {
   reloadConfig, sanitizeSegment,
   userId, token, port, host, rateType, pass,
   enableHDR, enableH265, programInfoUpdateInterval, refreshToken, adminPath,
-  enableMigu, enableBuiltInSources, enableBuiltInSubscriptions, enableDisplayNameUnify
+  enableMigu, enableBuiltInSources, enableBuiltInSubscriptions, enableDisplayNameUnify, enableClientDispatch
 } from "../config.js"
 
 const SYSTEM_CONFIG_PATH = dataPath('system-config.json')
@@ -31,7 +31,8 @@ const ENV_KEY_MAP = {
   enableMigu: 'menableMigu',
   enableBuiltInSources: 'menableBuiltInSources',
   enableBuiltInSubscriptions: 'menableBuiltInSubscriptions',
-  enableDisplayNameUnify: 'menableDisplayNameUnify'
+  enableDisplayNameUnify: 'menableDisplayNameUnify',
+  enableClientDispatch: 'menableClientDispatch'
 }
 
 // 解析环境变量布尔（与 config.js parseBool 同义）：用于判断 mblank 空白模式是否由 env 开启
@@ -72,7 +73,8 @@ export function getSystemConfigAPI() {
         enableMigu,
         enableBuiltInSources,
         enableBuiltInSubscriptions,
-        enableDisplayNameUnify
+        enableDisplayNameUnify,
+        enableClientDispatch
       },
       envOverrides,
       // 空白模式总开关是否由环境变量 mblank 开启（前端据此提示：内容开关默认关闭，可在此单独打开覆盖）
@@ -132,6 +134,10 @@ export function saveSystemConfigAPI(config) {
     }
     if (config.enableDisplayNameUnify !== undefined) {
       validated.enableDisplayNameUnify = config.enableDisplayNameUnify === true
+    }
+    // 客户端就近取流（issue #82）：默认关，显式提交才写入；保存后 clearUrlCache 会清掉旧解析结果，开关即时生效
+    if (config.enableClientDispatch !== undefined) {
+      validated.enableClientDispatch = config.enableClientDispatch === true
     }
 
     // 原子写入，避免并发保存 / 写入中断损坏文件
