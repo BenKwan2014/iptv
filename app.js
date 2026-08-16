@@ -23,6 +23,7 @@ import { readConfig, saveConfig, parseInterfaceTxt, validateGroupConfig, applyCo
          listProfiles, createProfile, renameProfile, deleteProfile } from "./utils/playlistConfig.js";
 import { updateBuiltInSources, updateExternalSources, externalSourceManager, builtInSourceManager } from "./utils/channelMerger.js";
 import { GITHUB_RAW_MIRRORS, isBuiltInSubscriptionSource } from "./utils/externalSources.js";
+import { startProbe, getProbeStatus, cancelProbe } from "./utils/sourceProbe.js";
 
 // 运行时长
 var hours = 0
@@ -242,6 +243,27 @@ const server = http.createServer(async (req, res) => {
           result = await importSubscriptionAPI(data.index)
         } else if (data.action === 'parseLocalContent') {
           result = parseLocalContentAPI(data.contentBase64)
+        } else if (data.action === 'probeStart') {
+          // 失效检测（issue #88）：按源探测频道连通性。异步任务 + probeStatus 轮询，避免大订阅同步请求超时
+          const src = externalSourceManager.sources?.sources?.[data.index]
+          if (!src) {
+            result = { success: false, message: '源不存在' }
+          } else {
+            const channels = []
+            if (src.mode === 'subscription' && Array.isArray(src.parsedChannels)) {
+              for (const ch of src.parsedChannels) channels.push({ name: ch.name, url: ch.url, group: ch.group })
+            } else if (src.m3u8Url) {
+              // 直连/抓取模式：检测当前 m3u8 地址
+              channels.push({ name: src.name || '未命名源', url: src.m3u8Url, group: src.group })
+            }
+            result = channels.length === 0
+              ? { success: false, message: '该源没有可检测的频道（请先导入/保存）' }
+              : startProbe(data.index, src.name || '未命名源', channels)
+          }
+        } else if (data.action === 'probeStatus') {
+          result = getProbeStatus()
+        } else if (data.action === 'probeCancel') {
+          result = cancelProbe()
         } else {
           result = { success: false, message: '未知操作' }
         }

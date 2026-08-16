@@ -1825,7 +1825,20 @@
             </div>
         </div>
     </div>
-    
+
+    <!-- 外部源失效检测弹窗（issue #88） -->
+    <div class="modal" id="sourceProbeModal">
+        <div class="modal-content" style="width: 720px; max-width: 92%;">
+            <h3 id="sourceProbeTitle">失效检测</h3>
+            <div id="sourceProbeContent" style="max-height: 72vh; overflow-y: auto;"></div>
+            <div class="modal-actions" style="margin-top: 20px;">
+                <button class="btn btn-secondary" onclick="closeSourceProbe()">关闭</button>
+                <button class="btn btn-danger" id="sourceProbeCancelBtn" style="display: none;" onclick="cancelSourceProbe()">⏹ 停止检测</button>
+                <button class="btn btn-primary" id="sourceProbeHideBtn" style="display: none;" onclick="hideProbeDeadChannels()">🙈 一键隐藏失效频道（当前档）</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Bookmarklet 添加引导弹窗 -->
     <div class="modal" id="bookmarkletGuideModal">
         <div class="modal-content" style="width: 700px; max-width: 90%;">
@@ -3142,6 +3155,159 @@
             return `<span class="channel-source-badge" title="来自：${escapeHtml(names.join('、'))}">${escapeHtml(label)}</span>`;
         }
 
+        // ===== 外部源失效检测（issue #88）=====
+        // 服务端异步探测（连通性 + 重试 + 并发池，不下载流体），前端轮询进度；
+        // 结果只标记、支持一键隐藏到当前档，绝不自动删除（防盗链源可能误报）。
+        let probePollTimer = null;
+        let lastProbeData = null;
+
+        async function startSourceProbe(index) {
+            try {
+                const res = await fetch(API_PREFIX + '/api/external-sources', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'probeStart', index })
+                });
+                const r = await res.json();
+                if (!r.success) { showStatus(r.message || '启动检测失败', 'error'); return; }
+                lastProbeData = null;
+                document.getElementById('sourceProbeTitle').textContent = `失效检测 - ${externalConfig.sources[index]?.name || '未命名源'}`;
+                document.getElementById('sourceProbeContent').innerHTML = '<div style="padding:20px; color:#666;">正在启动检测…</div>';
+                document.getElementById('sourceProbeHideBtn').style.display = 'none';
+                document.getElementById('sourceProbeCancelBtn').style.display = 'inline-block';
+                document.getElementById('sourceProbeModal').style.display = 'block';
+                if (probePollTimer) clearInterval(probePollTimer);
+                probePollTimer = setInterval(pollProbeStatus, 1000);
+                pollProbeStatus();
+            } catch (e) {
+                showStatus('启动检测失败: ' + e.message, 'error');
+            }
+        }
+
+        async function pollProbeStatus() {
+            try {
+                const res = await fetch(API_PREFIX + '/api/external-sources', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'probeStatus' })
+                });
+                const r = await res.json();
+                if (!r.success || !r.data || r.data.state === 'idle') return;
+                lastProbeData = r.data;
+                renderProbePanel(r.data);
+                if (r.data.state === 'done') {
+                    if (probePollTimer) { clearInterval(probePollTimer); probePollTimer = null; }
+                    document.getElementById('sourceProbeCancelBtn').style.display = 'none';
+                    const hasDead = (r.data.dead || []).length > 0;
+                    document.getElementById('sourceProbeHideBtn').style.display = hasDead ? 'inline-block' : 'none';
+                }
+            } catch (e) { /* 单次轮询失败忽略，下一秒自动重试 */ }
+        }
+
+        function renderProbePanel(d) {
+            const box = document.getElementById('sourceProbeContent');
+            if (!box) return;
+            const pct = d.total > 0 ? Math.round(d.done / d.total * 100) : 0;
+            const s = d.summary || { alive: 0, dead: 0, skip: 0 };
+            let html = `
+                <div style="margin-bottom:12px;">
+                    <div style="display:flex; justify-content:space-between; font-size:13px; color:#555; margin-bottom:6px;">
+                        <span>${d.state === 'running' ? '⏳ 检测中' : (d.cancelled ? '⏹ 已停止' : '✅ 检测完成')} ${d.done}/${d.total}</span>
+                        <span>✅ 存活 ${s.alive} · ❌ 失效 ${s.dead} · ⏭️ 跳过 ${s.skip}</span>
+                    </div>
+                    <div style="height:8px; background:#f0f0f0; border-radius:4px; overflow:hidden;">
+                        <div style="height:100%; width:${pct}%; background:#52c41a; transition:width .3s;"></div>
+                    </div>
+                </div>`;
+            if (d.state === 'done') {
+                if (typeof s.aliveTtfbMedianMs === 'number') {
+                    html += `<div style="font-size:12px; color:#888; margin-bottom:10px;">存活频道首字节延迟中位数：${s.aliveTtfbMedianMs} ms（服务器侧参考值，同网部署越小越流畅）</div>`;
+                }
+                const dead = d.dead || [];
+                if (dead.length > 0) {
+                    html += `<div style="font-weight:600; margin-bottom:6px;">❌ 失效频道（${dead.length}）</div>`;
+                    html += '<div style="border:1px solid #eee; border-radius:6px; max-height:320px; overflow-y:auto;">';
+                    html += dead.map(ch => `
+                        <div style="display:flex; gap:8px; align-items:center; padding:6px 10px; border-bottom:1px solid #f5f5f5; font-size:13px;">
+                            <span style="color:#cf1322; background:#fff1f0; border-radius:4px; padding:0 6px; font-size:11px; white-space:nowrap;">${escapeHtml(String(ch.code))}</span>
+                            <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(ch.url || '')}">${escapeHtml(ch.name || '未命名')}</span>
+                            <span style="color:#999; font-size:12px;">${escapeHtml(ch.group || '')}</span>
+                        </div>`).join('');
+                    html += '</div>';
+                } else if (!d.cancelled) {
+                    html += '<div style="padding:16px; color:#52c41a;">🎉 没有检测到失效频道</div>';
+                }
+                const skipList = d.skip || [];
+                if (skipList.length > 0) {
+                    html += `<div style="font-size:12px; color:#888; margin-top:10px;">⏭️ 跳过 ${skipList.length} 个非 HTTP 频道（rtmp/rtp/udp 等无法探测，保留不动）</div>`;
+                }
+                html += `<div style="font-size:12px; color:#d46b08; background:#fff7e6; border-radius:6px; padding:8px 10px; margin-top:12px;">
+                    ⚠️ 检测只看连通性：带 UA/Referer/token 防盗链的源可能被误判失效，请以实际播放为准。「一键隐藏」只隐藏不删除，可随时在「已隐藏」里恢复。
+                </div>`;
+            }
+            box.innerHTML = html;
+        }
+
+        async function cancelSourceProbe() {
+            try {
+                await fetch(API_PREFIX + '/api/external-sources', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'probeCancel' })
+                });
+            } catch (e) { /* 忽略：轮询会把最终态带回来 */ }
+        }
+
+        function closeSourceProbe() {
+            // 检测仍在跑时关闭弹窗 = 取消任务（后台单任务态，不取消会挡住下一次检测）
+            if (lastProbeData && lastProbeData.state === 'running') cancelSourceProbe();
+            if (probePollTimer) { clearInterval(probePollTimer); probePollTimer = null; }
+            document.getElementById('sourceProbeModal').style.display = 'none';
+        }
+
+        // 把检测出的失效频道批量加入当前档 hiddenChannels（按 URL 匹配到播放列表频道），只隐藏不删除
+        async function hideProbeDeadChannels() {
+            const dead = (lastProbeData && lastProbeData.dead) || [];
+            if (dead.length === 0) return;
+            const deadUrls = new Set(dead.map(ch => ch.url).filter(Boolean));
+            try {
+                if (!myPlaylistOriginalData || myPlaylistOriginalData.length === 0) {
+                    await loadMyPlaylist(false);
+                }
+                let added = 0;
+                for (const group of myPlaylistOriginalData) {
+                    for (const ch of (group.channels || [])) {
+                        if (ch.url && deadUrls.has(ch.url)) {
+                            const key = `${group.name}::${ch.id}`;
+                            if (!myPlaylistConfig.hiddenChannels.includes(key)) {
+                                myPlaylistConfig.hiddenChannels.push(key);
+                                added++;
+                            }
+                        }
+                    }
+                }
+                if (added === 0) {
+                    showStatus('失效频道不在当前档列表中（可能已被隐藏或按档过滤）', 'info');
+                    return;
+                }
+                const response = await fetch(mpConfigUrl(), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(myPlaylistConfig)
+                });
+                const result = await response.json();
+                if (result.success) {
+                    await loadMyPlaylist(false);
+                    showStatus(`已隐藏 ${added} 个失效频道（仅当前档），可在「已隐藏」里恢复`, 'success');
+                    document.getElementById('sourceProbeHideBtn').style.display = 'none';
+                } else {
+                    showStatus(result.message || '隐藏失败', 'error');
+                }
+            } catch (e) {
+                showStatus('隐藏失败: ' + e.message, 'error');
+            }
+        }
+
         // 获取咪咕源的所有分组
         function getMiguGroups() {
             const groups = new Set();
@@ -3361,6 +3527,7 @@
                             <button class="btn btn-small btn-primary" onclick="importSubscription(${index})" ${updatingSourceIndex === index ? 'disabled' : ''}>
                                 ${updatingSourceIndex === index ? '🔄 导入中...' : '📥 导入并保存'}
                             </button>
+                            <button class="btn btn-small" onclick="startSourceProbe(${index})" ${updatingSourceIndex === index || channelCount === 0 ? 'disabled' : ''} title="检测该源全部频道的连通性，标出失效频道（只标记不删除；防盗链源可能误报，以实际播放为准）">🩺 检测失效</button>
                             <button class="btn btn-small btn-danger" onclick="removeExternalSource(${index})" ${updatingSourceIndex === index ? 'disabled' : ''}>🗑️ 删除</button>
                         </div>
                     </div>
@@ -3405,6 +3572,7 @@
                             <button class="btn btn-small btn-success" onclick="saveDirectSource(${index})">
                                 💾 保存
                             </button>
+                            <button class="btn btn-small" onclick="startSourceProbe(${index})" ${source.m3u8Url ? '' : 'disabled'} title="检测当前直播链接的连通性（只标记不删除；防盗链源可能误报，以实际播放为准）">🩺 检测失效</button>
                             <button class="btn btn-small btn-danger" onclick="removeExternalSource(${index})">🗑️ 删除</button>
                         </div>
                     </div>
