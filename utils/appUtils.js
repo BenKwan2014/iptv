@@ -14,7 +14,50 @@ function clearUrlCache() {
   for (const k in urlCache) delete urlCache[k]
 }
 
-function interfaceStr(url, headers, urlUserId, urlToken, profile, accessPrefix) {
+// 把 HLS 清单里的相对路径改写为绝对地址（issue #98 清单直出用）。
+// 覆盖两类位置：URI 行（非 # 开头的行）与标签内的 URI="..." 属性（EXT-X-KEY/MEDIA/MAP 等）。
+// 纯字符串处理、无副作用，便于单测。
+function rewriteManifest(text, finalUrl) {
+  return text.split('\n').map(line => {
+    const t = line.trim()
+    if (!t) return line
+    if (t.startsWith('#')) {
+      return line.replace(/URI="([^"]*)"/g, (whole, uri) => {
+        try { return `URI="${new URL(uri, finalUrl).href}"` } catch { return whole }
+      })
+    }
+    try { return new URL(t, finalUrl).href } catch { return line }
+  }).join('\n')
+}
+
+// 清单直出（issue #98）：极空间极影视等播放器不跟随 302 跳转，播放一直转圈。
+// 此模式由服务端替播放器取回 HLS 清单，相对路径改写成绝对地址后直接 200 返回；
+// 子清单与视频分片仍由播放器直连 CDN，服务器只经手清单文本，不占带宽。
+// 注意：清单由服务端取回，节点由服务端网络选择，与「客户端就近取流」语义互斥——
+// 兼容模式面向 NAS 与播放设备同一网络的家庭场景，正好不需要就近取流。
+// 返回 null 表示取清单失败或内容不是 HLS，调用方应回退 302。
+async function fetchManifestDirect(playURL) {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 8000)
+  try {
+    const resp = await fetch(playURL, {
+      redirect: 'follow',
+      signal: ctrl.signal,
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36' },
+    })
+    if (!resp.ok) return null
+    const text = await resp.text()
+    if (!text.trimStart().startsWith('#EXTM3U')) return null
+    return rewriteManifest(text, resp.url || playURL)
+  } catch (error) {
+    printDebug(`清单直出取回失败，回退 302: ${error.message}`)
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+function interfaceStr(url, headers, urlUserId, urlToken, profile, accessPrefix, relay) {
 
   let result = {
     content: null,
@@ -123,6 +166,15 @@ function interfaceStr(url, headers, urlUserId, urlToken, profile, accessPrefix) 
   // 咪咕 VIP 账号经 URL 注入（站长用 /<pass>/<userId>/<token>/m3u 的场景）；用户令牌请求已剥离成无账号段，不触发
   if (urlUserId != userId && urlToken != token) {
     replaceHost = `${replaceHost}/${urlUserId}/${urlToken}`
+  }
+
+  // 兼容版订阅（?relay=1，issue #98）：频道地址改为 /relay/<pid> 清单直出路径，
+  // 供不跟随 302 跳转的播放器（极空间极影视、部分老电视盒）使用。
+  // 只匹配「${replace}/纯数字」的咪咕频道地址；x-tvg-url 的 playback.xml、外部源直链不受影响。
+  // 用路径前缀而非 query 参数：m3u 头的 catchup-source 以 "?" 开头直接拼在频道地址后，
+  // query 方案会拼出双问号破坏回看，路径方案天然兼容。
+  if (relay) {
+    result.content = `${result.content}`.replace(/\$\{replace\}\/(\d+)/g, '${replace}/relay/$1')
   }
 
   // 剥离内部属性 source-ids（issue #29/#68 源归属标记）后再输出给播放器：
@@ -281,4 +333,4 @@ function channelCache(pid, params) {
   return cache
 }
 
-export { interfaceStr, channel, channelCache, clearUrlCache }
+export { interfaceStr, channel, channelCache, clearUrlCache, fetchManifestDirect, rewriteManifest }

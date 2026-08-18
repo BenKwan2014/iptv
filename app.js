@@ -6,7 +6,7 @@ import { adminPath, host, pass, port, programInfoUpdateInterval, token, userId, 
 import { getDateTimeStr } from "./utils/time.js";
 import update from "./utils/updateData.js";
 import { printBlue, printGreen, printMagenta, printRed, printYellow } from "./utils/colorOut.js";
-import { channel, interfaceStr } from "./utils/appUtils.js";
+import { channel, interfaceStr, fetchManifestDirect } from "./utils/appUtils.js";
 import { dataPath } from "./utils/paths.js";
 import { getChannelsAPI, getExternalSourcesAPI, saveExternalSourcesAPI,
          addExternalSourceAPI, removeExternalSourceAPI, updateExternalSourceAPI,
@@ -725,6 +725,16 @@ const server = http.createServer(async (req, res) => {
     routeUrl += url.substring(queryIndex)
   }
 
+  // 清单直出兼容模式（issue #98）：/relay/<pid> 的 relay 段必须在下方「/userId/token」
+  // 两段解析之前剥掉，否则会被误当成账号注入前缀（relay 当 userId、pid 当 token）返回订阅内容。
+  // 支持前面带账号注入段的组合（/userId/token/relay/<pid>），剥掉 relay 段、其余原样保留。
+  let relayMode = false
+  const relayMatch = routeUrl.match(/^(.*)\/relay\/(\d+(?:\?.*)?)$/)
+  if (relayMatch) {
+    relayMode = true
+    routeUrl = `${relayMatch[1]}/${relayMatch[2]}`
+  }
+
   let urlToken = ""
   let urlUserId = ""
   // 匹配是否存在用户信息 /userId/token/...
@@ -772,7 +782,9 @@ const server = http.createServer(async (req, res) => {
   if (interfaceList.indexOf(routeUrlPath) !== -1) {
     // 用户绑定了档则用其绑定档（一人一内容），否则用 query 的 ?profile=
     const effectiveProfile = (currentUser && currentUser.profile) ? currentUser.profile : profileParam
-    const interfaceObj = interfaceStr(routeUrlPath, headers, urlUserId, urlToken, effectiveProfile, accessPrefix)
+    // 兼容版订阅（issue #98）：?relay=1 时频道地址输出为 /relay/<pid> 清单直出路径
+    const relayParam = /[?&]relay=1(?:&|$)/.test(routeUrl)
+    const interfaceObj = interfaceStr(routeUrlPath, headers, urlUserId, urlToken, effectiveProfile, accessPrefix, relayParam)
     if (interfaceObj.content == null) {
       interfaceObj.content = "获取失败"
     }
@@ -788,7 +800,8 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
-  // 频道
+  // 频道（relayMode = 清单直出兼容模式，issue #98：极影视等播放器不跟随 302 跳转；
+  // relay 段已在「/userId/token」解析前剥离，此处 routeUrl 即普通频道地址）
   const result = await channel(routeUrl, urlUserId, urlToken)
 
   // 结果异常
@@ -802,7 +815,21 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
-  res.writeHead(result.code, {
+  if (relayMode) {
+    // 服务端取回清单、相对路径改写为绝对地址后直出，播放器无需跟随任何跳转
+    const manifest = await fetchManifestDirect(result.playURL)
+    if (manifest != null) {
+      res.writeHead(200, {
+        'Content-Type': 'application/vnd.apple.mpegurl',
+        'Access-Control-Allow-Origin': '*',
+      });
+      res.end(manifest)
+      return
+    }
+    // 取清单失败（网络抖动/非 HLS 内容）：回退 302，能跟随跳转的播放器仍可播
+  }
+
+  res.writeHead(302, {
     'Content-Type': 'application/json;charset=UTF-8',
     location: result.playURL
   });
