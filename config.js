@@ -49,8 +49,10 @@ function applyConfig(systemConfig) {
   userId = systemConfig.userId || process.env.muserId || ""
   // 用户token 可以使用网页登录获取
   token = systemConfig.token || process.env.mtoken || ""
-  // 本地运行端口号
-  port = systemConfig.port || process.env.mport || 1905
+  // 本地运行端口号：做区间校验兜底——配置文件可能被手改/由备份导入写入非法值，
+  // 非法端口会让 server.listen 启动即崩（999999）或静默绑到 unix socket（"abc"），必须回退默认
+  const rawPort = parseInt(systemConfig.port ?? process.env.mport)
+  port = (Number.isInteger(rawPort) && rawPort >= 1 && rawPort <= 65535) ? rawPort : 1905
   // 公网/自定义访问地址
   host = systemConfig.host || process.env.mhost || ""
   // 画质

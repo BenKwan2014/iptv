@@ -2126,6 +2126,18 @@
                 <div style="margin-top: 12px; padding: 10px; background: #f0f0f0; border-radius: 4px; font-size: 13px; color: #666; text-align: center;">
                     💡 提示：保存配置后，需点击页面顶部的"重启服务"按钮使新配置生效
                 </div>
+
+                <!-- 配置备份 / 迁移（issue #99） -->
+                <div style="margin-top: 20px; padding-top: 16px; border-top: 1px solid #eee;">
+                    <div style="font-size:16px; font-weight:600; color:#333;">🧳 配置备份 / 迁移</div>
+                    <div class="system-config-hint">一键把全部配置（系统配置、外部源、我的频道与各配置档、EPG 源、别名 / 分组规则、用户令牌）导出为单个备份文件；换机 / 重装后导入即可恢复。<strong>⚠️ 导出文件包含咪咕账号与访问密码，请勿随意发给他人</strong>；自定义台标 <code>logos/</code> 文件夹不在包内，如有请单独拷贝。</div>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px;">
+                        <button class="btn btn-primary" onclick="exportConfigBackup()">📤 导出配置</button>
+                        <input type="file" id="configImportFile" accept=".json,application/json" style="max-width: 260px;">
+                        <button class="btn btn-warning" onclick="importConfigBackup()">📥 导入配置</button>
+                    </div>
+                    <div class="system-config-hint" style="margin-top:6px;">导入会<strong>覆盖当前同名配置</strong>（导入前会自动把当前配置备份到数据目录 <code>config-pre-import-backup.json</code>，写坏可手动恢复）；导入后多数配置即时生效，端口修改需重启。</div>
+                </div>
                 </div>
                 <div class="settings-subpanel" id="settingsSub1">
                 <!-- 频道别名（issue #56）：自定义批量统一规则 -->
@@ -4383,6 +4395,90 @@ if(success){
             const saved = await saveSystemConfig();
             if (saved === true) {
                 await restartService(true); // 已确认过，跳过二次确认
+            }
+        }
+
+        // ===== 配置备份 / 迁移（issue #99）=====
+        // 导出：拉取聚合配置 JSON，前端触发下载（文件名带日期便于归档）
+        async function exportConfigBackup() {
+            try {
+                const res = await fetch(API_PREFIX + '/api/config-backup');
+                const r = await res.json();
+                if (!r.success) { showStatus(r.message || '导出失败', 'error'); return; }
+                if (r.skipped && r.skipped.length > 0) {
+                    showStatus(`注意：${r.skipped.join('、')} 已损坏未纳入备份`, 'error');
+                }
+                const ts = new Date();
+                const pad = n => String(n).padStart(2, '0');
+                const name = `iptv-config-backup-${ts.getFullYear()}${pad(ts.getMonth() + 1)}${pad(ts.getDate())}-${pad(ts.getHours())}${pad(ts.getMinutes())}.json`;
+                const blob = new Blob([JSON.stringify(r.data, null, 2)], { type: 'application/json' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = name;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(a.href);
+                showStatus(`已导出 ${Object.keys(r.data.files || {}).length} 个配置文件（含账号密码，注意保管）`, 'success');
+            } catch (e) {
+                showStatus('导出失败: ' + e.message, 'error');
+            }
+        }
+
+        // 导入：读文件 → 预检格式并列出将覆盖的文件 → 二次确认 → 提交 → 刷新页面数据
+        async function importConfigBackup() {
+            const input = document.getElementById('configImportFile');
+            const file = input && input.files && input.files[0];
+            if (!file) { showStatus('请先选择备份文件（.json）', 'error'); return; }
+            let payload;
+            try {
+                payload = JSON.parse(await file.text());
+            } catch (e) {
+                showStatus('文件不是有效的 JSON', 'error');
+                return;
+            }
+            if (!payload || payload.format !== 'iptv-config-backup' || typeof payload.files !== 'object') {
+                showStatus('不是本系统导出的配置备份文件', 'error');
+                return;
+            }
+            const names = Object.keys(payload.files || {});
+            const confirmed = await showConfirm(
+                `将导入 ${names.length} 个配置文件并覆盖当前同名配置：\n\n${names.join('\n')}\n\n导出时间：${payload.exportedAt || '未知'}\n（导入前会自动备份当前配置，可从数据目录 config-pre-import-backup.json 恢复）\n\n确定导入？`,
+                '导入配置'
+            );
+            if (!confirmed) return;
+            try {
+                showStatus('正在导入…', 'info');
+                const res = await fetch(API_PREFIX + '/api/config-backup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const r = await res.json();
+                if (!r.success) { showStatus(r.message || '导入失败', 'error'); return; }
+                input.value = '';
+                // 备份可能带来了不同的访问密码/后台路径：原地 reload 会 403 或落进频道路由报错，
+                // 必须比对并跳转到新入口（换机迁移正是本功能的主场景）
+                const sc = payload.files['system-config.json'];
+                if (sc && typeof sc === 'object') {
+                    const newPass = typeof sc.pass === 'string' ? sc.pass : '';
+                    const rawPath = typeof sc.adminPath === 'string' ? sc.adminPath.trim().replace(/^\/+|\/+$/g, '') : '';
+                    // 与 config.js sanitizeSegment 同口径：空/含斜杠空白/保留字回退 admin
+                    const newAdmin = (!rawPath || /[\/\s]/.test(rawPath) || ['api', 'player', 'favicon.ico'].includes(rawPath.toLowerCase())) ? 'admin' : rawPath;
+                    const curPass = (systemConfig && systemConfig.pass) || '';
+                    const curAdmin = (systemConfig && systemConfig.adminPath) || 'admin';
+                    if (newPass !== curPass || newAdmin !== curAdmin) {
+                        const entry = '/' + [newPass, newAdmin].filter(Boolean).join('/');
+                        showStatus(`导入成功。访问密码 / 后台路径已随备份变更，正在跳转到新入口：${entry}`, 'success');
+                        setTimeout(() => { location.href = entry; }, 3000);
+                        return;
+                    }
+                }
+                showStatus(r.message || '导入成功', 'success');
+                // 配置已整体更换，直接整页刷新最稳（等后台重建一小会儿）
+                setTimeout(() => location.reload(), 2500);
+            } catch (e) {
+                showStatus('导入失败: ' + e.message, 'error');
             }
         }
 

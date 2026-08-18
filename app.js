@@ -19,6 +19,7 @@ import { getUsersAPI, addUserAPI, updateUserAPI, removeUserAPI, regenUserTokenAP
 import { getAliasesAPI, setAliasRuleAPI, removeAliasRuleAPI } from "./utils/aliasesAPI.js";
 import { getGroupRulesAPI, setGroupRuleAPI, removeGroupRuleAPI, moveGroupRuleAPI } from "./utils/groupRulesAPI.js";
 import { getSystemConfigAPI, saveSystemConfigAPI } from "./utils/systemConfigAPI.js";
+import { exportConfigAPI, importConfigAPI } from "./utils/configBackupAPI.js";
 import { readConfig, saveConfig, parseInterfaceTxt, validateGroupConfig, applyConfig,
          listProfiles, createProfile, renameProfile, deleteProfile } from "./utils/playlistConfig.js";
 import { updateBuiltInSources, updateExternalSources, externalSourceManager, builtInSourceManager } from "./utils/channelMerger.js";
@@ -183,6 +184,30 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(result.success ? 200 : 500, { 'Content-Type': 'application/json;charset=UTF-8' });
         res.end(JSON.stringify(result));
         printGreen(result.success ? "系统配置已保存" : "保存失败")
+      } catch (error) {
+        res.writeHead(400, { 'Content-Type': 'application/json;charset=UTF-8' });
+        res.end(JSON.stringify({ success: false, message: error.message }));
+      }
+      return
+    }
+
+    // 配置导出/导入（issue #99）：单 JSON 打包，前端触发下载/上传
+    if (routePath === '/api/config-backup' && method === 'GET') {
+      printBlue("API: 导出配置")
+      const result = exportConfigAPI()
+      res.writeHead(result.success ? 200 : 500, { 'Content-Type': 'application/json;charset=UTF-8' });
+      res.end(JSON.stringify(result));
+      return
+    }
+
+    if (routePath === '/api/config-backup' && method === 'POST') {
+      try {
+        const body = await readBody(req)
+        const payload = JSON.parse(body)
+        const result = importConfigAPI(payload)
+        res.writeHead(result.success ? 200 : 400, { 'Content-Type': 'application/json;charset=UTF-8' });
+        res.end(JSON.stringify(result));
+        printGreen(result.success ? "配置导入完成" : `配置导入失败: ${result.message}`)
       } catch (error) {
         res.writeHead(400, { 'Content-Type': 'application/json;charset=UTF-8' });
         res.end(JSON.stringify({ success: false, message: error.message }));

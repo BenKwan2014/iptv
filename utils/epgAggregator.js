@@ -168,7 +168,7 @@ async function aggregateExternalEpg(playbackBakPath, playlistChannelNames, cover
     pending.set(k, outputId)
   }
   if (pending.size === 0) {
-    saveEpgConfig(config)
+    saveRunStates(config)
     return { appended: 0 }
   }
 
@@ -212,9 +212,26 @@ async function aggregateExternalEpg(playbackBakPath, playlistChannelNames, cover
     if (matched > 0) printGreen(`EPG 源「${source.name}」补充 ${matched} 个频道节目单`)
   }
 
-  saveEpgConfig(config)
+  saveRunStates(config)
   printGreen(`EPG 聚合完成：补充 ${appended} 个频道，仍有 ${pending.size} 个频道无外部 EPG`)
   return { appended, unmatched: pending.size }
+}
+
+// 聚合收尾保存：不整份写回进入时的旧配置——聚合窗口长达分钟级（逐源下载，单源超时 60s），
+// 期间配置可能已被后台「EPG 源管理」编辑或配置导入（issue #99）改写，整份写回会把新配置
+// 静默还原。改为重读磁盘最新配置，按源 url 对齐、只合并本轮产生的运行状态字段再保存；
+// url 已不在新配置里的源（本轮跑动期间被删除）直接丢弃其状态。
+function saveRunStates(runConfig) {
+  const fresh = loadEpgConfig()
+  const byUrl = new Map((runConfig.sources || []).filter(s => s && s.url).map(s => [s.url, s]))
+  for (const s of (fresh.sources || [])) {
+    const run = s && s.url ? byUrl.get(s.url) : null
+    if (!run) continue
+    for (const k of ['lastUpdated', 'lastStatus', 'channelCount', 'matchedCount']) {
+      if (run[k] !== undefined) s[k] = run[k]
+    }
+  }
+  saveEpgConfig(fresh)
 }
 
 export { aggregateExternalEpg, loadEpgConfig, saveEpgConfig, BUILT_IN_EPG_SOURCES }
