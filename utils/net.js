@@ -46,7 +46,8 @@ async function fetchUrl(url, opts = {}, timeout = 6000) {
         // 超时只打印警告，不打印错误详情
         // printYellow(`请求超时: ${url.substring(0, 80)}...`)
       } else {
-        console.log(err)
+        // 网络类错误打一行摘要即可（ETIMEDOUT/ECONNRESET 等），完整堆栈只会刷屏吓人（用户日志截图反馈）
+        printRed(`请求失败 [${err?.code || err?.name || 'ERROR'}]: ${String(url).substring(0, 80)}`)
       }
     })
 

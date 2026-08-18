@@ -34,6 +34,16 @@ function getSaltAndSign(md5) {
  * @param {number} rateType - 清晰度
  * @returns {} - 
  */
+// 咪咕 playurl 接口请求失败的统一收敛（用户日志截图反馈）：
+// fetchUrl 在超时/网络不通/非 JSON 响应时返回 undefined，部分风控/限流响应则没有 body 字段——
+// 此前直接读 respData.rid / respData.body 会抛 "Cannot read properties of undefined" 刷日志。
+// 统一返回干净的失败结果：channel() 会把 message 展示出来并按 1 分钟短缓存自动重试。
+function miguFetchFail(respData) {
+  const message = (respData && (respData.message || respData.desc))
+    || "咪咕接口请求失败：网络超时或不可达（服务器挂代理、海外部署、DNS 异常最常见），请检查服务器到 miguvideo.com 的网络"
+  return { url: "", rateType: 0, content: { message, raw: respData } }
+}
+
 async function getAndroidURL(userId, token, pid, rateType) {
 
   if (rateType <= 1) {
@@ -85,6 +95,7 @@ async function getAndroidURL(userId, token, pid, rateType) {
 
   printDebug(respData)
 
+  if (!respData) return miguFetchFail(respData)
   if (respData.rid == 'TIPS_NEED_MEMBER') {
     printYellow("该账号没有会员 正在降低画质")
     let respRateType = parseInt(respData.body.urlInfo?.rateType) > 4 ? 4 : 3
@@ -96,6 +107,7 @@ async function getAndroidURL(userId, token, pid, rateType) {
       headers: headers
     })
 
+    if (!respData) return miguFetchFail(respData)
     if (respData.rid == 'TIPS_NEED_MEMBER') {
       printYellow("账号非钻石会员 降低画质")
 
@@ -111,6 +123,7 @@ async function getAndroidURL(userId, token, pid, rateType) {
 
   printDebug(respData)
   // console.log(respData)
+  if (!respData || !respData.body) return miguFetchFail(respData)
   const url = respData.body.urlInfo?.url
   // console.log(rateType)
   // console.log(url)
@@ -121,7 +134,7 @@ async function getAndroidURL(userId, token, pid, rateType) {
       content: respData
     }
   }
-  pid = respData.body.content.contId
+  pid = respData.body.content?.contId || pid
 
   // 将URL加密
   const resURL = getddCalcuURL(url, pid, "android", rateType, userId)
@@ -185,6 +198,7 @@ async function getAndroidURL720p(pid) {
 
   printDebug(respData)
   // console.dir(respData, { depth: null })
+  if (!respData || !respData.body) return miguFetchFail(respData)
   const url = respData.body.urlInfo?.url
   // console.log(rateType)
   // console.log(url)
@@ -197,7 +211,7 @@ async function getAndroidURL720p(pid) {
   }
 
   rateType = respData.body.urlInfo?.rateType
-  pid = respData.body.content.contId
+  pid = respData.body.content?.contId || pid
 
   // 将URL加密
   const resURL = getddCalcuURL720p(url, pid)
