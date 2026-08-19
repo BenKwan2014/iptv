@@ -174,7 +174,8 @@ function interfaceStr(url, headers, urlUserId, urlToken, profile, accessPrefix, 
   // 用路径前缀而非 query 参数：m3u 头的 catchup-source 以 "?" 开头直接拼在频道地址后，
   // query 方案会拼出双问号破坏回看，路径方案天然兼容。
   if (relay) {
-    result.content = `${result.content}`.replace(/\$\{replace\}\/(\d+)/g, '${replace}/relay/$1')
+    // 带 .m3u8 后缀：极影视等播放器按 URL 后缀识别流格式，无后缀会被判定不可播（issue #98 追踪）
+    result.content = `${result.content}`.replace(/\$\{replace\}\/(\d+)/g, '${replace}/relay/$1.m3u8')
   }
 
   // 剥离内部属性 source-ids（issue #29/#68 源归属标记）后再输出给播放器：

@@ -754,10 +754,12 @@ const server = http.createServer(async (req, res) => {
   // 两段解析之前剥掉，否则会被误当成账号注入前缀（relay 当 userId、pid 当 token）返回订阅内容。
   // 支持前面带账号注入段的组合（/userId/token/relay/<pid>），剥掉 relay 段、其余原样保留。
   let relayMode = false
-  const relayMatch = routeUrl.match(/^(.*)\/relay\/(\d+(?:\?.*)?)$/)
+  // 可选 .m3u8 后缀：极影视等播放器按 URL 后缀识别流格式，无后缀会被判定不可播（issue #98 追踪）；
+  // 兼容版订阅输出 /relay/<pid>.m3u8，旧的无后缀形式继续支持
+  const relayMatch = routeUrl.match(/^(.*)\/relay\/(\d+)(?:\.m3u8)?((?:\?.*)?)$/)
   if (relayMatch) {
     relayMode = true
-    routeUrl = `${relayMatch[1]}/${relayMatch[2]}`
+    routeUrl = `${relayMatch[1]}/${relayMatch[2]}${relayMatch[3]}`
   }
 
   let urlToken = ""
@@ -778,7 +780,9 @@ const server = http.createServer(async (req, res) => {
   // 允许HEAD、OPTIONS预检请求
   if (method === "HEAD" || method === "OPTIONS") {
     res.writeHead(200, {
-      'Content-Type': 'application/json;charset=UTF-8',
+      // 清单直出地址按 HLS 类型应答 HEAD 探测：部分播放器播放前先 HEAD 判断类型，
+      // 回 application/json 会被判定「不可播放」（issue #98）
+      'Content-Type': relayMode ? 'application/vnd.apple.mpegurl' : 'application/json;charset=UTF-8',
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, HEAD, OPTIONS',
       'Access-Control-Allow-Headers': '*'
@@ -851,7 +855,9 @@ const server = http.createServer(async (req, res) => {
       res.end(manifest)
       return
     }
-    // 取清单失败（网络抖动/非 HLS 内容）：回退 302，能跟随跳转的播放器仍可播
+    // 取清单失败（网络抖动/非 HLS 内容）：回退 302，能跟随跳转的播放器仍可播。
+    // 打一行日志：不跟随跳转的播放器此时会播不了，用户排查时能从日志看出走了回退
+    printYellow(`清单直出取回失败，回退 302（不跟随跳转的播放器将无法播放）: ${routeUrl.split('?')[0]}`)
   }
 
   res.writeHead(302, {
