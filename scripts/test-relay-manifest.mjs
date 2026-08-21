@@ -8,7 +8,7 @@
  * 运行： node scripts/test-relay-manifest.mjs   （或 npm test）
  */
 import assert from 'node:assert/strict'
-import { rewriteManifest } from '../utils/appUtils.js'
+import { rewriteManifest, firstVariantUrl } from '../utils/appUtils.js'
 
 let passed = 0
 const check = (n, fn) => { fn(); passed++; console.log('  ✅ ' + n) }
@@ -56,4 +56,25 @@ check('空行/注释行原样保留', () => {
   assert.ok(out.includes('#EXT-X-VERSION:3'))
 })
 
-console.log(`\n全部通过：${passed}/4 ✅`)
+// 5) master 拍平：定位第一条子清单地址（兼容模式多走一跳，直接给播放器媒体清单）
+check('master 清单定位首条子清单地址（相对/绝对/多码率/非 master）', () => {
+  // 咪咕真实结构：相对子清单
+  assert.equal(
+    firstVariantUrl('#EXTM3U\n#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=2084544\n01.m3u8?msisdn=abc', BASE),
+    'http://hlszte.example.com:8080/migu/kailu/cctv1/50/01.m3u8?msisdn=abc'
+  )
+  // 绝对子清单原样取用
+  assert.equal(
+    firstVariantUrl('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=100\nhttps://cdn.x.com/a/hi.m3u8', BASE),
+    'https://cdn.x.com/a/hi.m3u8'
+  )
+  // 多码率取第一条；标签与地址之间夹注释行也能跳过
+  assert.equal(
+    firstVariantUrl('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=100\n#comment\nlow.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=900\nhigh.m3u8', BASE),
+    'http://hlszte.example.com:8080/migu/kailu/cctv1/50/low.m3u8'
+  )
+  // 已经是媒体清单（无 STREAM-INF）：返回 null，按原样改写直出
+  assert.equal(firstVariantUrl('#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:6.0,\n0001.ts', BASE), null)
+})
+
+console.log(`\n全部通过：${passed}/5 ✅`)

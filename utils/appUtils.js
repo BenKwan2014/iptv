@@ -30,25 +30,62 @@ function rewriteManifest(text, finalUrl) {
   }).join('\n')
 }
 
+// 取回一份 HLS 清单文本（跟随 302），非 200 或非 HLS 内容返回 null
+async function fetchHls(url, signal) {
+  const resp = await fetch(url, {
+    redirect: 'follow',
+    signal,
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36' },
+  })
+  if (!resp.ok) return null
+  const text = await resp.text()
+  if (!text.trimStart().startsWith('#EXTM3U')) return null
+  return { text, finalUrl: resp.url || url }
+}
+
+// master（多码率）清单里第一条子清单地址；不是 master 则返回 null。
+// 咪咕的 master 只有一条子清单，取第一条即全部。
+function firstVariantUrl(text, base) {
+  const lines = text.split('\n')
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i].trim().startsWith('#EXT-X-STREAM-INF')) continue
+    for (let j = i + 1; j < lines.length; j++) {
+      const t = lines[j].trim()
+      if (!t || t.startsWith('#')) continue
+      try { return new URL(t, base).href } catch { return null }
+    }
+  }
+  return null
+}
+
 // 清单直出（issue #98）：极空间极影视等播放器不跟随 302 跳转，播放一直转圈。
-// 此模式由服务端替播放器取回 HLS 清单，相对路径改写成绝对地址后直接 200 返回；
-// 子清单与视频分片仍由播放器直连 CDN，服务器只经手清单文本，不占带宽。
+// 此模式由服务端替播放器取回 HLS 清单，相对路径改写成绝对地址后直接 200 返回。
+//
+// 咪咕返回的是 master（多码率）清单，里面还嵌着一层子清单地址——对严格按 HLS 规范
+// 实现的播放器没问题，但兼容模式面向的正是「实现不完整」的播放器：它们要么不跟随跳转，
+// 要么处理不了「清单里再跳一层、且跳到另一个主机」。故这里多走一跳，把 master 拍平成
+// 播放器直接能用的媒体清单（分片列表）——媒体清单是最基础的 HLS 形态，兼容面最广；
+// 咪咕 master 只有单条码率，拍平不损失任何画质选择。
+// 视频分片仍由播放器直连 CDN，服务器只经手清单文本，不占带宽。
+//
 // 注意：清单由服务端取回，节点由服务端网络选择，与「客户端就近取流」语义互斥——
 // 兼容模式面向 NAS 与播放设备同一网络的家庭场景，正好不需要就近取流。
 // 返回 null 表示取清单失败或内容不是 HLS，调用方应回退 302。
 async function fetchManifestDirect(playURL) {
   const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 8000)
+  const timer = setTimeout(() => ctrl.abort(), 10000)   // 覆盖两跳
   try {
-    const resp = await fetch(playURL, {
-      redirect: 'follow',
-      signal: ctrl.signal,
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36' },
-    })
-    if (!resp.ok) return null
-    const text = await resp.text()
-    if (!text.trimStart().startsWith('#EXTM3U')) return null
-    return rewriteManifest(text, resp.url || playURL)
+    const master = await fetchHls(playURL, ctrl.signal)
+    if (!master) return null
+
+    const variantUrl = firstVariantUrl(master.text, master.finalUrl)
+    if (variantUrl) {
+      const media = await fetchHls(variantUrl, ctrl.signal)
+      // 拍平成功：直接给播放器分片列表；失败则退回改写后的 master（跟随能力正常的播放器仍可播）
+      if (media) return rewriteManifest(media.text, media.finalUrl)
+      printDebug(`子清单取回失败，退回 master 清单: ${variantUrl}`)
+    }
+    return rewriteManifest(master.text, master.finalUrl)
   } catch (error) {
     printDebug(`清单直出取回失败，回退 302: ${error.message}`)
     return null
@@ -334,4 +371,4 @@ function channelCache(pid, params) {
   return cache
 }
 
-export { interfaceStr, channel, channelCache, clearUrlCache, fetchManifestDirect, rewriteManifest }
+export { interfaceStr, channel, channelCache, clearUrlCache, fetchManifestDirect, rewriteManifest, firstVariantUrl }

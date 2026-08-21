@@ -848,11 +848,16 @@ const server = http.createServer(async (req, res) => {
     // 服务端取回清单、相对路径改写为绝对地址后直出，播放器无需跟随任何跳转
     const manifest = await fetchManifestDirect(result.playURL)
     if (manifest != null) {
+      const body = Buffer.from(manifest, 'utf-8')
       res.writeHead(200, {
         'Content-Type': 'application/vnd.apple.mpegurl',
         'Access-Control-Allow-Origin': '*',
+        // 直播媒体清单会被播放器周期性轮询，必须禁缓存，否则拿到旧分片列表会卡住不前
+        'Cache-Control': 'no-cache, no-store',
+        // 显式 Content-Length（避免 chunked 传输）：部分简易播放器的 HTTP 客户端对分块传输支持不佳
+        'Content-Length': body.length,
       });
-      res.end(manifest)
+      res.end(body)
       return
     }
     // 取清单失败（网络抖动/非 HLS 内容）：回退 302，能跟随跳转的播放器仍可播。
