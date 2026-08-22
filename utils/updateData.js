@@ -3,6 +3,7 @@ import { appendFile, appendFileSync, copyFileSync, renameFileSync, writeFile, wr
 import { updatePlaybackData } from "./playback.js"
 import { aggregateExternalEpg } from "./epgAggregator.js"
 import { normalizeKey, logoMatchName } from "./channelNormalize.js"
+import { renderOpts } from "./channelOpts.js"
 import { refreshToken as enableTokenRefresh, host, pass, token, userId, enableMigu, externalLogoBase } from "../config.js"
 import refreshToken from "./refreshToken.js"
 import { printGreen, printRed, printYellow, printBlue } from "./colorOut.js"
@@ -192,10 +193,17 @@ async function updateTV(hours, options = {}) {
       // 多源用分号分隔——EXTINF 频道名按「第一个逗号」解析，属性值里出现逗号会破坏频道名提取
       const sourceAttr = allSourceIds.length ? ` source-ids="${allSourceIds.join(';')}"` : ''
 
+      // 频道级播放选项：防盗链源要靠 #EXTVLCOPT 把 Referer 等带给播放器，
+      // 必须夹在 EXTINF 和播放地址之间。无 opts 时为空串，输出与之前逐字节一致。
+      const optLines = renderOpts(channelItem.opts)
+
       // 写入节目
-      appendFileSync(interfacePath, `#EXTINF:-1 tvg-id="${channelItem.name}" tvg-name="${channelItem.name}" tvg-logo="${logoUrl}"${sourceAttr} group-title="${datas[i].name}",${channelItem.name}\n${playUrl}\n`)
-      // txt
-      appendFileSync(interfaceTXTPath, `${channelItem.name},${playUrl}\n`)
+      appendFileSync(interfacePath, `#EXTINF:-1 tvg-id="${channelItem.name}" tvg-name="${channelItem.name}" tvg-logo="${logoUrl}"${sourceAttr} group-title="${datas[i].name}",${channelItem.name}\n${optLines}${playUrl}\n`)
+      // txt：diyp/TVBox 格式只有「频道名,地址」两列，放不下请求头，这类频道写进去
+      // 必定 403——缺一个台好过一个死台，整条跳过。
+      if (!optLines) {
+        appendFileSync(interfaceTXTPath, `${channelItem.name},${playUrl}\n`)
+      }
       // printGreen(`    节目链接更新成功`)
     }
     printGreen(`分组:${datas[i].name} 更新完成！`)

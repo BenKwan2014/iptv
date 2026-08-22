@@ -6,6 +6,7 @@ import { printBlue, printGreen, printYellow, printRed } from "./colorOut.js"
 import { enableTvgNormalize, enableDisplayNameUnify, externalLogoBase } from "../config.js"
 import { getCanonicalMap, normalizeKey, normalizeTvgName, getPlaybackChannelIds } from "./channelNormalize.js"
 import { matchKeywordGroup } from "./groupRulesAPI.js"
+import { collectOptsUntilUrl, renderOpts, needsOpts } from "./channelOpts.js"
 
 // 台标来源分类（供后台展示）：本地上传 / 源自带 / 公共库兜底 / 无。
 // 依据 interface 里写出的 tvg-logo 形态判定，不联网、零额外成本。issue #38 / #40
@@ -146,10 +147,14 @@ export function parseInterfaceTxt() {
         const sourceIdsMatch = line.match(/source-ids="([^"]*)"/)   // 源归属（issue #29/#68），内部属性
         const nameMatch = line.match(/,(.+)$/)
         
-        if (groupMatch && nameMatch && i + 1 < lines.length) {
+        // 播放地址不一定紧跟 EXTINF——防盗链频道中间夹着 #EXTVLCOPT，
+        // 要连同 opts 一起收下，并把游标推到地址行，否则 opt 行会被当成播放地址。
+        const { opts, urlIndex } = collectOptsUntilUrl(lines, i)
+
+        if (groupMatch && nameMatch && urlIndex !== -1) {
           const groupName = groupMatch[1]
           const channelName = nameMatch[1]
-          const url = lines[i + 1].trim()
+          const url = lines[urlIndex].trim()
           
           const tvgName = tvgNameMatch ? tvgNameMatch[1] : channelName
           const channelId = buildChannelId({
@@ -183,10 +188,12 @@ export function parseInterfaceTxt() {
             originalGroup: groupName,
             // 源归属（issue #29/#68 按档过滤）：来自哪些源（migu / bi:<id> / ext:<id>，去重并集）。
             // 分号分隔（属性值不能含逗号——频道名按第一个逗号解析）；旧数据无该属性 → 空数组=不过滤。
-            sourceIds: sourceIdsMatch ? sourceIdsMatch[1].split(';').filter(Boolean) : []
+            sourceIds: sourceIdsMatch ? sourceIdsMatch[1].split(';').filter(Boolean) : [],
+            // 频道级播放选项（#EXTVLCOPT）：无则不带该字段，保持旧频道对象形状不变
+            ...(opts.length ? { opts } : {})
           })
 
-          i++ // 跳过URL行
+          i = urlIndex // 跳过 opts 与 URL 行
         }
       }
     }
@@ -468,6 +475,8 @@ export function generateM3u8(groups) {
   groups.forEach(group => {
     group.channels.forEach(channel => {
       content += `#EXTINF:-1 tvg-id="${channel.tvgId}" tvg-name="${channel.tvgName}" tvg-logo="${channel.logo}" group-title="${group.name}",${channel.name}\n`
+      // 防盗链频道的请求头必须夹在 EXTINF 和地址之间；无 opts 时为空串，输出不变
+      content += renderOpts(channel.opts)
       content += `${channel.url}\n`
     })
   })
@@ -484,6 +493,8 @@ export function generateTxt(groups) {
   groups.forEach(group => {
     content += `${group.name},#genre#\n`
     group.channels.forEach(channel => {
+      // txt 只有「频道名,地址」两列，放不下请求头——依赖 opts 的频道写进去必定 403，跳过
+      if (needsOpts(channel)) return
       content += `${channel.name},${channel.url}\n`
     })
   })

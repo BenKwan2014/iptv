@@ -5,6 +5,7 @@ import { dataPath } from "./paths.js"
 import { enableBuiltInSubscriptions } from "../config.js"
 import { printBlue, printGreen, printGrey, printRed, printYellow } from "./colorOut.js"
 import { extractM3u8FromWeb, validateM3u8 } from "./webSourceExtractor.js"
+import { collectOptsUntilUrl } from "./channelOpts.js"
 import fetch from 'node-fetch'
 
 /**
@@ -43,21 +44,17 @@ function parseM3uContent(content) {
     const logoMatch = line.match(/tvg-logo="([^"]*)"/)
     const name = extractExtinfName(line)
 
-    // 下一个非注释行是 URL
-    let url = ''
-    for (let j = i + 1; j < lines.length; j++) {
-      if (!lines[j].startsWith('#')) {
-        url = lines[j]
-        break
-      }
-    }
+    // 下一个非注释行是 URL；沿途的 #EXTVLCOPT 收进 opts（防盗链源靠它才播得动）
+    const { opts, urlIndex } = collectOptsUntilUrl(lines, i)
+    const url = urlIndex === -1 ? '' : lines[urlIndex]
 
     if (url && name) {
       channels.push({
         name,
         group: groupMatch ? groupMatch[1] : '未分组',
         logo: logoMatch ? logoMatch[1] : '',
-        url: url
+        url: url,
+        ...(opts.length ? { opts } : {})
       })
     }
   }
@@ -885,7 +882,8 @@ class ExternalSourceManager {
             url: ch.url,
             logo: ch.logo || "",
             groupTitle: group,
-            sourceId: source.id ? `ext:${source.id}` : undefined   // 源归属（issue #29/#68）
+            sourceId: source.id ? `ext:${source.id}` : undefined,  // 源归属（issue #29/#68）
+            ...(ch.opts && ch.opts.length ? { opts: ch.opts } : {})
           })
         })
         return
