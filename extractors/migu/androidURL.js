@@ -1,9 +1,9 @@
-import { getStringMD5 } from "./EncryUtils.js";
+import { getStringMD5 } from "../../utils/EncryUtils.js";
 import { getddCalcuURL, getddCalcuURL720p } from "./ddCalcuURL.js";
-import { printDebug, printGreen, printRed, printYellow } from "./colorOut.js";
-import { fetchUrl } from "./net.js";
-import { delay } from "./fetchList.js";
-import { enableH265, enableHDR } from "../config.js";
+import { printDebug, printGreen, printRed, printYellow } from "../../utils/colorOut.js";
+import { fetchUrl } from "../../utils/net.js";
+import { delay } from "../../utils/fetchList.js";
+import { enableH265, enableHDR } from "../../config.js";
 import fetch from 'node-fetch';
 
 /**

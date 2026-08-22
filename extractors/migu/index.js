@@ -15,12 +15,22 @@
  * 开关继续是 config.js 的 enableMigu：它被 updateData / channelMerger / app.js
  * 等多处直接 import，在 extractors.json 里另开一份会两个开关打架。
  *
- * 本轮只收编「频道列表抓取」。仍留在原处、后续再搬的：
- *   - 播放时解析（utils/appUtils.js 的 channel()：pID → 签名 → 302 + 3h 缓存）
- *   - 体育赛事（utils/updateData.js 的 updatePE，同一模块的第二批分组）
- *   - 画质参数（config.js 的 rateType / enableHDR / enableH265，本该收进 configSchema）
+ * 已收编：频道列表抓取（fetch）、播放时解析（resolve，见 ./resolve.js）。
+ *
+ * 刻意**不**收编、且不是「以后有空再说」的两块：
+ *   - 体育赛事（utils/updateData.js 的 updatePE）。模块 fetch() 有 90 秒墙钟上限，
+ *     而它要串行打 141+ 次赛事接口，塞进来必超时 → 记为模块失败 → 冷启动时
+ *     0 频道守卫触发 → 整份播放列表停止生成。且两者失败语义相反：频道列表失败
+ *     要沿用旧数据，赛事失败宁可没有也不要分发过期 pID。
+ *   - 画质参数（config.js 的 rateType / enableHDR / enableH265 / enableClientDispatch）。
+ *     归属上确实该在这里，但现有 configSchema 机制接不住：withEnvFallback 只兜
+ *     字符串真值，menableHDR=false / mrateType=4 会静默失效；且存量
+ *     system-config.json 里的值无接管方，设了蓝光/4K 的用户会当场降档到 720p。
+ *     前置条件是先扩 withEnvFallback（用 hasOwnProperty + parseBool 语义）、
+ *     加 type:'select'、updateModuleConfig 补 clearResolveCache、做双读兼容迁移。
  */
 import { dataList } from "../../utils/fetchList.js"
+import { resolve, clearCache } from "./resolve.js"
 import { enableMigu } from "../../config.js"
 
 export default {
@@ -32,7 +42,7 @@ export default {
   sourceId: 'migu',
 
   // 结果大、每轮都变、带着咪咕返回的全部原始字段，落盘纯属浪费
-  capabilities: { cache: 'memory', resolve: false, epg: true },
+  capabilities: { cache: 'memory', resolve: true, epg: true },
 
   // 与 app.js 的整点更新同频；咪咕地址是播放时才解析的，不存在过期问题
   defaultRefreshMinutes: 360,
@@ -43,6 +53,23 @@ export default {
 
   // 开关代理到 config.js：那是全项目认的那一个，不另开一份
   enabledGetter: () => enableMigu,
+
+  /**
+   * 这个 ref 是不是咪咕的。
+   *
+   * 保持 isNaN 语义，**不要**收紧成 /^\d+$/——现网 isNaN("") / isNaN("1e3") /
+   * isNaN("0x10") 都是 false，都会被放行走到咪咕接口。收紧会改掉
+   * 「地址格式错误」的边界，属于可观察行为变更。
+   */
+  claimsRef: (ref) => !isNaN(ref),
+
+  /**
+   * 播放时解析。注意**不判 enableMigu**：收编前的 channel() 也从不判，
+   * 加守卫会让「关掉咪咕源但订阅里仍有咪咕地址」的用户从能播变不能播。
+   */
+  resolve,
+
+  clearResolveCache: clearCache,
 
   async fetch() {
     const cates = await dataList()

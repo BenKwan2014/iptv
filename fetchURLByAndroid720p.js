@@ -1,5 +1,5 @@
 import { dataList, delay } from "./utils/fetchList.js"
-import { getAndroidURL720p } from "./utils/androidURL.js"
+import { getAndroidURL720p } from "./extractors/migu/androidURL.js"
 import { appendFile, appendFileSync, renameFileSync, writeFile } from "./utils/fileUtil.js"
 import { updatePlaybackData } from "./utils/playback.js"
 import { printBlue, printGreen, printRed, printYellow } from "./utils/colorOut.js"

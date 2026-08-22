@@ -28,11 +28,22 @@
  *       一个模块可以返回多个分组（咪咕将来的「体育赛事」就是同一模块的第二批
  *       分组，不是另一个源）。
  *
- *   async resolve(ref, ctx) → { url, ttlMs, headers? }
+ *   async resolve(ref, ctx) → { url, desc }
  *       可选，capabilities.resolve 为真时必需。用于「播放时才算地址」的模块：
  *       fetch() 里频道给 deferredRef，写盘时落成 ${replace}/<ref>，播放请求
- *       到达时才调 resolve。咪咕现在就是这么工作的（utils/appUtils.js 那套
- *       pid → 签名 → 302），收编它时靠这个槽位。B 站不需要——它是直链。
+ *       到达时才调 resolve。B 站不需要——它是直链。
+ *       url 为空串表示不可用，desc 是给客户端看的原因（措辞属平台知识）。
+ *       ctx: { account: { userId, token } }
+ *       **绝不能抛异常**——app.js 的请求 handler 没有顶层 try，一个未捕获的
+ *       异常等于请求永远不 res.end()、客户端挂死到超时。
+ *       解析结果的缓存由模块自己管（TTL 往往是签名有效期这种平台属性）。
+ *
+ *   claimsRef(ref) → boolean
+ *       capabilities.resolve 为真时必需。判断某个 ref 是不是自己的，
+ *       播放请求靠它路由到模块。
+ *
+ *   clearResolveCache()
+ *       可选。画质等参数变更后由 utils/appUtils.js 的 clearUrlCache 统一触发。
  *
  *   async epg(channels, ctx) → XMLTV 片段
  *       可选，capabilities.epg 为真时必需。槽位先留着，本轮无人实现。
@@ -93,6 +104,23 @@ export function getModule(id) {
 /** 该 id 是否是本版本认识的模块。 */
 export function hasModule(id) {
   return registry.has(String(id || ''))
+}
+
+/**
+ * 找出该 ref 归哪个模块解析（播放请求到达时用）。
+ *
+ * 模块用 claimsRef(ref) 自己认领——判定属于平台知识，不该硬编码在注册表里。
+ * 按 MODULES 顺序首个认领者胜出。
+ *
+ * ⚠️ 不能改成「只认 fetch() 产出过的 ref」：体育赛事在 utils/updateData.js 里
+ * 直接写 ${replace}/<pID> 追加到播放列表，完全绕开 extractorManager；老订阅里
+ * 缓存的历史地址同理。按索引路由会让这些地址全部 404。
+ */
+export function resolverFor(ref) {
+  for (const module of registry.values()) {
+    if (typeof module.claimsRef === 'function' && module.claimsRef(ref)) return module
+  }
+  return null
 }
 
 /** 频道归属标记。改这里要同步 app.js 的 sourceId 正则白名单与源枚举。 */

@@ -1,5 +1,5 @@
-import { userId } from "../config.js"
-import { getDateString } from "./time.js"
+import { userId } from "../../config.js"
+import { getDateString } from "../../utils/time.js"
 
 const list = {
   // h5端修改频繁，现已失效

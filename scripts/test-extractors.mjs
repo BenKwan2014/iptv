@@ -20,7 +20,8 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { listModules, getModule, sourceIdOf, MODULE_ID_RE } from '../extractors/registry.js'
+import { listModules, getModule, sourceIdOf, resolverFor, MODULE_ID_RE } from '../extractors/registry.js'
+import { clearUrlCache } from '../utils/appUtils.js'
 import { selectFromPlayurl, parseRoomList, normalizeRoom, mapLimit, RoomError } from '../extractors/bilibili-live/api.js'
 import { shouldFailRound } from '../extractors/bilibili-live/index.js'
 import {
@@ -247,6 +248,45 @@ check('全网失败判失败、全体没开播判成功——决定要不要清�
   assert.equal(shouldFailRound(2, 5), false, '有成功的就不算整轮失败，失败的那几间进 skipped')
 })
 
+check('播放路由：裸数字归咪咕，认不出的 ref 无人认领', () => {
+  // ⚠️ 「裸数字 → 咪咕」这条兜底不能去掉：体育赛事在 updateData 里直接写
+  // ${replace}/<pID> 追加进播放列表，完全绕开 extractorManager；老订阅里缓存的
+  // 历史地址同理。改成「只认 fetch() 产出过的 ref」会让这些地址全部 404。
+  assert.equal(resolverFor('608807420')?.id, 'migu')
+  assert.equal(resolverFor('abc'), null)
+})
+
+check('claimsRef 保持 isNaN 语义，不许收紧成 /^\\d+$/', () => {
+  // 现网 isNaN("") / isNaN("1e3") / isNaN("0x10") 都是 false，都会被放行走到
+  // 咪咕接口。收紧会改掉「地址格式错误」的边界——那是可观察行为变更。
+  const migu = getModule('migu')
+  for (const pass of ['608807420', '', '1e3', '0x10', 'Infinity', ' 12 ']) {
+    assert.equal(migu.claimsRef(pass), true, `${JSON.stringify(pass)} 应当被放行（与收编前一致）`)
+  }
+  for (const reject of ['abc', '12a', '中文']) {
+    assert.equal(migu.claimsRef(reject), false, `${JSON.stringify(reject)} 应当被拒`)
+  }
+})
+
+check('声明了 resolve 能力的模块必须实现 resolve 与 claimsRef', () => {
+  for (const module of listModules()) {
+    if (!module.capabilities?.resolve) continue
+    assert.equal(typeof module.resolve, 'function', `${module.id} 缺 resolve`)
+    assert.equal(typeof module.claimsRef, 'function', `${module.id} 缺 claimsRef`)
+  }
+})
+
+check('clearUrlCache 会委托到各模块的 clearResolveCache', () => {
+  // 画质/编码改动后不清缓存，三小时内会继续下发旧编码的流（issue #60）。
+  // 调用点在 systemConfigAPI 与 configBackupAPI，改名要同步两处。
+  let called = 0
+  const migu = getModule('migu')
+  const original = migu.clearResolveCache
+  migu.clearResolveCache = () => { called++ }
+  try { clearUrlCache() } finally { migu.clearResolveCache = original }
+  assert.equal(called, 1)
+})
+
 check('咪咕已收编成模块，且三条 wire format 保持不变', () => {
   const migu = getModule('migu')
   assert.ok(migu, '咪咕应当在注册表里')
@@ -439,4 +479,4 @@ try {
   rmSync(tmp, { recursive: true, force: true })
 }
 
-console.log(`\n全部通过：${passed}/41 ✅`)
+console.log(`\n全部通过：${passed}/45 ✅`)
