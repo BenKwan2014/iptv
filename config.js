@@ -42,7 +42,7 @@ function sanitizeSegment(value, fallback) {
 // 热更新不会改变已启动的监听端口与定时器周期，这两项仍需重启生效。
 let userId, token, port, host, rateType, debug, pass, enableHDR, enableH265, programInfoUpdateInterval, refreshToken, adminPath, externalLogoBase, enableTvgNormalize, enableEpgAggregation, enableUserTokens, enableDisplayNameUnify, enableClientDispatch
 // 内容开关：咪咕核心 / 内置单频道源 / 内置订阅源。默认全开（老用户零感知）
-let enableMigu, enableBuiltInSources, enableBuiltInSubscriptions
+let enableMigu, enableBuiltInSources, enableBuiltInSubscriptions, enableExtractors
 
 function applyConfig(systemConfig) {
   // 用户id
@@ -103,6 +103,9 @@ function applyConfig(systemConfig) {
   enableBuiltInSources = systemConfig.enableBuiltInSources !== undefined ? systemConfig.enableBuiltInSources : parseBool(process.env.menableBuiltInSources, defOn)
   // 内置订阅源（精选频道）
   enableBuiltInSubscriptions = systemConfig.enableBuiltInSubscriptions !== undefined ? systemConfig.enableBuiltInSubscriptions : parseBool(process.env.menableBuiltInSubscriptions, defOn)
+  // 抓取模块总开关（extractors/：哔哩哔哩直播等）。per-module 的开关与配置在
+  // data/extractors.json，不往这里堆——否则每加一个模块都要动五个文件。
+  enableExtractors = systemConfig.enableExtractors !== undefined ? systemConfig.enableExtractors : parseBool(process.env.menableExtractors, defOn)
 }
 
 applyConfig(loadSystemConfig())
@@ -110,7 +113,7 @@ applyConfig(loadSystemConfig())
 // 重新加载系统配置（保存系统配置后调用，避免必须重启进程）
 function reloadConfig() {
   applyConfig(loadSystemConfig())
-  return { userId, token, port, host, rateType, pass, enableHDR, enableH265, programInfoUpdateInterval, refreshToken, adminPath, externalLogoBase, enableTvgNormalize, enableEpgAggregation, enableUserTokens, enableDisplayNameUnify, enableClientDispatch, enableMigu, enableBuiltInSources, enableBuiltInSubscriptions }
+  return { userId, token, port, host, rateType, pass, enableHDR, enableH265, programInfoUpdateInterval, refreshToken, adminPath, externalLogoBase, enableTvgNormalize, enableEpgAggregation, enableUserTokens, enableDisplayNameUnify, enableClientDispatch, enableMigu, enableBuiltInSources, enableBuiltInSubscriptions, enableExtractors }
 }
 
-export { userId, token, port, host, rateType, debug, pass, enableHDR, programInfoUpdateInterval, enableH265, refreshToken, adminPath, externalLogoBase, enableTvgNormalize, enableEpgAggregation, enableUserTokens, enableDisplayNameUnify, enableClientDispatch, enableMigu, enableBuiltInSources, enableBuiltInSubscriptions, reloadConfig, sanitizeSegment }
+export { userId, token, port, host, rateType, debug, pass, enableHDR, programInfoUpdateInterval, enableH265, refreshToken, adminPath, externalLogoBase, enableTvgNormalize, enableEpgAggregation, enableUserTokens, enableDisplayNameUnify, enableClientDispatch, enableMigu, enableBuiltInSources, enableBuiltInSubscriptions, enableExtractors, reloadConfig, sanitizeSegment }

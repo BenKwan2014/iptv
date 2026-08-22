@@ -2,12 +2,15 @@ import http from "node:http"
 import { readFileSync, mkdirSync, existsSync } from "node:fs"
 import { createRequire } from "node:module"
 import fetch from 'node-fetch'
-import { adminPath, host, pass, port, programInfoUpdateInterval, token, userId, enableMigu, enableBuiltInSubscriptions, enableUserTokens } from "./config.js";
+import { adminPath, host, pass, port, programInfoUpdateInterval, token, userId, enableMigu, enableBuiltInSubscriptions, enableUserTokens, enableExtractors } from "./config.js";
 import { getDateTimeStr } from "./utils/time.js";
 import update from "./utils/updateData.js";
 import { printBlue, printGreen, printMagenta, printRed, printYellow } from "./utils/colorOut.js";
 import { channel, interfaceStr, fetchManifestDirect } from "./utils/appUtils.js";
 import { dataPath } from "./utils/paths.js";
+import { getExtractorManager } from "./utils/extractorManager.js";
+import { getExtractorsAPI, setExtractorsEnabledAPI, setExtractorEnabledAPI,
+  updateExtractorConfigAPI, runExtractorNowAPI } from "./utils/extractorsAPI.js";
 import { getChannelsAPI, getExternalSourcesAPI, saveExternalSourcesAPI,
          addExternalSourceAPI, removeExternalSourceAPI, updateExternalSourceAPI,
          setExternalSourceM3u8API, importSubscriptionAPI, parseLocalContentAPI,
@@ -22,7 +25,7 @@ import { getSystemConfigAPI, saveSystemConfigAPI } from "./utils/systemConfigAPI
 import { exportConfigAPI, importConfigAPI } from "./utils/configBackupAPI.js";
 import { readConfig, saveConfig, parseInterfaceTxt, validateGroupConfig, applyConfig,
          listProfiles, createProfile, renameProfile, deleteProfile } from "./utils/playlistConfig.js";
-import { updateBuiltInSources, updateExternalSources, externalSourceManager, builtInSourceManager } from "./utils/channelMerger.js";
+import { updateBuiltInSources, updateExternalSources, updateExtractors, externalSourceManager, builtInSourceManager } from "./utils/channelMerger.js";
 import { GITHUB_RAW_MIRRORS, isBuiltInSubscriptionSource } from "./utils/externalSources.js";
 import { startProbe, getProbeStatus, cancelProbe } from "./utils/sourceProbe.js";
 
@@ -426,6 +429,43 @@ const server = http.createServer(async (req, res) => {
       return
     }
 
+    // 抓取模块（extractors/）：GET=整份状态，POST=按 action 分发
+    if (routePath === '/api/extractors' && method === 'GET') {
+      const result = getExtractorsAPI()
+      res.writeHead(result.success ? 200 : 500, { 'Content-Type': 'application/json;charset=UTF-8' });
+      res.end(JSON.stringify(result));
+      return
+    }
+
+    if (routePath === '/api/extractors' && method === 'POST') {
+      try {
+        const data = JSON.parse(await readBody(req))
+        let result
+        switch (data.action) {
+          case 'toggle':
+            result = setExtractorsEnabledAPI(data.enabled !== false)
+            break
+          case 'toggleModule':
+            result = setExtractorEnabledAPI(data.id, data.enabled !== false)
+            break
+          case 'saveConfig':
+            result = updateExtractorConfigAPI(data.id, data.config, data.refreshMinutes)
+            break
+          case 'refresh':
+            result = runExtractorNowAPI(data.id)
+            break
+          default:
+            result = { success: false, message: `未知操作: ${data.action}` }
+        }
+        res.writeHead(result.success ? 200 : 400, { 'Content-Type': 'application/json;charset=UTF-8' });
+        res.end(JSON.stringify(result));
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json;charset=UTF-8' });
+        res.end(JSON.stringify({ success: false, message: error.message }));
+      }
+      return
+    }
+
     // 源 ↔ 配置档 绑定（issue #29/#68）：GET=矩阵（源清单+档清单+每档禁用集），POST=切换某档某源的启用状态
     if (routePath === '/api/source-profiles' && method === 'GET') {
       try {
@@ -438,6 +478,11 @@ const server = http.createServer(async (req, res) => {
         }
         for (const s of (externalSourceManager.sources?.sources || [])) {
           if (s && s.id) sources.push({ id: `ext:${s.id}`, name: s.name || '未命名源', type: 'external', sourceEnabled: s.enabled !== false })
+        }
+        if (enableExtractors) {
+          for (const s of getExtractorManager().listSourceIds()) {
+            sources.push({ id: s.id, name: s.name, type: 'extractor', sourceEnabled: true })
+          }
         }
         const profiles = listProfiles()
         const disabled = {}
@@ -459,8 +504,8 @@ const server = http.createServer(async (req, res) => {
         const data = JSON.parse(await readBody(req))
         const pid = (typeof data.profileId === 'string' && data.profileId) ? data.profileId : 'default'
         const sid = typeof data.sourceId === 'string' ? data.sourceId.trim() : ''
-        // 格式校验：只接受已知形态的源 id（migu / bi:<白名单字符> / ext:<白名单字符>），防任意字符串入配置落盘
-        if (!/^(migu|bi:[\w.-]{1,64}|ext:[\w.-]{1,64})$/.test(sid)) {
+        // 格式校验：只接受已知形态的源 id（migu / bi: 内置 / ext: 外部 / xt: 抓取模块），防任意字符串入配置落盘
+        if (!/^(migu|bi:[\w.-]{1,64}|ext:[\w.-]{1,64}|xt:[\w.-]{1,64})$/.test(sid)) {
           res.writeHead(400, { 'Content-Type': 'application/json;charset=UTF-8' });
           res.end(JSON.stringify({ success: false, message: 'sourceId 无效' }));
           return
@@ -910,15 +955,25 @@ server.listen(port, async () => {
     printBlue(`当前已运行${hours}小时`)
   }, updateInterval * 60 * 60 * 1000);
 
-  // 定时任务2: 每 5 分钟检查外部源和内置源是否到刷新间隔（needsRefresh 按各源 refreshInterval 判定，不到点不抓）
+  // 定时任务2: 每 5 分钟检查外部源、内置源、抓取模块是否到刷新间隔（needsRefresh 按各自间隔判定，不到点不抓）
+  // 这一轮本身可能超过 5 分钟（外部源串行且每源之间硬睡 2 秒），必须自己防重入，
+  // 否则两轮会同时改同一批状态并写同一个文件，后写者覆盖前者。
+  let sourceTickRunning = false
   setInterval(async () => {
+    if (sourceTickRunning) {
+      printYellow("上一轮源刷新检查尚未结束，跳过本次")
+      return
+    }
+    sourceTickRunning = true
     try {
       const builtInResult = await updateBuiltInSources({ autoOnly: true })
       const externalResult = await updateExternalSources({ autoOnly: true })
+      const extractorResult = await updateExtractors({ autoOnly: true })
       // 若有任何源成功刷新了新 URL，立即重新生成播放列表（regenerateOnly 模式不重抓咪咕/节目单，速度快）
       const builtInUpdated = Array.isArray(builtInResult?.results) && builtInResult.results.some(r => r.success)
       const externalUpdated = Array.isArray(externalResult?.results) && externalResult.results.some(r => r.success)
-      if (builtInUpdated || externalUpdated) {
+      const extractorUpdated = Array.isArray(extractorResult?.results) && extractorResult.results.some(r => r.success)
+      if (builtInUpdated || externalUpdated || extractorUpdated) {
         printBlue("检测到源 URL 已更新，重新生成播放列表...")
         try {
           await update(hours, { regenerateOnly: true })
@@ -931,6 +986,8 @@ server.listen(port, async () => {
     } catch (error) {
       console.log(error)
       printRed("源更新检查失败")
+    } finally {
+      sourceTickRunning = false
     }
   }, 5 * 60 * 1000); // 每 5 分钟检查一次：让各源的 refreshInterval 被准时执行（此前每小时才 check，间隔不精确）—— issue #73
 

@@ -1,14 +1,16 @@
 import { dataList as getMiguChannels } from "./fetchList.js"
 import externalSourceManager from "./externalSources.js"
 import builtInSourceManager from "./builtInSources.js"
-import { enableMigu } from "../config.js"
+import { getExtractorManager } from "./extractorManager.js"
+import { enableMigu, enableExtractors } from "../config.js"
 import { printBlue, printGreen, printYellow, printRed } from "./colorOut.js"
 
 // 缓存最近一次获取的咪咕频道数据
 let cachedMiguChannels = []
 
 // 频道的「主来源」标识（issue #29/#68 按档过滤源）：
-// 外部/内置源频道在 getValidChannels 里带上 sourceId（ext:<id> / bi:<id>），咪咕频道以 pID 隐式识别。
+// 外部/内置/抓取模块的频道在 getValidChannels 里带上 sourceId（ext:<id> / bi:<id> / xt:<id>），
+// 咪咕频道无 sourceId、以 pID 隐式识别。
 function primarySourceId(ch) {
   return ch.sourceId || (ch.pID != null ? 'migu' : '')
 }
@@ -87,6 +89,10 @@ async function getAllChannels(options = {}) {
     
     // 获取内置源频道
     const builtInChannels = builtInSourceManager.getValidChannels()
+
+    // 获取抓取模块频道。读的是模块缓存而非现抓——抓取失败时沿用上一轮结果，
+    // 否则频道会静默从播放列表消失（全局的 0 频道守卫只看总数，护不住单个模块）。
+    const extractorChannels = enableExtractors ? getExtractorManager().getValidChannels() : []
     
     // 合并数据：咪咕源 + 内置源 + 外部源
     // 深拷贝分组及 dataList，避免 merge 操作污染 cachedMiguChannels
@@ -137,8 +143,19 @@ async function getAllChannels(options = {}) {
       }
     })
     
+    // 最后合并抓取模块
+    extractorChannels.forEach(extractorGroup => {
+      const existingGroup = allChannels.find(group => group.name === extractorGroup.name)
+      const tagged = extractorGroup.dataList.map(channel => ({ ...channel, source: 'extractor' }))
+      if (existingGroup) {
+        existingGroup.dataList.push(...tagged)
+      } else {
+        allChannels.push({ ...extractorGroup, source: 'extractor', dataList: tagged })
+      }
+    })
+
     // 频道级去重：同一分组内，name + 播放地址 完全相同的频道只保留第一个
-    // （合并顺序为 咪咕 > 内置 > 外部，因此优先保留更高优先级的来源）
+    // （合并顺序为 咪咕 > 内置 > 外部 > 抓取模块，因此优先保留更高优先级的来源）
     // 只移除完全重复的条目，名称相同但地址不同的频道予以保留
     const dedupRemoved = dedupeAllChannels(allChannels)
     if (dedupRemoved > 0) {
@@ -149,7 +166,9 @@ async function getAllChannels(options = {}) {
     const builtInCount = builtInChannels.reduce((sum, group) => sum + group.dataList.length, 0)
     const miguCount = miguChannels.reduce((sum, group) => sum + group.dataList.length, 0)
 
-    printGreen(`频道数据获取完成: 咪咕 ${miguCount} 个，内置源 ${builtInCount} 个，外部源 ${externalCount} 个`)
+    const extractorCount = extractorChannels.reduce((sum, group) => sum + group.dataList.length, 0)
+
+    printGreen(`频道数据获取完成: 咪咕 ${miguCount} 个，内置源 ${builtInCount} 个，外部源 ${externalCount} 个，抓取模块 ${extractorCount} 个`)
 
     return allChannels
     
@@ -212,6 +231,27 @@ async function updateBuiltInSources(options = {}) {
 }
 
 /**
+ * 更新抓取模块
+ *
+ * 返回值形状与 updateExternalSources 一致（success / results / partial），
+ * 好让 app.js 的定时器和后台按钮用同一套归类逻辑。
+ * @param {Object} options - { autoOnly, forceAll, onlyId }
+ */
+async function updateExtractors(options = {}) {
+  if (!enableExtractors) {
+    return { success: true, message: "抓取模块已禁用（enableExtractors=false）" }
+  }
+  const { updated, results, message } = await getExtractorManager().updateAll(options)
+  if (message) return { success: true, message }
+  if (!results.length) return { success: true, message: "无需更新" }
+
+  const successful = results.filter(r => r.success).length
+  if (successful === results.length) return { success: true, results, updated }
+  if (successful > 0) return { success: true, results, partial: true, updated }
+  return { success: false, results, updated }
+}
+
+/**
  * 获取外部源统计信息
  */
 function getExternalSourceStats() {
@@ -222,6 +262,7 @@ export {
   getAllChannels,
   updateExternalSources,
   updateBuiltInSources,
+  updateExtractors,
   getExternalSourceStats,
   externalSourceManager,
   builtInSourceManager,

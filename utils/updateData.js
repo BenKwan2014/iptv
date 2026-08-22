@@ -1,4 +1,4 @@
-import { getAllChannels, updateExternalSources, updateBuiltInSources, externalSourceManager } from "./channelMerger.js"
+import { getAllChannels, updateExternalSources, updateBuiltInSources, updateExtractors, externalSourceManager } from "./channelMerger.js"
 import { appendFile, appendFileSync, copyFileSync, renameFileSync, writeFile, writeFileSync } from "./fileUtil.js"
 import { updatePlaybackData } from "./playback.js"
 import { aggregateExternalEpg } from "./epgAggregator.js"
@@ -72,10 +72,14 @@ async function updateTV(hours, options = {}) {
       // 启动模式：只更新设置了 updateOnStartup: true 的源
       printBlue("启动模式：检查需要更新的外部源...")
       await updateExternalSources({ startupMode: true })
+      // 抓取模块启动时一律抓一轮：直播地址是短效的（B 站约 2 小时），
+      // 缓存里那份多半已经过期，不抓等于开机后一段时间全是死链。
+      await updateExtractors({ forceAll: true })
     } else {
       // 定时更新模式：更新所有设置了自动刷新的源（包括内置源和外部源）
       await updateBuiltInSources({ autoOnly: true })
       await updateExternalSources({ autoOnly: true })
+      await updateExtractors({ autoOnly: true })
     }
   }
   
@@ -143,7 +147,11 @@ async function updateTV(hours, options = {}) {
       const channelItem = data[j]
       
       const isBuiltIn = channelItem.source === 'built-in'
-      const isExternal = channelItem.source === 'external' || !!channelItem.url
+      // 抓取模块（extractors/）自成一类。必须排在 isExternal 之前判定并把它排除掉——
+      // isExternal 是靠「有没有 url」推断的，而模块频道也带 url，不排除就会被
+      // 外部源的 includeInPlaylists 开关连坐关掉，用户只看到频道没了、日志里什么都没有。
+      const isExtractor = channelItem.source === 'extractor'
+      const isExternal = !isExtractor && (channelItem.source === 'external' || !!channelItem.url)
       // 台标优先级：本地 logos/<频道名>.<ext>（用户后台上传或手动放，最高、仅查本地不联网）
       //   > 源自带台标（咪咕 pics / m3u 手写）> fanmingming 兜底（仅外部/内置）> 空。
       // 取图用「台标匹配名」做 key（issue #40）：CCTV1高清（电信）→ CCTV1、湖南卫视（电信）→ 湖南卫视，
@@ -156,16 +164,16 @@ async function updateTV(hours, options = {}) {
       if (!logoUrl) {
         logoUrl = channelItem.pics?.highResolutionH || channelItem.logo || ""
       }
-      if (!logoUrl && (isExternal || isBuiltIn) && externalLogoBase) {
+      if (!logoUrl && (isExternal || isBuiltIn || isExtractor) && externalLogoBase) {
         logoUrl = `${externalLogoBase}${encodeURIComponent(logoKey || channelItem.name)}.png`
       }
       
-      // 内置源使用playURL字段，外部源使用url字段，咪咕源构造URL
+      // 内置源使用playURL字段，外部源与抓取模块使用url字段，咪咕源构造URL
       let playUrl
       if (isBuiltIn) {
         playUrl = channelItem.playURL  // 内置源使用playURL
-      } else if (isExternal) {
-        playUrl = channelItem.url      // 外部源使用url
+      } else if (isExternal || isExtractor) {
+        playUrl = channelItem.url      // 外部源 / 抓取模块使用url
       } else {
         playUrl = `\${replace}/${channelItem.pID}`  // 咪咕源使用pID
       }
@@ -178,8 +186,8 @@ async function updateTV(hours, options = {}) {
       playlistChannelNames.push(channelItem.name)
 
       // regenerateOnly模式下跳过playback更新（仅更新播放列表）
-      // 内置源和外部源不需要playback数据
-      if (!isExternal && !isBuiltIn && !regenerateOnly) {
+      // 内置源、外部源、抓取模块都不需要 playback 数据（那是咪咕专属的回看接口）
+      if (!isExternal && !isBuiltIn && !isExtractor && !regenerateOnly) {
         // 咪咕成功写入 EPG 的频道记为「已覆盖」，外部 EPG 不再为其重复补充
         if (await updatePlaybackData(channelItem, playbackFile)) {
           epgCoveredKeys.add(normalizeKey(channelItem.name))
@@ -188,7 +196,7 @@ async function updateTV(hours, options = {}) {
 
       // 源归属属性（issue #29/#68 按档过滤源）：主来源 + 去重并入的多源归属；
       // 咪咕频道无 sourceId、以 pID 隐式识别为 'migu'。播放器输出前会剥离该内部属性。
-      const ownSourceId = channelItem.sourceId || (!isBuiltIn && !isExternal ? 'migu' : '')
+      const ownSourceId = channelItem.sourceId || (!isBuiltIn && !isExternal && !isExtractor ? 'migu' : '')
       const allSourceIds = [...new Set([ownSourceId, ...(channelItem.sourceIds || [])].filter(Boolean))]
       // 多源用分号分隔——EXTINF 频道名按「第一个逗号」解析，属性值里出现逗号会破坏频道名提取
       const sourceAttr = allSourceIds.length ? ` source-ids="${allSourceIds.join(';')}"` : ''

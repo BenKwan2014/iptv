@@ -31,6 +31,7 @@ const ENV_KEY_MAP = {
   enableMigu: 'menableMigu',
   enableBuiltInSources: 'menableBuiltInSources',
   enableBuiltInSubscriptions: 'menableBuiltInSubscriptions',
+  enableExtractors: 'menableExtractors',
   enableDisplayNameUnify: 'menableDisplayNameUnify',
   enableClientDispatch: 'menableClientDispatch'
 }
@@ -131,6 +132,9 @@ export function saveSystemConfigAPI(config) {
     }
     if (config.enableBuiltInSubscriptions !== undefined) {
       validated.enableBuiltInSubscriptions = config.enableBuiltInSubscriptions !== false
+    }
+    if (config.enableExtractors !== undefined) {
+      validated.enableExtractors = config.enableExtractors !== false
     }
     if (config.enableDisplayNameUnify !== undefined) {
       validated.enableDisplayNameUnify = config.enableDisplayNameUnify === true

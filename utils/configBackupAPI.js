@@ -15,6 +15,7 @@ import { writeJsonFileSync } from "./fileUtil.js"
 import { dataPath } from "./paths.js"
 import { reloadConfig } from "../config.js"
 import { clearUrlCache } from "./appUtils.js"
+import { getExtractorManager } from "./extractorManager.js"
 import { externalSourceManager } from "./channelMerger.js"
 import { userManager } from "./userManager.js"
 import update from "./updateData.js"
@@ -33,6 +34,7 @@ const FIXED_FILES = [
   'channel-aliases.json',
   'group-keyword-rules.json',
   'users.json',
+  'extractors.json',          // 抓取模块的开关与配置（抓取结果在 extractor-cache.json，不进备份）
 ]
 
 // 配置档独立配置的动态文件名：my-playlist-config.<档id>.json。
@@ -94,6 +96,7 @@ function refreshRuntime() {
   reloadConfig()
   externalSourceManager.sources = externalSourceManager.loadSources()
   userManager.load()
+  getExtractorManager().reload()
   clearUrlCache()
 }
 
