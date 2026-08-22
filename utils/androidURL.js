@@ -274,7 +274,11 @@ async function get302URL(resObj) {
 }
 
 function printLoginInfo(resObj) {
-  if (resObj.content.body?.auth?.logined) {
+  // content 可能是 null——rateType <= 1 时 getAndroidURL 直接返回 {url:"", content:null}
+  // （见本文件 :49-55）。而调用点 utils/appUtils.js:293 在 try 之外，app.js 的
+  // 请求 handler 也没有顶层 try，于是这里一个 TypeError 就让请求永远不 end：
+  // 客户端挂死到超时，服务端只在 unhandledRejection 留一行日志。
+  if (resObj?.content?.body?.auth?.logined) {
     printGreen("登录认证成功")
     if (resObj.content.body.auth.authResult == "FAIL") {
       printRed(`认证失败 视频内容不完整 可能缺少相关VIP: ${resObj.content.body.auth.resultDesc}`)
