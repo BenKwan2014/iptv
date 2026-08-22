@@ -1995,6 +1995,7 @@
                     <button class="mode-switch-btn" onclick="switchSettingsTab(2)">🗂️ 自动分组</button>
                     <button class="mode-switch-btn" onclick="switchSettingsTab(3)">📅 EPG 聚合</button>
                     <button class="mode-switch-btn" onclick="switchSettingsTab(4)">👤 用户管理</button>
+                    <button class="mode-switch-btn" onclick="switchSettingsTab(5)">🧩 源模块</button>
                 </div>
 
                 <div class="settings-subpanel active" id="settingsSub0">
@@ -2257,6 +2258,23 @@
                     </div>
                 </div>
                 </div>
+                <div class="settings-subpanel" id="settingsSub5">
+                <!-- 抓取模块（extractors/）：每个平台一个模块，独立开关与配置 -->
+                <div style="margin-top: 4px;">
+                    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+                        <div>
+                            <div style="font-size:16px; font-weight:600; color:#333;">🧩 源模块 <span style="font-size:12px; font-weight:600; color:#fff; background:#fa8c16; padding:1px 8px; border-radius:10px; vertical-align:middle;">测试中 Beta</span></div>
+                            <div class="system-config-hint">按平台抓取直播源，抓到的频道与咪咕 / 内置 / 外部源并列进播放列表。每个模块可单独开关，关掉即不联网、不出现在播放列表，配置原样保留、开回来即恢复。改动即时保存、无需重启。</div>
+                        </div>
+                        <label style="display:flex; align-items:center; gap:6px; white-space:nowrap;">
+                            <input type="checkbox" id="extractorsEnabled" onchange="setExtractorsEnabled(this.checked)">
+                            启用源模块
+                        </label>
+                    </div>
+
+                    <div id="extractorList" style="margin-top:14px;"></div>
+                </div>
+                </div>
             </div>
 
             <!-- 关于我们面板 -->
@@ -2402,6 +2420,7 @@
                 loadUsers();
                 loadAliases();
                 loadGroupRules();
+                loadExtractors();
             }
         }
 
@@ -2412,6 +2431,184 @@
         }
 
         // ===== EPG 节目单聚合（issue #38）=====
+        // ---- 抓取模块（extractors/）----
+        // 每次操作后端都返回整份最新状态，前端整体重渲染——不做增量补丁，
+        // 免得页面副本过期后把服务端的新数据（比如刚抓完的健康状态）回滚掉。
+        let extractorsState = { enabled: true, modules: [] };
+
+        async function loadExtractors() {
+            try {
+                const res = await fetch(API_PREFIX + '/api/extractors');
+                const payload = await res.json();
+                if (payload && payload.success && payload.data) {
+                    extractorsState = payload.data;
+                    renderExtractors();
+                }
+            } catch (e) {
+                console.error('加载抓取模块失败', e);
+            }
+        }
+
+        function extractorHealthHtml(h) {
+            const map = {
+                ok:     ['#52c41a', '正常'],
+                empty:  ['#faad14', '无频道'],
+                failed: ['#ff4d4f', '失败'],
+                risk:   ['#ff4d4f', '被风控'],
+                idle:   ['#999', '未抓取'],
+            };
+            const [color, text] = map[h.status] || map.idle;
+            const when = h.lastSuccessAt ? new Date(h.lastSuccessAt).toLocaleString() : '从未';
+            let extra = '';
+            if (h.skippedCount) extra += ' · 跳过 ' + h.skippedCount;
+            if (h.consecutiveFailures) extra += ' · 连续失败 ' + h.consecutiveFailures + ' 次';
+            let line = `<span style="color:${color};">● ${escapeHtml(text)}</span>` +
+                `<span style="color:#888;"> · 频道 ${h.channelCount || 0}${escapeHtml(extra)} · 上次成功 ${escapeHtml(when)}</span>`;
+            if (h.lastError) {
+                line += `<div style="color:#ff4d4f; font-size:12px; margin-top:4px; word-break:break-all;">${escapeHtml(h.lastError)}</div>`;
+            }
+            for (const w of (h.warnings || [])) {
+                line += `<div style="color:#faad14; font-size:12px; margin-top:4px; word-break:break-all;">${escapeHtml(w)}</div>`;
+            }
+            return line;
+        }
+
+        function extractorFieldHtml(moduleId, field, config, secretsSet, envProvided) {
+            const id = `xf-${moduleId}-${field.key}`;
+            const label = escapeHtml(field.label || field.key);
+            const hint = field.hint ? `<div style="font-size:12px; color:#888; margin-top:3px;">${escapeHtml(field.hint)}</div>` : '';
+            const envNote = envProvided[field.key]
+                ? `<div style="font-size:12px; color:#faad14; margin-top:3px;">当前值来自环境变量 <code>${escapeHtml(envProvided[field.key])}</code>，在此填写会覆盖它</div>`
+                : '';
+
+            if (field.type === 'boolean') {
+                return `<div style="margin-bottom:12px;">
+                    <label style="display:flex; align-items:center; gap:6px;">
+                        <input type="checkbox" id="${id}" ${config[field.key] !== false ? 'checked' : ''}>
+                        ${label}
+                    </label>${hint}</div>`;
+            }
+            if (field.type === 'int') {
+                return `<div style="margin-bottom:12px;">
+                    <label style="display:block; font-size:12px; color:#888;">${label}</label>
+                    <input type="number" id="${id}" value="${escapeHtml(config[field.key] != null ? config[field.key] : '')}" style="width:140px;">
+                    ${hint}</div>`;
+            }
+            if (field.secret) {
+                // 后端从不回传凭据明文，只回传「有没有值」。留空即不修改。
+                const ph = secretsSet[field.key] ? '已设置，留空则不修改' : '未设置';
+                return `<div style="margin-bottom:12px;">
+                    <label style="display:block; font-size:12px; color:#888;">${label}</label>
+                    <input type="password" id="${id}" value="" placeholder="${escapeHtml(ph)}" autocomplete="new-password" style="width:100%;">
+                    ${hint}${envNote}</div>`;
+            }
+            if (field.multiline) {
+                return `<div style="margin-bottom:12px;">
+                    <label style="display:block; font-size:12px; color:#888;">${label}</label>
+                    <textarea id="${id}" rows="6" placeholder="${escapeHtml(field.placeholder || '')}" style="width:100%; font-family:monospace;">${escapeHtml(config[field.key] || '')}</textarea>
+                    ${hint}</div>`;
+            }
+            return `<div style="margin-bottom:12px;">
+                <label style="display:block; font-size:12px; color:#888;">${label}</label>
+                <input type="text" id="${id}" value="${escapeHtml(config[field.key] || '')}" placeholder="${escapeHtml(field.placeholder || '')}" style="width:100%;">
+                ${hint}</div>`;
+        }
+
+        function renderExtractors() {
+            const box = document.getElementById('extractorList');
+            if (!box) return;
+            const cb = document.getElementById('extractorsEnabled');
+            if (cb) cb.checked = extractorsState.enabled !== false;
+
+            let html = '';
+            if (extractorsState.corrupt) {
+                html += `<div style="border:1px solid #ff4d4f; background:#fff1f0; border-radius:6px; padding:10px; margin-bottom:10px; color:#a8071a;">
+                    配置文件损坏，已保留原文件并另存 <code>.corrupt</code> 副本；在修复前所有改动都会被拒绝，以免覆盖你的原数据。<br>
+                    <span style="font-size:12px;">${escapeHtml(extractorsState.corrupt.message || '')}</span>
+                </div>`;
+            }
+            const modules = extractorsState.modules || [];
+            if (!modules.length) {
+                box.innerHTML = html + '<div class="system-config-hint" style="margin:0;">本版本没有内置任何抓取模块。</div>';
+                return;
+            }
+
+            html += modules.map(m => `
+                <div style="border:1px solid #eee; border-radius:6px; padding:12px; margin-bottom:10px;">
+                    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+                        <label style="display:flex; align-items:center; gap:6px; min-width:0;">
+                            <input type="checkbox" ${m.enabled ? 'checked' : ''} onchange="toggleExtractorModule('${escapeHtml(m.id)}', this.checked)">
+                            <strong>${escapeHtml(m.name)}</strong>
+                        </label>
+                        <button class="btn btn-sm" onclick="refreshExtractorNow('${escapeHtml(m.id)}')">🔄 立即刷新</button>
+                    </div>
+                    <div style="font-size:12px; color:#888; margin:4px 0;">${escapeHtml(m.description || '')}</div>
+                    <div style="font-size:12px; margin-bottom:10px;">${extractorHealthHtml(m.health || {})}</div>
+                    <div style="border-top:1px solid #f5f5f5; padding-top:10px;">
+                        ${(m.configSchema || []).map(f => extractorFieldHtml(m.id, f, m.config || {}, m.secretsSet || {}, m.envProvided || {})).join('')}
+                        <div style="margin-bottom:12px;">
+                            <label style="display:block; font-size:12px; color:#888;">刷新间隔（分钟）</label>
+                            <input type="number" id="xf-${escapeHtml(m.id)}-__refresh" value="${m.refreshMinutes}" style="width:140px;">
+                            <div style="font-size:12px; color:#888; margin-top:3px;">默认 ${m.defaultRefreshMinutes} 分钟。直播地址是短效的（B 站约 2 小时过期），间隔不要设得比它长。</div>
+                        </div>
+                        <button class="btn btn-sm btn-success" onclick="saveExtractorConfig('${escapeHtml(m.id)}')">💾 保存配置</button>
+                    </div>
+                </div>`).join('');
+            box.innerHTML = html;
+        }
+
+        async function extractorPost(body) {
+            const res = await fetch(API_PREFIX + '/api/extractors', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            return await res.json();
+        }
+
+        function applyExtractorResult(r, okMessage) {
+            if (r && r.success) {
+                if (r.data) { extractorsState = r.data; renderExtractors(); }
+                showStatus(r.message || okMessage, 'success');
+            } else {
+                showStatus((r && r.message) || '操作失败', 'error');
+                loadExtractors();
+            }
+        }
+
+        async function setExtractorsEnabled(on) {
+            applyExtractorResult(await extractorPost({ action: 'toggle', enabled: on }), on ? '源模块已启用' : '源模块已关闭');
+        }
+
+        async function toggleExtractorModule(id, on) {
+            applyExtractorResult(await extractorPost({ action: 'toggleModule', id, enabled: on }), on ? '模块已启用' : '模块已关闭');
+        }
+
+        async function saveExtractorConfig(id) {
+            const module = (extractorsState.modules || []).find(m => m.id === id);
+            if (!module) return;
+            const config = {};
+            for (const field of module.configSchema || []) {
+                const el = document.getElementById(`xf-${id}-${field.key}`);
+                if (!el) continue;
+                if (field.type === 'boolean') config[field.key] = el.checked;
+                else config[field.key] = el.value;
+            }
+            const refreshEl = document.getElementById(`xf-${id}-__refresh`);
+            const body = { action: 'saveConfig', id, config };
+            if (refreshEl) body.refreshMinutes = refreshEl.value;
+            // 改配置要重抓才有新频道（重生成只是把已抓到的重新写一遍），所以这里
+            // 提示走「立即刷新」，而不是像开关那样自动重生成播放列表。
+            applyExtractorResult(await extractorPost(body), '配置已保存。改动需要重新抓取才生效——点「立即刷新」，或等下一轮自动刷新');
+        }
+
+        async function refreshExtractorNow(id) {
+            const r = await extractorPost({ action: 'refresh', id });
+            applyExtractorResult(r, '已开始刷新');
+            // 抓取是后台跑的，隔几秒回来看结果
+            setTimeout(loadExtractors, 6000);
+        }
+
         async function loadEpgSources() {
             try {
                 const res = await fetch(API_PREFIX + '/api/epg-sources');
@@ -2868,6 +3065,9 @@
 
                 // 加载 EPG 聚合源配置（issue #38）；失败不影响其余加载
                 loadEpgSources();
+
+                // 加载抓取模块状态；失败不影响其余加载
+                loadExtractors();
 
                 // 加载用户管理（一人一源）；失败不影响其余加载
                 loadUsers();
