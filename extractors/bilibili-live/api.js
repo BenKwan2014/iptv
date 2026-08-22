@@ -1,0 +1,324 @@
+/**
+ * 哔哩哔哩直播的平台知识层：房间号归一、三个 API 调用、选流、组频道对象。
+ *
+ * 这一层刻意只做「输入 → 频道对象」，不碰磁盘、不读全局配置、不写播放列表，
+ * 所以可以整层单测。调度、缓存、健康记账都在 utils/extractorManager.js。
+ *
+ * 移植自 bili-live-m3u（Python），几处刻意不照抄，理由都写在各自函数上。
+ */
+import fetch from 'node-fetch'
+
+const API = 'https://api.live.bilibili.com'
+export const REFERER = 'https://live.bilibili.com/'
+export const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
+  + '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+
+// 画质档位。高清以上要登录态，顶档还要大会员——服务端不会拒绝请求，而是
+// 静默降档，所以实际给到哪一档值得报出来（也是判断 cookie 有没有生效的信号）。
+const QN_NAMES = {
+  30000: '杜比', 20000: '4K', 10000: '原画',
+  400: '蓝光', 250: '超清', 150: '高清', 80: '流畅',
+}
+
+const DEFAULT_GROUP = '哔哩哔哩直播'
+
+/** 一间房失败。其余房间照常，不影响整张播放列表。 */
+export class RoomError extends Error {
+  constructor(message) {
+    super(message)
+    this.name = 'RoomError'
+  }
+}
+
+/**
+ * 触发了 B 站风控（code -352）。
+ *
+ * 必须与 RoomError 区分开：风控不是「这一间房失败」而是「所有房间同时失败」，
+ * 但表现出来是一串 skipped，和「所有主播都下播了」长得一模一样。不单独识别的话，
+ * 用户看到的是「频道全没了」而没有任何线索。
+ */
+export class RiskControlError extends Error {
+  constructor(message) {
+    super(message)
+    this.name = 'RiskControlError'
+  }
+}
+
+/**
+ * 私有的 HTTP 取数。刻意不复用 utils/net.js 的 fetchUrl——它恒调 .json()、
+ * 失败返回 undefined 而不抛、还会 printRed 刷屏；而这里需要读 HTTP 状态码、
+ * 需要按 code 分辨风控、需要把错误结构化交给 health() 展示。
+ */
+async function apiGet(path, params, { cookie, timeoutMs = 10000 } = {}) {
+  const url = `${API}${path}?${new URLSearchParams(params)}`
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+  let payload
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': UA,
+        Referer: REFERER,
+        Accept: 'application/json',
+        ...(cookie ? { Cookie: cookie } : {}),
+      },
+      signal: controller.signal,
+    })
+    if (!response.ok) throw new RoomError(`HTTP ${response.status} from ${path}`)
+    payload = await response.json()
+  } catch (error) {
+    if (error instanceof RoomError) throw error
+    // AbortError 的 message 是 'The operation was aborted'，对用户没有信息量
+    const reason = error.name === 'AbortError' ? `超时 ${timeoutMs}ms` : error.message
+    throw new RoomError(`${path} 请求失败: ${reason}`)
+  } finally {
+    clearTimeout(timer)
+  }
+
+  if (payload?.code !== 0) {
+    const message = payload?.message || payload?.code
+    if (payload?.code === -352) throw new RiskControlError(`B 站风控 (-352): ${message}`)
+    throw new RoomError(`${path}: ${message}`)
+  }
+  return payload.data || {}
+}
+
+/**
+ * 房间号归一：纯数字 / 房间 URL / b23.tv 短链 三种写法都认。
+ *
+ * 与 Python 版的两处差异：
+ * 1. 先做全角→半角。Python 的 str.isdigit() 是 Unicode 感知的，「１３」会被当成
+ *    房间号发出去（必然失败）；JS 的 /^\d+$/ 只匹配 ASCII，会直接报「不是房间号」。
+ *    两种都不好，归一之后两种输入都能用。
+ * 2. 短链跟随显式限制跳数并把最终地址写进错误信息，避免跳转环。
+ */
+export async function normalizeRoom(rawToken, { timeoutMs = 10000 } = {}) {
+  const token = toHalfWidth(String(rawToken || '').trim())
+  if (!token) throw new RoomError('空的房间标识')
+
+  if (/^\d+$/.test(token)) return token
+
+  const direct = token.match(/live\.bilibili\.com\/(?:h5\/)?(\d+)/)
+  if (direct) return direct[1]
+
+  if (token.includes('b23.tv/') || token.includes('bili2233.cn/')) {
+    const url = token.startsWith('http') ? token : `https://${token}`
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    let finalUrl
+    try {
+      // follow=默认跟随；node-fetch 的 res.url 给出最终地址，等价于 Python 的 geturl()
+      const response = await fetch(url, {
+        headers: { 'User-Agent': UA },
+        redirect: 'follow',
+        follow: 5,
+        signal: controller.signal,
+      })
+      finalUrl = response.url
+    } catch (error) {
+      throw new RoomError(`短链跟随失败 ${token}: ${error.message}`)
+    } finally {
+      clearTimeout(timer)
+    }
+    const resolved = String(finalUrl || '').match(/live\.bilibili\.com\/(?:h5\/)?(\d+)/)
+    if (resolved) return resolved[1]
+    throw new RoomError(`${token} 不指向直播间 (-> ${finalUrl})`)
+  }
+
+  throw new RoomError(`不是房间号或直播间地址: ${token}`)
+}
+
+/** 全角数字/字母 → 半角。用户从手机复制过来常带全角。 */
+function toHalfWidth(text) {
+  return text.replace(/[！-～]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
+}
+
+/**
+ * 房间基本信息。room_id 统一转成字符串——API 返回的是数字，而归一出来的是
+ * 字符串，混用会让后面拿它当 Map key 或做 === 比较时踩到类型不一致。
+ */
+export async function roomInfo(roomId, options) {
+  const data = await apiGet('/room/v1/Room/get_info', { room_id: roomId }, options)
+  return {
+    // 短号会解析到真实房间号，一律以 API 返回的为准
+    roomId: String(data.room_id || roomId),
+    uid: data.uid,
+    title: (data.title || '').trim(),
+    live: data.live_status === 1,
+    area: (data.parent_area_name || data.area_name || '').trim(),
+  }
+}
+
+/** 主播名与头像。纯装饰，失败不能连累整间房。 */
+export async function anchorInfo(uid, options) {
+  try {
+    const data = await apiGet('/live_user/v1/Master/info', { uid }, options)
+    const info = data.info || {}
+    return { name: (info.uname || '').trim(), avatar: (info.face || '').trim() }
+  } catch (error) {
+    // 风控要往上抛：它不是「这条装饰信息拿不到」，而是整轮都会失败的信号
+    if (error instanceof RiskControlError) throw error
+    return { name: '', avatar: '', warning: `主播信息获取失败: ${error.message}` }
+  }
+}
+
+/**
+ * 从 protocol/format/codec 三层矩阵里挑一条能播的地址。
+ *
+ * 与 Python 版的差异：codec 层加了 avc 优先。请求里带的是 codec="0,1"，
+ * 返回顺序由 B 站决定，Python 版直接取第一个，于是可能拿到一条部分播放器
+ * （尤其电视盒子）解不了的 HEVC 流，而且取到哪个取决于当天的返回顺序——
+ * 是不确定的行为。这里显式排序，默认 avc。
+ */
+export async function pickStream(roomId, { preferHls = true, preferAvc = true, ...options } = {}) {
+  const data = await apiGet('/xlive/web-room/v2/index/getRoomPlayInfo', {
+    room_id: roomId,
+    protocol: '0,1',   // 0 = http_stream (flv), 1 = http_hls
+    format: '0,1,2',   // flv / ts / fmp4
+    codec: '0,1',      // avc / hevc
+    qn: 10000,         // 原画；房间自己会封顶
+    platform: 'web',
+    ptype: 8,
+  }, options)
+
+  return selectFromPlayurl(data, { preferHls, preferAvc })
+}
+
+/**
+ * 从 getRoomPlayInfo 的返回里挑地址。纯函数——抽出来是为了能单测选流偏好，
+ * 这是整个模块里最容易静默选错、又最难在真实环境复现的一段。
+ */
+export function selectFromPlayurl(data, { preferHls = true, preferAvc = true } = {}) {
+  const streams = data?.playurl_info?.playurl?.stream || []
+  if (!streams.length) throw new RoomError('playurl 里没有 stream（未开播或地区限制）')
+
+  const wantProtocol = preferHls ? 'http_hls' : 'http_stream'
+  const wantCodec = preferAvc ? 'avc' : 'hevc'
+  const byName = (want) => (a, b) =>
+    (a === want ? 0 : 1) - (b === want ? 0 : 1)
+
+  const sortedStreams = [...streams].sort((a, b) =>
+    byName(wantProtocol)(a.protocol_name, b.protocol_name))
+
+  for (const stream of sortedStreams) {
+    for (const format of stream.format || []) {
+      const codecs = [...(format.codec || [])].sort((a, b) =>
+        byName(wantCodec)(a.codec_name, b.codec_name))
+      for (const codec of codecs) {
+        const base = codec.base_url || ''
+        for (const hostInfo of codec.url_info || []) {
+          const host = hostInfo.host || ''
+          const extra = hostInfo.extra || ''
+          // 必须是裸字符串相加：extra 里那段带 expires token 的 query
+          // 一旦经过 new URL() 或 url.resolve() 就会被丢掉或重新编码，地址直接失效
+          if (host && base) return { url: `${host}${base}${extra}`, qn: codec.current_qn }
+        }
+      }
+    }
+  }
+
+  throw new RoomError('playurl 里没有可用的 host/base_url')
+}
+
+/**
+ * 解析一间房 → 一个频道对象。
+ *
+ * 返回的对象形状必须与 externalSources/builtInSources 的 getValidChannels()
+ * 同构，才能被 channelMerger 原样吞下（见 utils/channelMerger.js 的合并逻辑）。
+ */
+export async function resolveRoom(roomRef, options = {}) {
+  const { cookie, preferHls = true, preferAvc = true, cachingMs = 3000, timeoutMs } = options
+  const netOptions = { cookie, timeoutMs }
+
+  const roomId = await normalizeRoom(roomRef, netOptions)
+  const info = await roomInfo(roomId, netOptions)
+  if (!info.live) throw new RoomError('未开播')
+
+  const { url, qn } = await pickStream(info.roomId, { preferHls, preferAvc, ...netOptions })
+  const anchor = info.uid
+    ? await anchorInfo(info.uid, netOptions)
+    : { name: '', avatar: '' }
+
+  const displayName = anchor.name || `房间 ${info.roomId}`
+  const tier = QN_NAMES[qn] || (qn ? String(qn) : '?')
+  const name = `[${tier}] ` + (info.title ? `${displayName} · ${info.title}` : displayName)
+
+  // 请求头交给 utils/channelOpts.js 渲染，这里只产出结构化的 key=value；
+  // 不要自己做 M3U 转义，否则会与生成侧的消毒重复转义。
+  //
+  // 实测卡的是 UA 不是 Referer（裸请求 403 / 只给 Referer 仍 403 / 只给 UA 就 200），
+  // 但两条都发：校验口径 B 站随时可能调，多一个头没有代价。
+  const opts = [
+    `http-referrer=${REFERER}`,
+    `http-user-agent=${UA}`,
+    ...(cachingMs ? [`network-caching=${cachingMs}`] : []),
+  ]
+
+  return {
+    channel: {
+      name: sanitizeText(name),
+      logo: anchor.avatar || '',
+      url,
+      opts,
+      groupTitle: sanitizeText(info.area || DEFAULT_GROUP),
+    },
+    group: sanitizeText(info.area || DEFAULT_GROUP),
+    warning: anchor.warning,
+  }
+}
+
+/**
+ * 频道名/分组名去掉换行与引号。
+ *
+ * 引号换成单引号是因为 EXTINF 的属性值是双引号包裹的（见 updateData.js 的
+ * tvg-id="${channelItem.name}"）——一个裸双引号会把整行语法撑坏，
+ * 这与 utils/externalSources.js:11-18 处理 issue #84 时的顾虑是同一个。
+ */
+function sanitizeText(text) {
+  return String(text || '').replace(/[\r\n]+/g, ' ').replace(/"/g, "'").trim()
+}
+
+/**
+ * 解析房间清单文本：一行一个，`#` 之后是注释。
+ *
+ * 与 Python 版差异：只有当这一行不像 URL 时才按 `#` 剥注释。Python 版无条件
+ * 按 `#` 切，会把带 fragment 的地址截断；而 B 站分享链接确实可能带 `#`。
+ */
+export function parseRoomList(text) {
+  const rooms = []
+  for (const raw of String(text || '').split('\n')) {
+    let line = raw.trim()
+    if (!line || line.startsWith('#')) continue
+    // 形如 `13   # 备注`：URL 之外的写法才剥行尾注释
+    if (!/^https?:\/\//i.test(line)) {
+      line = line.split('#')[0].trim()
+    } else {
+      // URL 后面跟注释的写法：`https://... # 备注`——按空白切，fragment 得以保留
+      line = line.split(/\s+/)[0]
+    }
+    if (line) rooms.push(line)
+  }
+  return rooms
+}
+
+/**
+ * 有上限的并发映射。
+ *
+ * 不用 Promise.all 全量并发：B 站对短时间大量请求会回 -352 风控，而外部源那边
+ * 「串行 + 每个之间硬睡 2 秒」又太慢（房间一多就是分钟级）。折中成小并发。
+ */
+export async function mapLimit(items, limit, worker) {
+  const results = new Array(items.length)
+  let cursor = 0
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++
+      results[index] = await worker(items[index], index)
+    }
+  })
+  await Promise.all(runners)
+  return results
+}
+
+export { QN_NAMES, DEFAULT_GROUP }
