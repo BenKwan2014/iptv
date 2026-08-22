@@ -247,6 +247,15 @@ check('全网失败判失败、全体没开播判成功——决定要不要清�
   assert.equal(shouldFailRound(2, 5), false, '有成功的就不算整轮失败，失败的那几间进 skipped')
 })
 
+check('咪咕已收编成模块，且三条 wire format 保持不变', () => {
+  const migu = getModule('migu')
+  assert.ok(migu, '咪咕应当在注册表里')
+  assert.equal(migu.sourceId, 'migu', 'source-ids 必须保持字面量，老用户「按档禁用源」存的就是它')
+  assert.equal(typeof migu.enabledGetter, 'function', '开关要代理到 config.js 的 enableMigu')
+  assert.equal(migu.capabilities.cache, 'memory', '175 个频道带全部原始字段，不该落盘')
+})
+
+
 // ---- 管理器 ----
 
 const tmp = mkdtempSync(join(tmpdir(), 'iptv-extractors-test-'))
@@ -271,6 +280,20 @@ const oneGroup = [{
 }]
 
 try {
+  check('代理开关的模块不受抓取子系统总开关约束', () => {
+    // config.js 明写「可 mblank=true + menableMigu=true 单独留咪咕」。
+    // 咪咕若被 enableExtractors / 文件级开关一起管掉，这个既有组合就废了。
+    const manager = newManager()
+    manager.setEnabled(false)
+    assert.equal(manager.isModuleEnabled(getModule('migu')), true, '咪咕只听 enableMigu')
+    assert.equal(manager.isModuleEnabled(getModule('bilibili-live')), false, '普通模块受总开关约束')
+  })
+
+  check('代理开关的模块不能从「源模块」页改开关，要指明去哪改', () => {
+    const manager = newManager()
+    assert.throws(() => manager.setModuleEnabled('migu', false), /系统配置/)
+  })
+
   check('输出：频道被盖上 source=extractor 与 xt: 命名空间的 sourceId', () => {
     const manager = newManager()
     manager.setModuleEnabled('bilibili-live', true)
@@ -315,11 +338,13 @@ try {
     assert.deepEqual(manager.getValidChannels(), [], '文件级总开关关掉后不该出频道')
   })
 
+  // 以下用例一律带 onlyId：注册表里还有咪咕，不限定的话 updateAll 会去抓真实的
+  // 咪咕接口——测试不该联网，也不该受它成败影响。
   await checkAsync('总开关在抓取入口也要挡——关掉后不联网', async () => {
     const manager = newManager()
     manager.setModuleEnabled('bilibili-live', true)
     manager.setEnabled(false)
-    const result = await manager.updateAll({ forceAll: true })
+    const result = await manager.updateAll({ forceAll: true, onlyId: 'bilibili-live' })
     assert.equal(result.updated, false)
     assert.match(result.message, /整体关闭/)
   })
@@ -327,7 +352,7 @@ try {
   await checkAsync('禁用的模块不参与抓取', async () => {
     const manager = newManager()
     manager.setModuleEnabled('bilibili-live', false)
-    const result = await manager.updateAll({ forceAll: true })
+    const result = await manager.updateAll({ forceAll: true, onlyId: 'bilibili-live' })
     assert.deepEqual(result.results, [])
   })
 
@@ -335,7 +360,7 @@ try {
     const manager = newManager()
     manager.setModuleEnabled('bilibili-live', true)
     manager.updateModuleConfig('bilibili-live', { rooms: '' })
-    const result = await manager.updateAll({ forceAll: true })
+    const result = await manager.updateAll({ forceAll: true, onlyId: 'bilibili-live' })
     assert.equal(result.results[0].success, true)
     const state = manager.getState()
     const module = state.modules.find(m => m.id === 'bilibili-live')
@@ -414,4 +439,4 @@ try {
   rmSync(tmp, { recursive: true, force: true })
 }
 
-console.log(`\n全部通过：${passed}/38 ✅`)
+console.log(`\n全部通过：${passed}/41 ✅`)

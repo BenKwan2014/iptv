@@ -20,6 +20,7 @@ import { dataPath } from "./paths.js"
 import { sanitizeOpts } from "./channelOpts.js"
 import { listModules, getModule, sourceIdOf } from "../extractors/registry.js"
 import { printBlue, printGreen, printRed, printYellow } from "./colorOut.js"
+import { enableExtractors } from "../config.js"
 
 const CONFIG_FILE = 'extractors.json'
 const CACHE_FILE = 'extractor-cache.json'
@@ -248,7 +249,15 @@ class ExtractorManager {
    * app.js 等多处直接 import，不能在 extractors.json 里另开一份，否则两个开关打架。
    */
   isModuleEnabled(module) {
-    if (typeof module.enabledGetter === 'function') return !!module.enabledGetter()
+    if (typeof module.enabledGetter === 'function') {
+      // 代理开关的模块**不受**抓取子系统的两级总开关约束，只听自己那一个。
+      // 咪咕的开关一直是 config.js 的 enableMigu，config.js 里明写着
+      // 「可 mblank=true + menableMigu=true 单独留咪咕」——被 enableExtractors
+      // 一起管掉的话，这个既有组合就废了，是对存量用户的破坏性变更。
+      return !!module.enabledGetter()
+    }
+    if (!enableExtractors) return false
+    if (this.config.enabled === false) return false
     return this.#entry(module.id).enabled
   }
 
@@ -256,6 +265,11 @@ class ExtractorManager {
     if (typeof module.enabledSetter === 'function') {
       module.enabledSetter(!!on)
       return
+    }
+    if (typeof module.enabledGetter === 'function') {
+      // 开关读的是别处（如咪咕读 config.js 的 enableMigu），写到 extractors.json
+      // 不会有任何效果。与其静默无效，不如告诉用户该去哪改。
+      throw new Error(`${module.name} 的开关在「系统配置」页，不在这里`)
     }
     this.#entry(module.id).enabled = !!on
   }
@@ -423,6 +437,26 @@ class ExtractorManager {
   }
 
   /**
+   * 冷缓存兜底：启用了但一条缓存都没有的模块，现抓一次。
+   *
+   * cache:'memory' 的模块（咪咕）重启后缓存是空的，而 regenerateOnly 那轮不会
+   * 触发抓取——不兜底的话，重启后第一次「仅重新生成播放列表」会把它的频道全丢了。
+   * 这与收编前 channelMerger 里「缓存未初始化，执行完整更新」的降级是同一语义。
+   */
+  async ensureWarm() {
+    if (!this.loaded) this.load()
+    const cold = listModules().filter(module =>
+      this.isModuleEnabled(module) && this.#cacheEntry(module.id).groups.length === 0
+        && !this.#cacheEntry(module.id).health.lastSuccessAt)
+    if (!cold.length) return { updated: false, results: [] }
+    printYellow(`抓取模块缓存未初始化，现抓一次：${cold.map(m => m.name).join('、')}`)
+    const results = []
+    for (const module of cold) results.push(await this.#runOne(module))
+    this.#saveCache()
+    return { updated: results.some(r => r.success), results }
+  }
+
+  /**
    * 跑一轮。
    * @param {object} options
    *   autoOnly    只跑到点该刷新的（周期 tick 用）
@@ -433,12 +467,9 @@ class ExtractorManager {
   async updateAll({ autoOnly = false, forceAll = false, onlyId = null } = {}) {
     if (!this.loaded) this.load()
 
-    // 总开关在抓取入口也要判——外部源那边只在输出处判，后台的「全部更新」
-    // 按钮直连 manager 绕过了守卫，功能被全局关掉时照样会联网。
-    if (this.config.enabled === false) {
-      return { updated: false, results: [], message: '抓取模块已在设置里整体关闭' }
-    }
-
+    // 总开关在抓取入口也要判（外部源那边只在输出处判，后台按钮绕过了守卫，
+    // 功能被全局关掉时照样会联网）——但判定在 isModuleEnabled 里，因为代理
+    // 开关的模块要绕过它。全部模块都被挡住时给一句明确的说明。
     const targets = listModules().filter(module => {
       if (onlyId && module.id !== onlyId) return false
       if (!this.isModuleEnabled(module)) return false
@@ -447,7 +478,12 @@ class ExtractorManager {
       return true
     })
 
-    if (!targets.length) return { updated: false, results: [] }
+    if (!targets.length) {
+      const allGated = !enableExtractors || this.config.enabled === false
+      return allGated
+        ? { updated: false, results: [], message: '抓取模块已整体关闭' }
+        : { updated: false, results: [] }
+    }
 
     const results = []
     let updated = false
@@ -501,8 +537,7 @@ class ExtractorManager {
    */
   getValidChannels() {
     if (!this.loaded) this.load()
-    if (this.config.enabled === false) return []
-
+    // 总开关的判定下沉到 isModuleEnabled——代理开关的模块（咪咕）要绕过它
     const groupMap = new Map()
     for (const module of listModules()) {
       if (!this.isModuleEnabled(module)) continue
