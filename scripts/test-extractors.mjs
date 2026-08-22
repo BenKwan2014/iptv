@@ -368,6 +368,30 @@ try {
     assert.equal(module.health.lastSuccessAt, null, '配置变了，上一轮结果不再代表当前配置')
   })
 
+  check('deferredRef 原样透传，供写盘落成 ${replace}/<ref>', () => {
+    // 延迟解析模块（咪咕将来就是这个形态）产出 ref 而不是 url。
+    // ref 必须保持单个路径段：buildChannelId 用 /^\$\{replace\}\/([^/?#]+)/ 取
+    // 频道主键，多段会失配、让老用户的「我的频道」配置一次性作废。
+    const manager = newManager()
+    manager.setModuleEnabled('bilibili-live', true)
+    seed(manager, [{ name: 'G', dataList: [{ name: 'CCTV1', deferredRef: 608807420 }] }])
+    const [channel] = manager.getValidChannels()[0].dataList
+    assert.equal(channel.deferredRef, '608807420', '数字要归一成字符串')
+    assert.ok(!channel.deferredRef.includes('/'), 'ref 不能含斜杠')
+  })
+
+  check('cache:disk 的模块：结果与健康状态都落盘', () => {
+    // cache:'memory' 的分支目前没有模块声明（咪咕收编时才会用到），故此处未覆盖。
+    const manager = newManager()
+    manager.setModuleEnabled('bilibili-live', true)
+    seed(manager, oneGroup)
+    manager.updateModuleConfig('bilibili-live', { rooms: '13' })   // 这条会写缓存
+    const onDisk = JSON.parse(readFileSync(manager.cachePath, 'utf-8'))
+    // bilibili-live 声明的是 cache:'disk'，所以这里应当落盘
+    assert.ok(onDisk.modules['bilibili-live'].groups.length > 0, 'disk 模块的结果要落盘')
+    assert.ok(onDisk.modules['bilibili-live'].health, '健康状态要落盘')
+  })
+
   check('刷新间隔默认取模块声明值，且远小于 B 站地址的 2 小时有效期', () => {
     const manager = newManager()
     const module = manager.getState().modules.find(m => m.id === 'bilibili-live')
@@ -390,4 +414,4 @@ try {
   rmSync(tmp, { recursive: true, force: true })
 }
 
-console.log(`\n全部通过：${passed}/36 ✅`)
+console.log(`\n全部通过：${passed}/38 ✅`)

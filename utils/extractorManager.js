@@ -220,11 +220,45 @@ class ExtractorManager {
     writeJsonFileSync(this.configPath, this.config)
   }
 
+  /**
+   * 写缓存文件。声明 cache:'memory' 的模块只把 groups 留在内存——咪咕那种
+   * 「结果大、每轮都变、原始字段全带着」的模块落盘纯属浪费（外部源那边把
+   * parsedChannels 塞进配置文件，实测两个源就 116KB）。健康状态仍然落盘，
+   * 否则重启后后台就看不到上次抓取结果了。
+   */
   #saveCache() {
-    writeJsonFileSync(this.cachePath, this.cache)
+    const persisted = { modules: {} }
+    for (const [id, entry] of Object.entries(this.cache.modules)) {
+      const module = getModule(id)
+      const memoryOnly = module?.capabilities?.cache === 'memory'
+      persisted.modules[id] = memoryOnly
+        ? { groups: [], health: entry.health, memoryOnly: true }
+        : entry
+    }
+    writeJsonFileSync(this.cachePath, persisted)
   }
 
   // ---- 模块状态 ----
+
+  /**
+   * 模块是否启用。
+   *
+   * 模块可以声明 enabledGetter/enabledSetter 把开关代理到别处——收编既有源时
+   * 必须这样：咪咕的开关是 config.js 的 enableMigu，被 updateData / channelMerger /
+   * app.js 等多处直接 import，不能在 extractors.json 里另开一份，否则两个开关打架。
+   */
+  isModuleEnabled(module) {
+    if (typeof module.enabledGetter === 'function') return !!module.enabledGetter()
+    return this.#entry(module.id).enabled
+  }
+
+  #setModuleEnabledValue(module, on) {
+    if (typeof module.enabledSetter === 'function') {
+      module.enabledSetter(!!on)
+      return
+    }
+    this.#entry(module.id).enabled = !!on
+  }
 
   #entry(id) {
     if (!this.config.modules[id]) this.config.modules[id] = { enabled: false, config: {} }
@@ -263,6 +297,7 @@ class ExtractorManager {
       const entry = this.#entry(module.id)
       const cacheEntry = this.#cacheEntry(module.id)
       const effective = this.effectiveConfig(module)
+      const enabled = this.isModuleEnabled(module)
       const { config, secretsSet } = redactConfig(module, effective)
       // 值来自环境变量而非后台时要让用户知道，否则会遇到「后台看着是空的、
       // 但确实在生效」这种没有任何线索的状态
@@ -276,7 +311,10 @@ class ExtractorManager {
         id: module.id,
         name: module.name,
         description: module.description || '',
-        enabled: entry.enabled,
+        enabled,
+        // 开关代理到别处（如咪咕代理到 config.js 的 enableMigu）时告诉前端，
+        // 否则用户会在两个地方看到同一个开关而不知道改哪个。
+        enabledProxied: typeof module.enabledGetter === 'function',
         configSchema: module.configSchema || [],
         config,
         secretsSet,
@@ -300,8 +338,9 @@ class ExtractorManager {
   }
 
   setModuleEnabled(id, on) {
-    if (!getModule(id)) throw new Error(`未知的抓取模块: ${id}`)
-    this.#entry(id).enabled = !!on
+    const module = getModule(id)
+    if (!module) throw new Error(`未知的抓取模块: ${id}`)
+    this.#setModuleEnabledValue(module, on)
     this.#saveConfig()
     return this.getState()
   }
@@ -402,7 +441,7 @@ class ExtractorManager {
 
     const targets = listModules().filter(module => {
       if (onlyId && module.id !== onlyId) return false
-      if (!this.#entry(module.id).enabled) return false
+      if (!this.isModuleEnabled(module)) return false
       if (forceAll || onlyId) return true
       if (autoOnly) return this.#needsRefresh(module, Date.now())
       return true
@@ -466,8 +505,11 @@ class ExtractorManager {
 
     const groupMap = new Map()
     for (const module of listModules()) {
-      if (!this.#entry(module.id).enabled) continue
-      const sourceId = sourceIdOf(module.id)
+      if (!this.isModuleEnabled(module)) continue
+      // 模块可以自己声明 sourceId。收编既有源时必须这样——比如咪咕的归属在
+      // 老用户的「按配置档禁用源」配置里存的是字面量 'migu'，改成 'xt:migu'
+      // 会让那些设置一次性失配。
+      const sourceId = module.sourceId || sourceIdOf(module.id)
       for (const group of this.#cacheEntry(module.id).groups) {
         const name = group?.name || module.name
         if (!groupMap.has(name)) groupMap.set(name, { name, dataList: [] })
@@ -478,6 +520,11 @@ class ExtractorManager {
             groupTitle: name,
             opts: sanitizeOpts(channel.opts),
             sourceId,
+            // 延迟解析模块（capabilities.resolve）产出 deferredRef 而不是 url，
+            // 写盘时落成 ${replace}/<ref>、播放请求到达时才算真实地址。
+            // ref 必须是**单个路径段**：buildChannelId 用 /^\$\{replace\}\/([^/?#]+)/
+            // 取频道主键，多段会正则失配、让老用户的「我的频道」配置全部作废。
+            ...(channel.deferredRef != null ? { deferredRef: String(channel.deferredRef) } : {}),
             // updateData 靠 source 判定写盘分支；模块频道必须有自己的类别，
             // 不能靠「有没有 url」被推断成外部源——那样会被外部源的
             // includeInPlaylists 开关连坐，用户会以为模块坏了。
@@ -492,8 +539,8 @@ class ExtractorManager {
   /** 后台「按配置档禁用源」矩阵要枚举的源。 */
   listSourceIds() {
     return listModules()
-      .filter(module => this.#entry(module.id).enabled)
-      .map(module => ({ id: sourceIdOf(module.id), name: module.name, type: 'extractor' }))
+      .filter(module => this.isModuleEnabled(module))
+      .map(module => ({ id: module.sourceId || sourceIdOf(module.id), name: module.name, type: 'extractor' }))
   }
 }
 

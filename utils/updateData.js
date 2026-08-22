@@ -175,6 +175,12 @@ async function updateTV(hours, options = {}) {
       let playUrl
       if (isBuiltIn) {
         playUrl = channelItem.playURL  // 内置源使用playURL
+      } else if (isExtractor && channelItem.deferredRef != null) {
+        // 延迟解析模块：写占位地址，播放请求到达时才算真实地址（咪咕就是这个形态）。
+        // ref 必须是单个路径段——playlistConfig.buildChannelId 用
+        // /^\$\{replace\}\/([^/?#]+)/ 取频道主键，多段会失配、让老用户的
+        // 「我的频道」隐藏/重命名/归类/排序全部作废。
+        playUrl = `\${replace}/${channelItem.deferredRef}`
       } else if (isExternal || isExtractor) {
         playUrl = channelItem.url      // 外部源 / 抓取模块使用url
       } else {
@@ -188,9 +194,15 @@ async function updateTV(hours, options = {}) {
       // 记录实际进入播放列表的频道名，供 EPG 聚合配对
       playlistChannelNames.push(channelItem.name)
 
+      // 要不要为这个频道抓节目单，按**能力**判定而不是按源类型：
+      // 默认只有咪咕（既不是外部也不是内置也不是模块）需要；但模块可以在频道上
+      // 显式声明 wantsPlayback——咪咕将来收编成模块后仍要走这条路，按源类型判会
+      // 把它的节目单整条掐断。
+      const wantsPlayback = channelItem.wantsPlayback === true
+        || (!isExternal && !isBuiltIn && !isExtractor)
+
       // regenerateOnly模式下跳过playback更新（仅更新播放列表）
-      // 内置源、外部源、抓取模块都不需要 playback 数据（那是咪咕专属的回看接口）
-      if (!isExternal && !isBuiltIn && !isExtractor && !regenerateOnly) {
+      if (wantsPlayback && !regenerateOnly) {
         // 咪咕成功写入 EPG 的频道记为「已覆盖」，外部 EPG 不再为其重复补充
         if (await updatePlaybackData(channelItem, playbackFile)) {
           epgCoveredKeys.add(normalizeKey(channelItem.name))
