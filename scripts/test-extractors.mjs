@@ -22,6 +22,7 @@ import { join } from 'node:path'
 
 import { listModules, getModule, sourceIdOf, MODULE_ID_RE } from '../extractors/registry.js'
 import { selectFromPlayurl, parseRoomList, normalizeRoom, mapLimit, RoomError } from '../extractors/bilibili-live/api.js'
+import { shouldFailRound } from '../extractors/bilibili-live/index.js'
 import {
   ExtractorManager, validateConfig, redactConfig, withEnvFallback, normalizeGroups,
 } from '../utils/extractorManager.js'
@@ -238,6 +239,14 @@ await checkAsync('mapLimit：保持顺序，且并发不超过上限', async () 
   assert.ok(peak <= 2, `并发峰值 ${peak} 超过上限`)
 })
 
+check('全网失败判失败、全体没开播判成功——决定要不要清空用户的频道', () => {
+  // 两者都产出 0 个频道。断网时若被记成「成功抓到 0 个」，上一轮缓存会被空结果
+  // 覆盖，用户的频道消失且不退避重试。
+  assert.equal(shouldFailRound(0, 3), true, '一条没成功且有真错误 → 判失败，保留上一轮缓存')
+  assert.equal(shouldFailRound(0, 0), false, '全部没开播 → 正常的 0 条，如实写出')
+  assert.equal(shouldFailRound(2, 5), false, '有成功的就不算整轮失败，失败的那几间进 skipped')
+})
+
 // ---- 管理器 ----
 
 const tmp = mkdtempSync(join(tmpdir(), 'iptv-extractors-test-'))
@@ -381,4 +390,4 @@ try {
   rmSync(tmp, { recursive: true, force: true })
 }
 
-console.log(`\n全部通过：${passed}/35 ✅`)
+console.log(`\n全部通过：${passed}/36 ✅`)

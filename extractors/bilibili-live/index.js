@@ -6,11 +6,24 @@
  * 不实现 resolve()——B 站的地址是直链（带 expires token，约 2 小时过期），
  * 靠 defaultRefreshMinutes 的短周期刷新兜住，不需要播放时二次解析。
  */
-import { resolveRoom, parseRoomList, mapLimit, RiskControlError, DEFAULT_GROUP } from './api.js'
+import { resolveRoom, parseRoomList, mapLimit, RiskControlError, RoomOfflineError, DEFAULT_GROUP } from './api.js'
 
 // 并发上限。B 站对短时间内的大量请求会回 -352，实测 3 路是安全且够快的折中；
 // 外部源那边「串行 + 每个之间硬睡 2 秒」的做法在房间数上去之后是分钟级，不抄。
 const CONCURRENCY = 3
+
+/**
+ * 这一轮算不算失败。
+ *
+ * 一条都没解析出来、且至少有一间房是真出错（不是没开播）→ 判失败，交给
+ * extractorManager 保留上一轮缓存并退避重试，而不是把用户的频道清空。
+ * 反之，全部房间都没开播时如实返回 0 条：那是「今天没人播」这个正常状态。
+ *
+ * 抽成纯函数是为了能单测——否则要真断网才走得到这条路径。
+ */
+export function shouldFailRound(groupCount, hardErrors) {
+  return groupCount === 0 && hardErrors > 0
+}
 
 export default {
   id: 'bilibili-live',
@@ -96,6 +109,10 @@ export default {
     const skipped = []
     const warnings = []
     let riskControl = null
+    // 「没开播」与「出错了」要分开计：两者都产出 0 个频道，但前者是正常状态、
+    // 后者是这一轮失败了。混在一起的话，断网时会被记成「成功抓到 0 个频道」，
+    // 把上一轮的缓存覆盖成空——用户的频道就此消失且不退避重试。
+    let hardErrors = 0
 
     const results = await mapLimit(refs, CONCURRENCY, async (ref) => {
       try {
@@ -107,6 +124,7 @@ export default {
           riskControl = riskControl || error
           return null
         }
+        if (!(error instanceof RoomOfflineError)) hardErrors++
         skipped.push({ ref: String(ref), reason: error.message })
         return null
       }
@@ -124,11 +142,15 @@ export default {
       byGroup.get(groupName).dataList.push(result.channel)
     }
 
-    // 全部房间都没开播时返回 0 条。这不是失败——是「今天没人播」这个正常状态，
-    // extractorManager 只在抓取「失败」时才沿用上一轮缓存，0 条会如实写出。
+    const groups = [...byGroup.values()]
+
+    if (shouldFailRound(groups.length, hardErrors)) {
+      throw new Error(`${hardErrors}/${refs.length} 个直播间获取失败，无一成功：${skipped[0]?.reason || '未知原因'}`)
+    }
+
     return {
-      groups: [...byGroup.values()],
-      meta: { skipped, warnings, requested: refs.length },
+      groups,
+      meta: { skipped, warnings, requested: refs.length, hardErrors },
     }
   },
 }

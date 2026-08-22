@@ -119,6 +119,29 @@ check('消毒：缺值、缺等号、重复项都被清掉', () => {
     ['http-referrer=http://a/'])
 })
 
+check('txt：只带 network-caching 的频道必须保留（回归：曾被误判成依赖请求头）', () => {
+  // network-caching 是播放器缓冲毫秒数，不是请求头，缺了它频道照播不误。
+  // 公开 IPTV 源里 #EXTVLCOPT:network-caching=1000 是极常见写法，把它算成
+  // 「依赖请求头」会让一大批本来好好的频道从 txt 订阅里凭空消失。
+  const out = generateTxt([{
+    name: '央视',
+    channels: [{ name: 'CCTV1', url: 'http://h/1.m3u8', opts: ['network-caching=1000'] }],
+  }])
+  assert.ok(out.includes('CCTV1,http://h/1.m3u8'), out)
+})
+
+check('needsOpts：只认请求头类的键，播放器提示不算', () => {
+  assert.equal(needsOpts({ opts: ['network-caching=1000'] }), false, 'network-caching 不是请求头')
+  assert.equal(needsOpts({ opts: ['http-referrer=http://a/'] }), true)
+  assert.equal(needsOpts({ opts: ['http-user-agent=x'] }), true)
+  assert.equal(needsOpts({ opts: ['http-origin=http://a/'] }), true)
+  assert.equal(needsOpts({ opts: ['network-caching=1000', 'http-referrer=http://a/'] }), true, '混合时按请求头算')
+})
+
+check('渲染侧不受影响：network-caching 照常写进 m3u', () => {
+  assert.equal(renderOpts(['network-caching=1000']), '#EXTVLCOPT:network-caching=1000\n')
+})
+
 check('txt：依赖 opts 的频道整条跳过，普通频道照常输出', () => {
   const out = generateTxt([{
     name: '赛事',
@@ -138,4 +161,4 @@ check('needsOpts：只认清洗后仍有效的 opts', () => {
   assert.equal(needsOpts({ opts: [`http-referrer=${REF}`] }), true)
 })
 
-console.log(`\n全部通过：${passed}/13 ✅`)
+console.log(`\n全部通过：${passed}/16 ✅`)

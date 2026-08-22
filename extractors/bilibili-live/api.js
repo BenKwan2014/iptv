@@ -31,6 +31,20 @@ export class RoomError extends Error {
 }
 
 /**
+ * 房间没在播。
+ *
+ * 与其它 RoomError 分开：全部房间都没开播是「今天没人播」这个正常状态，
+ * 而全部房间都报网络错是「这一轮失败了」。两者都表现为 0 个频道，但前者应当
+ * 如实写出空结果，后者必须保留上一轮缓存——不区分就会在断网时把用户的频道清空。
+ */
+export class RoomOfflineError extends RoomError {
+  constructor(message) {
+    super(message)
+    this.name = 'RoomOfflineError'
+  }
+}
+
+/**
  * 触发了 B 站风控（code -352）。
  *
  * 必须与 RoomError 区分开：风控不是「这一间房失败」而是「所有房间同时失败」，
@@ -233,7 +247,7 @@ export async function resolveRoom(roomRef, options = {}) {
 
   const roomId = await normalizeRoom(roomRef, netOptions)
   const info = await roomInfo(roomId, netOptions)
-  if (!info.live) throw new RoomError('未开播')
+  if (!info.live) throw new RoomOfflineError('未开播')
 
   const { url, qn } = await pickStream(info.roomId, { preferHls, preferAvc, ...netOptions })
   const anchor = info.uid

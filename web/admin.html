@@ -2119,6 +2119,13 @@
                         </label>
                         <div class="system-config-hint">自带的 精选频道（央视 / 港澳台 / 地方 / 国际）；关闭后不加入（已添加的可在"源管理"删除，删后不再复活）</div>
                     </div>
+                    <div class="content-switch-item">
+                        <label>
+                            <input type="checkbox" id="sysEnableExtractors">
+                            启用源模块
+                        </label>
+                        <div class="system-config-hint">按平台抓取直播源（哔哩哔哩直播等）；关闭后不联网、不出现在播放列表，各模块的配置原样保留。逐个模块的开关在"设置 → 源模块"。</div>
+                    </div>
                 </div>
                 <div class="system-config-actions">
                     <button class="btn btn-success" onclick="saveSystemConfig()">💾 保存系统配置</button>
@@ -2521,6 +2528,14 @@
             if (cb) cb.checked = extractorsState.enabled !== false;
 
             let html = '';
+            if (systemConfig && systemConfig.enableExtractors === false) {
+                // 部署级开关（系统配置里的「启用源模块」/ menableExtractors）在更外面一层。
+                // 它关着的时候本面板的开关全都不起作用，不提示的话用户会以为是模块坏了。
+                html += `<div style="border:1px solid #faad14; background:#fffbe6; border-radius:6px; padding:10px; margin-bottom:10px; color:#874d00;">
+                    源模块在「系统配置」里被整体关闭了（空白模式 <code>mblank=true</code> 会默认关掉它）。
+                    本页的开关暂时不会生效——请先到「⚙️ 系统配置」勾选「启用源模块」并保存。
+                </div>`;
+            }
             if (extractorsState.corrupt) {
                 html += `<div style="border:1px solid #ff4d4f; background:#fff1f0; border-radius:6px; padding:10px; margin-bottom:10px; color:#a8071a;">
                     配置文件损坏，已保留原文件并另存 <code>.corrupt</code> 副本；在修复前所有改动都会被拒绝，以免覆盖你的原数据。<br>
@@ -4382,6 +4397,7 @@
             document.getElementById('sysEnableMigu').checked = systemConfig.enableMigu !== false;
             document.getElementById('sysEnableBuiltInSources').checked = systemConfig.enableBuiltInSources !== false;
             document.getElementById('sysEnableBuiltInSubscriptions').checked = systemConfig.enableBuiltInSubscriptions !== false;
+            document.getElementById('sysEnableExtractors').checked = systemConfig.enableExtractors !== false;
             document.getElementById('sysEnableDisplayNameUnify').checked = systemConfig.enableDisplayNameUnify === true;
             document.getElementById('sysEnableClientDispatch').checked = systemConfig.enableClientDispatch === true;
             renderEnvOverrideWarning();
@@ -4396,6 +4412,7 @@
                 rateType: '画质', pass: '访问密码', enableHDR: 'HDR', enableH265: 'H.265',
                 programInfoUpdateInterval: '更新间隔', refreshToken: 'token刷新', adminPath: '管理页面路径',
                 enableMigu: '启用咪咕源', enableBuiltInSources: '启用内置单频道源', enableBuiltInSubscriptions: '启用内置订阅源',
+                enableExtractors: '启用源模块',
                 enableClientDispatch: '客户端就近取流'
             };
             const overrides = systemConfig.envOverrides || {};
@@ -4549,6 +4566,7 @@ if(success){
                     enableMigu: document.getElementById('sysEnableMigu').checked,
                     enableBuiltInSources: document.getElementById('sysEnableBuiltInSources').checked,
                     enableBuiltInSubscriptions: document.getElementById('sysEnableBuiltInSubscriptions').checked,
+                    enableExtractors: document.getElementById('sysEnableExtractors').checked,
                     enableDisplayNameUnify: document.getElementById('sysEnableDisplayNameUnify').checked,
                     enableClientDispatch: document.getElementById('sysEnableClientDispatch').checked
                 };

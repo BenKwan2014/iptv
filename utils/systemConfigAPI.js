@@ -7,7 +7,8 @@ import {
   reloadConfig, sanitizeSegment,
   userId, token, port, host, rateType, pass,
   enableHDR, enableH265, programInfoUpdateInterval, refreshToken, adminPath,
-  enableMigu, enableBuiltInSources, enableBuiltInSubscriptions, enableDisplayNameUnify, enableClientDispatch
+  enableMigu, enableBuiltInSources, enableBuiltInSubscriptions, enableDisplayNameUnify, enableClientDispatch,
+  enableExtractors
 } from "../config.js"
 
 const SYSTEM_CONFIG_PATH = dataPath('system-config.json')
@@ -74,6 +75,7 @@ export function getSystemConfigAPI() {
         enableMigu,
         enableBuiltInSources,
         enableBuiltInSubscriptions,
+        enableExtractors,
         enableDisplayNameUnify,
         enableClientDispatch
       },

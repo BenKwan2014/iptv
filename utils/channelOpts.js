@@ -19,14 +19,24 @@
 
 const OPT_PREFIX = '#EXTVLCOPT:'
 
-// 只放行播放必需、且无副作用的键。http-cookie 之类可能携带凭据的一律不收，
-// 需要鉴权的源应当在抓取侧换成带 token 的地址，而不是把凭据发给播放器。
-const ALLOWED_KEYS = new Set([
+// 会被播放器转成 HTTP 请求头的键。**只有这些**才意味着「缺了就播不了」，
+// 也只有这些才该让频道从 txt 订阅里被跳过（txt 放不下请求头）。
+// http-cookie 之类可能携带凭据的一律不收，需要鉴权的源应当在抓取侧换成带
+// token 的地址，而不是把凭据发给播放器。
+const HEADER_KEYS = new Set([
   'http-referrer',
   'http-user-agent',
   'http-origin',
+])
+
+// 纯播放器提示，与请求头无关。缺了它频道照播不误，只是缓冲行为不同。
+// 公开 IPTV 源里 `#EXTVLCOPT:network-caching=1000` 是极常见的写法，把它算成
+// 「依赖请求头」会让一大批本来好好的频道被 txt 侧误伤。
+const PLAYER_KEYS = new Set([
   'network-caching',
 ])
+
+const ALLOWED_KEYS = new Set([...HEADER_KEYS, ...PLAYER_KEYS])
 
 /**
  * 判断一行是否 #EXTVLCOPT 指令。
@@ -118,11 +128,17 @@ export function renderOpts(opts) {
 }
 
 /**
- * 该频道是否依赖自定义请求头才能播。
+ * 该频道是否**依赖自定义请求头**才能播。
  *
  * TXT（diyp / TVBox）格式只有「频道名,地址」两列，没有承载请求头的位置——
  * 这类频道写进 txt 会稳定 403。缺一个台好过一个死台，故在 txt 侧整条跳过。
+ *
+ * 判据必须是「有没有请求头类的 opt」，不能是「有没有 opt」：只带
+ * network-caching 的频道不依赖任何请求头，误判会让它从 txt 订阅里凭空消失。
  */
 export function needsOpts(channel) {
-  return sanitizeOpts(channel && channel.opts).length > 0
+  return sanitizeOpts(channel && channel.opts)
+    .some(opt => HEADER_KEYS.has(opt.slice(0, opt.indexOf('='))))
 }
+
+export { HEADER_KEYS, PLAYER_KEYS }

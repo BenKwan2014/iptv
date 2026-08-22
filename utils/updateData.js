@@ -3,7 +3,7 @@ import { appendFile, appendFileSync, copyFileSync, renameFileSync, writeFile, wr
 import { updatePlaybackData } from "./playback.js"
 import { aggregateExternalEpg } from "./epgAggregator.js"
 import { normalizeKey, logoMatchName } from "./channelNormalize.js"
-import { renderOpts } from "./channelOpts.js"
+import { renderOpts, needsOpts } from "./channelOpts.js"
 import { refreshToken as enableTokenRefresh, host, pass, token, userId, enableMigu, externalLogoBase } from "../config.js"
 import refreshToken from "./refreshToken.js"
 import { printGreen, printRed, printYellow, printBlue } from "./colorOut.js"
@@ -137,6 +137,9 @@ async function updateTV(hours, options = {}) {
   // EPG 聚合（issue #38）用：本次写入播放列表的频道原始名 + 已由咪咕给到 EPG 的频道归一 key
   const playlistChannelNames = []
   const epgCoveredKeys = new Set()
+  // 因依赖请求头而未写进 txt 的频道数。静默跳过会让用户「莫名少台」且日志里毫无线索，
+  // 排查成本从「看一眼日志」变成「提 issue」。
+  let txtSkipped = 0
   for (let i = 0; i < datas.length; i++) {
 
     const data = datas[i].dataList
@@ -207,14 +210,22 @@ async function updateTV(hours, options = {}) {
 
       // 写入节目
       appendFileSync(interfacePath, `#EXTINF:-1 tvg-id="${channelItem.name}" tvg-name="${channelItem.name}" tvg-logo="${logoUrl}"${sourceAttr} group-title="${datas[i].name}",${channelItem.name}\n${optLines}${playUrl}\n`)
-      // txt：diyp/TVBox 格式只有「频道名,地址」两列，放不下请求头，这类频道写进去
-      // 必定 403——缺一个台好过一个死台，整条跳过。
-      if (!optLines) {
+      // txt：diyp/TVBox 格式只有「频道名,地址」两列，放不下请求头，依赖请求头的
+      // 频道写进去必定 403——缺一个台好过一个死台，整条跳过。
+      // 判据用 needsOpts 而不是「optLines 是否为空」：只带 network-caching 的频道
+      // 不依赖任何请求头，按后者会被误伤（公开源里这种写法很常见）。
+      if (needsOpts(channelItem)) {
+        txtSkipped++
+      } else {
         appendFileSync(interfaceTXTPath, `${channelItem.name},${playUrl}\n`)
       }
       // printGreen(`    节目链接更新成功`)
     }
     printGreen(`分组:${datas[i].name} 更新完成！`)
+  }
+
+  if (txtSkipped > 0) {
+    printYellow(`txt 播放列表跳过 ${txtSkipped} 个频道：它们依赖自定义请求头，而 txt(diyp/TVBox) 格式放不下请求头。m3u 订阅不受影响。`)
   }
 
   // regenerateOnly模式下跳过playback文件生成
