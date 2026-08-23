@@ -53,7 +53,17 @@ function readBody(req) {
 // 升级过渡自愈只试一次（issue #29/#68）：见 /api/source-profiles POST
 let sourceIdsHealAttempted = false
 
-const server = http.createServer(async (req, res) => {
+/**
+ * 请求处理主体。
+ *
+ * 抽成具名函数、由 createServer 的回调兜住异常——原本整段没有顶层 try，
+ * 任何未捕获的异常（哪怕只是路径解析里的一个同步 throw）都不会产生响应：
+ * 请求永远不 res.end()，客户端一直挂到自己超时，服务端只在 unhandledRejection
+ * 留一行日志。挂死比报错难查得多。
+ *
+ * 各 /api/* 路由内部已各自有 try（共 24 处），这里是最外层的兜底。
+ */
+async function handleRequest(req, res) {
 
   // 获取请求方法、URL 和请求头
   let { method, url, headers } = req;
@@ -916,6 +926,22 @@ const server = http.createServer(async (req, res) => {
   });
 
   res.end()
+}
+
+const server = http.createServer((req, res) => {
+  handleRequest(req, res).catch(error => {
+    printRed(`请求处理异常 ${req.method} ${req.url}: ${error?.message || error}`)
+    // 已经开始写响应了就只能收口，再 writeHead 会抛 ERR_HTTP_HEADERS_SENT，
+    // 那样又变回「不 end」的挂死形态。
+    if (res.headersSent) {
+      try { res.end() } catch { /* 连接可能已断 */ }
+      return
+    }
+    try {
+      res.writeHead(500, { 'Content-Type': 'text/plain;charset=UTF-8' })
+      res.end('服务异常')
+    } catch { /* 连接可能已断 */ }
+  })
 })
 
 // 客户端发送畸形 HTTP 或在请求中途断开时，优雅丢弃连接而不是让进程崩溃

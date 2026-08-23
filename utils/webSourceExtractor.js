@@ -45,9 +45,20 @@ async function launchBrowser(headless) {
   const baseArgs = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled', '--autoplay-policy=no-user-gesture-required']
 
   // 1) 显式指定
+  //
+  // 必须包 try：这里若直接 return，显式路径不可用时后面三级回退一级都不会走。
+  // 真实会踩到的两种情况：
+  //   - arm/v6 镜像里 Alpine 没有 chromium 包（apk 那行有 `|| echo` 静默跳过），
+  //     而 Dockerfile 仍设了 PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+  //   - 用户自己把 mchromePath 填错
+  // 两种都会让抓取型的源彻底不可用，而报的是 puppeteer 的 ENOENT，看不懂。
   const explicit = process.env.PUPPETEER_EXECUTABLE_PATH || process.env.mchromePath
   if (explicit) {
-    return puppeteer.launch({ headless, args: baseArgs, executablePath: explicit })
+    try {
+      return await puppeteer.launch({ headless, args: baseArgs, executablePath: explicit })
+    } catch (err) {
+      printRed(`指定的浏览器不可用(${explicit})，改用系统/自带浏览器: ${(err?.message || err).split('\n')[0]}`)
+    }
   }
 
   // 2) 系统已安装的浏览器
@@ -68,7 +79,18 @@ async function launchBrowser(headless) {
   } catch (err) {
     if (/Could not find Chrome|Browser was not found|Failed to launch|Could not find expected browser/i.test(err?.message || '')) {
       printRed('puppeteer 自带 Chrome 不可用，尝试 channel: chrome…')
-      return puppeteer.launch({ headless, args: baseArgs, channel: 'chrome' })
+      try {
+        return await puppeteer.launch({ headless, args: baseArgs, channel: 'chrome' })
+      } catch (lastErr) {
+        // 四级都试过了。报一句人能看懂的话——原始错误是 puppeteer 的 ENOENT，
+        // 用户从中看不出「这台机器/这个架构根本没有浏览器」。
+        throw new Error(
+          '找不到可用的 Chrome/Chromium，网页抓取型的源无法工作。'
+          + '容器部署请确认镜像内 /usr/bin/chromium 存在（部分架构如 arm/v6 的 Alpine 没有该包）；'
+          + '裸跑请安装 Chrome，或用 mchromePath 指定路径。'
+          + `原始错误: ${(lastErr?.message || lastErr).split('\n')[0]}`
+        )
+      }
     }
     throw err
   }
