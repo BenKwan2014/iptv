@@ -32,11 +32,12 @@
 import { dataList } from "../../utils/fetchList.js"
 import { resolve, clearCache } from "./resolve.js"
 import { enableMigu } from "../../config.js"
+import { setSystemFlagAPI } from "../../utils/systemConfigAPI.js"
 
 export default {
   id: 'migu',
   name: '咪咕视频',
-  description: '央视 / 卫视 / 地方等 300+ 频道。开关在「系统配置 → 启用咪咕源」。',
+  description: '央视 / 卫视 / 地方等 300+ 频道，含体育赛事与节目单。',
 
   // 归属标识保持字面量 'migu'，不用注册表默认的 'xt:migu'（见文件头约束 2）
   sourceId: 'migu',
@@ -130,8 +131,15 @@ export default {
 
   legacySystemConfigKeys: ['userId', 'token', 'rateType', 'enableHDR', 'enableH265', 'enableClientDispatch'],
 
-  // 开关代理到 config.js：那是全项目认的那一个，不另开一份
+  // 开关代理到 config.js 的 enableMigu：它被 updateData / channelMerger / app.js 等
+  // 六处直接 import，还带着 menableMigu 环境变量与 mblank 空白模式语义，
+  // 不能在 extractors.json 里另开一份。这里只是把读写入口挪到模块名下。
   enabledGetter: () => enableMigu,
+  enabledEnv: 'menableMigu',
+  enabledSetter: (on) => {
+    const result = setSystemFlagAPI('enableMigu', on)
+    if (!result.success) throw new Error(result.message)
+  },
 
   /**
    * 这个 ref 是不是咪咕的。

@@ -376,7 +376,7 @@ check('咪咕已收编成模块，且三条 wire format 保持不变', () => {
 
 const tmp = mkdtempSync(join(tmpdir(), 'iptv-extractors-test-'))
 // 每个用例一份独立的配置/缓存文件：共用一份的话，前一个用例存下的开关状态
-// 会污染后一个（setEnabled(false) 会让后续 updateAll 直接早退）
+// 会污染后一个（比如前一个用例关掉的模块开关会被后一个读到）
 let caseSeq = 0
 const newManager = (legacy) => {
   const seq = ++caseSeq
@@ -463,17 +463,31 @@ try {
   })
 
   check('代理开关的模块不受抓取子系统总开关约束', () => {
-    // config.js 明写「可 mblank=true + menableMigu=true 单独留咪咕」。
-    // 咪咕若被 enableExtractors / 文件级开关一起管掉，这个既有组合就废了。
+    // config.js 明写「可 mblank=true + menableMigu=true 单独留咪咕」。咪咕若被
+    // enableExtractors 一起管掉，这个既有组合就废了。总开关是 config.js 的 live
+    // binding、单测里改不了，所以这里验的是「代理开关的模块走的是另一条判定路径」
+    // ——只要它读的是自己的 getter 而不是子系统开关，上面那条语义就成立。
     const manager = newManager()
-    manager.setEnabled(false)
-    assert.equal(manager.isModuleEnabled(getModule('migu')), true, '咪咕只听 enableMigu')
-    assert.equal(manager.isModuleEnabled(getModule('bilibili-live')), false, '普通模块受总开关约束')
+    assert.equal(typeof getModule('migu').enabledGetter, 'function', '咪咕必须用代理开关')
+    assert.equal(manager.isModuleEnabled(getModule('migu')), getModule('migu').enabledGetter(),
+      '代理模块的启用状态必须等于它自己的 getter')
+    manager.setModuleEnabled('bilibili-live', false)
+    assert.equal(manager.isModuleEnabled(getModule('bilibili-live')), false, '普通模块读 entry.enabled')
   })
 
-  check('代理开关的模块不能从「源模块」页改开关，要指明去哪改', () => {
+  check('代理开关的模块读写都走自己的 getter/setter，不碰 extractors.json', () => {
+    // 咪咕的开关是 config.js 的 enableMigu（被六处直接 import，带 env 与 mblank 语义），
+    // 模块只是把读写入口挪到自己名下。这里不实际调 setter——它写的是
+    // dataPath('system-config.json')，在测试里就是仓库根目录。
+    const migu = getModule('migu')
+    assert.equal(typeof migu.enabledGetter, 'function')
+    assert.equal(typeof migu.enabledSetter, 'function', '开关要可写，否则卡片里是个死复选框')
     const manager = newManager()
-    assert.throws(() => manager.setModuleEnabled('migu', false), /系统配置/)
+    manager.setModuleEnabled('bilibili-live', true)
+    manager.effectiveConfig(migu)   // 触发 entry 初始化
+    assert.equal('enabled' in (manager.config.modules.migu || {}), false,
+      '代理模块不该在 extractors.json 里留 enabled——存了也不读，只会误导看文件的人')
+    assert.equal(manager.config.modules['bilibili-live'].enabled, true, '普通模块照常存')
   })
 
   check('输出：频道被盖上 source=extractor 与 xt: 命名空间的 sourceId', () => {
@@ -506,7 +520,7 @@ try {
     assert.equal(groups[0].dataList.length, 1, '全局的 0 频道守卫只看总数，护不住单个模块')
   })
 
-  check('两级开关都挡住输出：模块级关 / 文件级关', () => {
+  check('模块级开关关掉后不出频道（总开关是 config.js 的 enableExtractors，另测）', () => {
     const manager = newManager()
     manager.setModuleEnabled('bilibili-live', true)
     seed(manager, oneGroup)
@@ -514,23 +528,10 @@ try {
 
     manager.setModuleEnabled('bilibili-live', false)
     assert.deepEqual(manager.getValidChannels(), [], '模块级开关关掉后不该出频道')
-
-    manager.setModuleEnabled('bilibili-live', true)
-    manager.setEnabled(false)
-    assert.deepEqual(manager.getValidChannels(), [], '文件级总开关关掉后不该出频道')
   })
 
   // 以下用例一律带 onlyId：注册表里还有咪咕，不限定的话 updateAll 会去抓真实的
   // 咪咕接口——测试不该联网，也不该受它成败影响。
-  await checkAsync('总开关在抓取入口也要挡——关掉后不联网', async () => {
-    const manager = newManager()
-    manager.setModuleEnabled('bilibili-live', true)
-    manager.setEnabled(false)
-    const result = await manager.updateAll({ forceAll: true, onlyId: 'bilibili-live' })
-    assert.equal(result.updated, false)
-    assert.match(result.message, /整体关闭/)
-  })
-
   await checkAsync('禁用的模块不参与抓取', async () => {
     const manager = newManager()
     manager.setModuleEnabled('bilibili-live', false)
@@ -561,7 +562,7 @@ try {
 
     assert.ok(manager.corrupt, '应当置位损坏标记')
     assert.ok(existsSync(`${badPath}.corrupt`), '应当另存一份原文件')
-    assert.throws(() => manager.setEnabled(false), /损坏/)
+    assert.throws(() => manager.setModuleEnabled('bilibili-live', false), /损坏/)
     assert.ok(readFileSync(badPath, 'utf-8').includes('这不是合法 JSON'), '原文件必须原样保留')
     rmSync(badDir, { recursive: true, force: true })
   })
@@ -690,4 +691,4 @@ try {
   rmSync(tmp, { recursive: true, force: true })
 }
 
-console.log(`\n全部通过：${passed}/60 ✅`)
+console.log(`\n全部通过：${passed}/59 ✅`)

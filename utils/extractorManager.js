@@ -268,7 +268,6 @@ class ExtractorManager {
     this.cache = this.#readJson(this.cachePath, defaultCache(), false)
     if (!isPlainObject(this.config.modules)) this.config.modules = {}
     if (!isPlainObject(this.cache.modules)) this.cache.modules = {}
-    if (typeof this.config.enabled !== 'boolean') this.config.enabled = true
     this.loaded = true
     // 放在 load() 而不是启动流程里：配置导入会调 reload()，用户导入一份「搬家之前
     // 导出的备份」时，包里 extractors.json 没有这些字段、system-config.json 有，
@@ -404,7 +403,6 @@ class ExtractorManager {
       return !!module.enabledGetter()
     }
     if (!enableExtractors) return false
-    if (this.config.enabled === false) return false
     return this.#entry(module.id).enabled
   }
 
@@ -422,9 +420,14 @@ class ExtractorManager {
   }
 
   #entry(id) {
-    if (!this.config.modules[id]) this.config.modules[id] = { enabled: false, config: {} }
+    if (!this.config.modules[id]) this.config.modules[id] = { config: {} }
     const entry = this.config.modules[id]
-    if (typeof entry.enabled !== 'boolean') entry.enabled = false
+    // 代理开关的模块（咪咕读 config.js 的 enableMigu）不在这里存 enabled——
+    // 存了也不会被读（isModuleEnabled 走 getter），只会让看 extractors.json 的人
+    // 以为模块被禁用了。
+    const proxied = typeof getModule(id)?.enabledGetter === 'function'
+    if (proxied) delete entry.enabled
+    else if (typeof entry.enabled !== 'boolean') entry.enabled = false
     if (!isPlainObject(entry.config)) entry.config = {}
     normalizeLegacyConfig(getModule(id), entry.config)
     return entry
@@ -475,9 +478,10 @@ class ExtractorManager {
         // 后台据此在卡片里多渲染一块辅助 UI（具体 markup 在 admin.html）
         helper: module.helper || '',
         enabled,
-        // 开关代理到别处（如咪咕代理到 config.js 的 enableMigu）时告诉前端，
-        // 否则用户会在两个地方看到同一个开关而不知道改哪个。
+        // 开关代理到别处（如咪咕代理到 config.js 的 enableMigu）时告诉前端。
+        // 现在两边都能改，所以不再是「只读」，只是多一条「也可用环境变量控制」的说明。
         enabledProxied: typeof module.enabledGetter === 'function',
+        enabledEnv: module.enabledEnv || '',
         configSchema: module.configSchema || [],
         config,
         secretsSet,
@@ -488,16 +492,14 @@ class ExtractorManager {
       }
     })
     return {
-      enabled: this.config.enabled !== false,
+      // 总开关只有一个：config.js 的 enableExtractors（system-config.json + env
+      // menableExtractors + 参与 mblank）。原先在 extractors.json 里还有一个
+      // 文件级 enabled，两个都叫「启用源模块」，除了让人困惑没有别的作用——
+      // 后者没有 env 支持也不参与空白模式，砍掉。
+      enabled: enableExtractors,
       corrupt: this.corrupt,
       modules,
     }
-  }
-
-  setEnabled(on) {
-    this.config.enabled = !!on
-    this.#saveConfig()
-    return this.getState()
   }
 
   setModuleEnabled(id, on) {
@@ -624,7 +626,7 @@ class ExtractorManager {
     if (!this.loaded) this.load()
 
     // 总开关在抓取入口也要判（外部源那边只在输出处判，后台按钮绕过了守卫，
-    // 功能被全局关掉时照样会联网）——但判定在 isModuleEnabled 里，因为代理
+    // 功能被全局关掉时照样会联网）——判定在 isModuleEnabled 里，因为代理
     // 开关的模块要绕过它。全部模块都被挡住时给一句明确的说明。
     const targets = listModules().filter(module => {
       if (onlyId && module.id !== onlyId) return false
@@ -635,7 +637,7 @@ class ExtractorManager {
     })
 
     if (!targets.length) {
-      const allGated = !enableExtractors || this.config.enabled === false
+      const allGated = !enableExtractors
       return allGated
         ? { updated: false, results: [], message: '抓取模块已整体关闭' }
         : { updated: false, results: [] }

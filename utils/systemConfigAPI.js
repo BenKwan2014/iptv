@@ -94,6 +94,31 @@ export function getSystemConfigAPI() {
 /**
  * 保存系统配置
  */
+/**
+ * 只改 system-config.json 里的一个布尔开关。
+ *
+ * 「源模块」页上的几个内容开关（启用咪咕源 / 内置单频道源 / 内置订阅源 /
+ * 启用源模块）走这条路。刻意不复用 saveSystemConfigAPI：那个会顺带
+ * `update(0, { regenerateOnly: true })`，而 updateTV 里 `hours % 720` 遇上 0 恒真，
+ * 每次都会打一次咪咕 token 刷新（config.js 原注释：可能导致封号）。
+ * 播放列表的重新生成由调用方用非 0 的 hours 触发。
+ */
+export function setSystemFlagAPI(key, value) {
+  const ALLOWED = new Set(['enableMigu', 'enableBuiltInSources', 'enableBuiltInSubscriptions', 'enableExtractors'])
+  if (!ALLOWED.has(key)) return { success: false, message: `不支持的开关: ${key}` }
+  try {
+    let existing = {}
+    if (existsSync(SYSTEM_CONFIG_PATH)) {
+      try { existing = JSON.parse(readFileSync(SYSTEM_CONFIG_PATH, 'utf-8')) } catch { existing = {} }
+    }
+    writeJsonFileSync(SYSTEM_CONFIG_PATH, { ...existing, [key]: value !== false })
+    reloadConfig()
+    return { success: true }
+  } catch (error) {
+    return { success: false, message: error.message }
+  }
+}
+
 export function saveSystemConfigAPI(config) {
   try {
     // 读取已有配置，保留表单未提交的字段（如 refreshToken 等无 UI 的开关），

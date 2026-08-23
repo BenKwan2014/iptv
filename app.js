@@ -10,7 +10,7 @@ import { channel, interfaceStr, fetchManifestDirect } from "./utils/appUtils.js"
 import { dataPath } from "./utils/paths.js";
 import { getExtractorManager, getModuleConfig } from "./utils/extractorManager.js";
 import { getExtractorsAPI, setExtractorsEnabledAPI, setExtractorEnabledAPI,
-  updateExtractorConfigAPI, runExtractorNowAPI } from "./utils/extractorsAPI.js";
+  updateExtractorConfigAPI, runExtractorNowAPI, setContentFlagAPI } from "./utils/extractorsAPI.js";
 import { getChannelsAPI, getExternalSourcesAPI, saveExternalSourcesAPI,
          addExternalSourceAPI, removeExternalSourceAPI, updateExternalSourceAPI,
          setExternalSourceM3u8API, importSubscriptionAPI, parseLocalContentAPI,
@@ -463,6 +463,9 @@ async function handleRequest(req, res) {
             break
           case 'refresh':
             result = runExtractorNowAPI(data.id)
+            break
+          case 'contentFlag':
+            result = setContentFlagAPI(data.key, data.enabled !== false)
             break
           default:
             result = { success: false, message: `未知操作: ${data.action}` }

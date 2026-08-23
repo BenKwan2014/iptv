@@ -9,6 +9,8 @@
  * 后台是无鉴权的，别把新增的凭据也做成明文可读。
  */
 import { getExtractorManager } from "./extractorManager.js"
+import { setSystemFlagAPI } from "./systemConfigAPI.js"
+import { enableBuiltInSources, enableBuiltInSubscriptions } from "../config.js"
 import { updateExtractors } from "./channelMerger.js"
 import update from "./updateData.js"
 import { printRed } from "./colorOut.js"
@@ -32,7 +34,15 @@ function regeneratePlaylist() {
 }
 
 function ok(manager) {
-  return { success: true, data: manager.getState() }
+  return { success: true, data: { ...manager.getState(), contentFlags: readContentFlags() } }
+}
+
+/** 「其它内容来源」那一段的当前值。放在同一个响应里，前端一次渲染完。 */
+function readContentFlags() {
+  return {
+    enableBuiltInSources,
+    enableBuiltInSubscriptions,
+  }
 }
 
 function fail(error) {
@@ -50,16 +60,32 @@ export function getExtractorsAPI() {
   }
 }
 
-/** 文件级总开关（部署级的 enableExtractors 在系统设置里，是更外面一层）。 */
+/**
+ * 抓取模块的总开关（config.js 的 enableExtractors）。
+ * 只有这一个——原先 extractors.json 里还有个文件级 enabled，两个同名开关只会让人
+ * 困惑，而后者没有 env 支持也不参与 mblank 空白模式，已砍掉。
+ */
 export function setExtractorsEnabledAPI(enabled) {
-  try {
-    const manager = getExtractorManager()
-    manager.setEnabled(enabled)
-    regeneratePlaylist()
-    return ok(manager)
-  } catch (error) {
-    return fail(error)
-  }
+  const result = setSystemFlagAPI('enableExtractors', enabled)
+  if (!result.success) return result
+  regeneratePlaylist()
+  return ok(getExtractorManager())
+}
+
+/**
+ * 「源模块」页下半部分那两个内容开关：内置单频道源 / 内置订阅源。
+ *
+ * 它们不是抓取模块（由 builtInSourceManager 与内置订阅管），但用户希望所有
+ * 内容来源的开关集中在一处，所以一并放在这一页、单独成段，避免让人以为
+ * 上面那个「启用源模块」总开关也管着它们。
+ */
+export function setContentFlagAPI(key, enabled) {
+  const ALLOWED = new Set(['enableBuiltInSources', 'enableBuiltInSubscriptions'])
+  if (!ALLOWED.has(key)) return { success: false, message: `不支持的开关: ${key}` }
+  const result = setSystemFlagAPI(key, enabled)
+  if (!result.success) return result
+  regeneratePlaylist()
+  return ok(getExtractorManager())
 }
 
 /** 单模块开关。 */
