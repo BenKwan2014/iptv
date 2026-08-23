@@ -640,6 +640,22 @@
             text-overflow: ellipsis;
         }
 
+        /* 卡片上的启用开关。放在卡片而不是展开区里：展开区底部有「💾 保存配置」，
+           一个「点了就生效」的勾选框混在一堆「要按保存」的字段中间，外观一样、
+           语义相反，是全站最容易让人误判的一处。内置源卡片本来就是这个形态。
+           stopPropagation 是必须的，否则点开关会连带触发卡片的展开/收起。 */
+        .source-card-toggle {
+            margin-left: auto;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 12px;
+            font-weight: 500;
+            color: #666;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+
         .source-card-desc {
             font-size: 12px;
             color: #888;
@@ -827,6 +843,34 @@
             padding: 20px;
             flex: 1;
             overflow-y: auto;
+        }
+
+        /* 表单块之外的即时生效控件：没有归属的保存按钮，勾了就写盘。
+           视觉上与上方的表单分开（虚线分隔 + 浅底），呼应全站规则
+           「这一块底下有按钮就必须按按钮；没有按钮的，改一下就已经存好了」。 */
+        .external-instant-block {
+            padding: 10px 16px 12px;
+            border-top: 1px dashed #e8e8e8;
+            background: #fcfcfc;
+        }
+
+        .external-instant-block > label {
+            display: block;
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 4px;
+        }
+
+        .instant-badge {
+            display: inline-block;
+            margin-left: 6px;
+            padding: 0 6px;
+            font-size: 11px;
+            font-weight: 500;
+            color: #52c41a;
+            background: #f6ffed;
+            border: 1px solid #b7eb8f;
+            border-radius: 3px;
         }
 
         .external-detail-footer {
@@ -2851,9 +2895,11 @@
                      onclick="selectExtractorModule('${escapeHtml(m.id)}')">
                     <div class="source-card-title">
                         <span class="name">${escapeHtml(m.name)}</span>
-                        <span style="margin-left:auto; font-size:12px; font-weight:500; color:${m.enabled ? '#52c41a' : '#999'};">
-                            ${m.enabled ? '已启用' : '已停用'}
-                        </span>
+                        <label class="source-card-toggle" onclick="event.stopPropagation()" title="即时生效，无需保存">
+                            <input type="checkbox" ${m.enabled ? 'checked' : ''}
+                                   onchange="toggleExtractorModule('${escapeHtml(m.id)}', this.checked)">
+                            启用
+                        </label>
                     </div>
                     <div class="source-card-desc">${escapeHtml(m.description || '')}</div>
                     <div class="source-card-foot">
@@ -2892,12 +2938,10 @@
             box.classList.remove('hidden');
             box.innerHTML = `
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
-                    <label style="display:flex; align-items:center; gap:6px; min-width:0;">
-                        <input type="checkbox" ${m.enabled ? 'checked' : ''}
-                               onchange="toggleExtractorModule('${escapeHtml(m.id)}', this.checked)">
+                    <div style="display:flex; align-items:center; gap:6px; min-width:0;">
                         <strong style="font-size:15px;">${escapeHtml(m.name)}</strong>
-                        ${m.enabledEnv ? `<span style="font-size:12px; color:#888;">（也可用环境变量 <code>${escapeHtml(m.enabledEnv)}</code> 控制）</span>` : ''}
-                    </label>
+                        ${m.enabledEnv ? `<span style="font-size:12px; color:#888;">（启用开关也可用环境变量 <code>${escapeHtml(m.enabledEnv)}</code> 控制）</span>` : ''}
+                    </div>
                     <span style="display:inline-flex; gap:6px;">
                         <button class="btn btn-sm" onclick="refreshExtractorNow('${escapeHtml(m.id)}')">🔄 立即刷新</button>
                         <button class="btn btn-sm" onclick="selectExtractorModule('${escapeHtml(m.id)}')">收起</button>
@@ -4096,10 +4140,6 @@
                             <input type="number" min="60" step="60" value="${source.refreshInterval || 240}" oninput="updateExternalField(${index}, 'refreshInterval', parseInt(this.value) || 240)" placeholder="240">
                             <div class="form-hint">每隔多少分钟自动重新抓取m3u8链接，默认240分钟（4小时），步幅1小时</div>
                         </div>
-                        <div class="external-field">
-                            <label>📡 在哪些配置档显示</label>
-                            <div id="srcProfRow_${index}" class="form-hint" style="margin-top:2px;">${source.id ? '加载中…' : '新源「保存」后即可设置（默认所有配置档可见）'}</div>
-                        </div>
                     </div>
                     <div class="external-detail-footer">
                         <div class="external-switches">
@@ -4122,6 +4162,15 @@
                             </button>
                             <button class="btn btn-small btn-danger" onclick="removeExternalSource(${index})" ${updatingSourceIndex === index ? 'disabled' : ''}>🗑️ 删除</button>
                         </div>
+                    </div>
+                
+                    <!-- 「在哪些配置档显示」走独立端点 /api/source-profiles，勾了就写盘，
+                         与本页其余字段（要按下面的保存类按钮）语义相反。原先它夹在表单**中间**，
+                         外观和上下字段一模一样 —— 挪到保存按钮之下、单独成块并标注，免得用户
+                         以为它也要按保存（或反过来，以为上面那些也是点了就生效）。 -->
+                    <div class="external-instant-block">
+                        <label>📡 在哪些配置档显示 <span class="instant-badge">改动即时保存</span></label>
+                            <div id="srcProfRow_${index}" class="form-hint" style="margin-top:2px;">${source.id ? '加载中…' : '新源「保存」后即可设置（默认所有配置档可见）'}</div>
                     </div>
                 `;
             } else if (mode === 'subscription') {
@@ -4165,10 +4214,6 @@
                             <input type="number" min="60" step="60" value="${source.refreshInterval || 1440}" oninput="updateExternalField(${index}, 'refreshInterval', parseInt(this.value) || 1440)" placeholder="1440">
                             <div class="form-hint">每隔多少分钟自动重新获取播放列表，默认1440分钟（24小时）</div>
                         </div>
-                        <div class="external-field">
-                            <label>📡 在哪些配置档显示</label>
-                            <div id="srcProfRow_${index}" class="form-hint" style="margin-top:2px;">${source.id ? '加载中…' : '新源「导入并保存」后即可设置（默认所有配置档可见）'}</div>
-                        </div>
                     </div>
                     <div class="external-detail-footer">
                         <div class="external-switches">
@@ -4192,6 +4237,15 @@
                             <button class="btn btn-small" onclick="startSourceProbe(${index})" ${updatingSourceIndex === index || channelCount === 0 ? 'disabled' : ''} title="检测该源全部频道的连通性，标出失效频道（只标记不删除；防盗链源可能误报，以实际播放为准）">🩺 检测失效</button>
                             <button class="btn btn-small btn-danger" onclick="removeExternalSource(${index})" ${updatingSourceIndex === index ? 'disabled' : ''}>🗑️ 删除</button>
                         </div>
+                    </div>
+                
+                    <!-- 「在哪些配置档显示」走独立端点 /api/source-profiles，勾了就写盘，
+                         与本页其余字段（要按下面的保存类按钮）语义相反。原先它夹在表单**中间**，
+                         外观和上下字段一模一样 —— 挪到保存按钮之下、单独成块并标注，免得用户
+                         以为它也要按保存（或反过来，以为上面那些也是点了就生效）。 -->
+                    <div class="external-instant-block">
+                        <label>📡 在哪些配置档显示 <span class="instant-badge">改动即时保存</span></label>
+                            <div id="srcProfRow_${index}" class="form-hint" style="margin-top:2px;">${source.id ? '加载中…' : '新源「导入并保存」后即可设置（默认所有配置档可见）'}</div>
                     </div>
                 `;
             } else {
@@ -4218,10 +4272,6 @@
                             <input type="text" value="${source.m3u8Url || ''}" oninput="updateExternalField(${index}, 'm3u8Url', this.value)" placeholder="例：https://example.com/live.m3u8">
                             <div class="form-hint">直接填写m3u8直播流地址</div>
                         </div>
-                        <div class="external-field">
-                            <label>📡 在哪些配置档显示</label>
-                            <div id="srcProfRow_${index}" class="form-hint" style="margin-top:2px;">${source.id ? '加载中…' : '新源「保存」后即可设置（默认所有配置档可见）'}</div>
-                        </div>
                     </div>
                     <div class="external-detail-footer">
                         <div class="external-switches">
@@ -4237,6 +4287,15 @@
                             <button class="btn btn-small" onclick="startSourceProbe(${index})" ${source.m3u8Url ? '' : 'disabled'} title="检测当前直播链接的连通性（只标记不删除；防盗链源可能误报，以实际播放为准）">🩺 检测失效</button>
                             <button class="btn btn-small btn-danger" onclick="removeExternalSource(${index})">🗑️ 删除</button>
                         </div>
+                    </div>
+                
+                    <!-- 「在哪些配置档显示」走独立端点 /api/source-profiles，勾了就写盘，
+                         与本页其余字段（要按下面的保存类按钮）语义相反。原先它夹在表单**中间**，
+                         外观和上下字段一模一样 —— 挪到保存按钮之下、单独成块并标注，免得用户
+                         以为它也要按保存（或反过来，以为上面那些也是点了就生效）。 -->
+                    <div class="external-instant-block">
+                        <label>📡 在哪些配置档显示 <span class="instant-badge">改动即时保存</span></label>
+                            <div id="srcProfRow_${index}" class="form-hint" style="margin-top:2px;">${source.id ? '加载中…' : '新源「保存」后即可设置（默认所有配置档可见）'}</div>
                     </div>
                 `;
             }
