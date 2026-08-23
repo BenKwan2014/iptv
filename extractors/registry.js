@@ -88,16 +88,9 @@ export function validateModule(module) {
     throw new Error(`抓取模块 ${module.id} 声明了 resolve 能力但没实现 resolve()`)
   }
   for (const field of module.configSchema || []) {
-    // env 兜底靠「当前值为空」判断有没有配过，而 boolean/int 表达不了这个状态——
-    // 存进去要么 true 要么 false，没有第三态。硬上的话 default:true 的字段 env 永远
-    // 读不到，default:false 的字段会被赋成字符串 "false"（真值），「显式关掉」变成
-    // 「强制打开」。与其静默行为反转，不如启动就拒绝。
-    // 要放开的话，得先让 extractors.json 能区分「没配过」和「配成了默认值」。
-    if (field.env && (field.type === 'boolean' || field.type === 'int')) {
-      throw new Error(
-        `抓取模块 ${module.id} 的字段 ${field.key} 是 ${field.type} 类型，暂不支持声明 env——`
-        + '当前存储无法区分「没配过」与「配成了默认值」，env 兜底会静默失效或反转。'
-      )
+    // select 必须给出可选值，否则校验层无从判断合法性
+    if (field.type === 'select' && !(field.options || []).length) {
+      throw new Error(`抓取模块 ${module.id} 的字段 ${field.key} 声明了 select 但没有 options`)
     }
   }
 }

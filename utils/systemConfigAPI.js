@@ -108,16 +108,22 @@ export function saveSystemConfigAPI(config) {
     // 验证配置（白名单字段做类型校验，其余沿用已有值）
     const validated = {
       ...existing,
-      userId: config.userId || "",
-      token: config.token || "",
       port: parseInt(config.port) || 1905,
       host: config.host || "",
-      rateType: parseInt(config.rateType) || 3,
       pass: config.pass || "",
-      enableHDR: config.enableHDR !== false,
-      enableH265: config.enableH265 !== false,
       programInfoUpdateInterval: config.programInfoUpdateInterval || "8"
     }
+    // 咪咕相关的五项改成「显式提交才写」，与下面那些内容开关一致。
+    //
+    // 原先是无条件写入：任何不带这些字段的 POST 都会把 rateType 钉死成 3、
+    // HDR/H265 强开 true、账号清空。今天后台表单每次都全量提交所以没暴露，但
+    // 一旦这几项从系统配置页挪走（它们是纯咪咕参数，本该归模块管），用户改个端口
+    // 点保存就会把画质重置——而且是延迟发作，不在挪走那天。
+    if (config.userId !== undefined) validated.userId = config.userId || ""
+    if (config.token !== undefined) validated.token = config.token || ""
+    if (config.rateType !== undefined) validated.rateType = parseInt(config.rateType) || 3
+    if (config.enableHDR !== undefined) validated.enableHDR = config.enableHDR !== false
+    if (config.enableH265 !== undefined) validated.enableH265 = config.enableH265 !== false
     if (config.refreshToken !== undefined) {
       validated.refreshToken = config.refreshToken !== false
     }

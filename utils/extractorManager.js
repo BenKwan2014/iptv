@@ -70,7 +70,20 @@ function isPlainObject(value) {
  * @param existing 已存的配置。secret 字段收到空串表示「不修改」，而不是「清空」——
  *                 否则后台每次保存表单都会把用户看不见的凭据抹掉。
  */
-export function validateConfig(module, input, existing = {}) {
+/**
+ * 校验用户提交的配置，产出**要落盘的稀疏配置**。
+ *
+ * 「稀疏」是关键：只保存用户显式设过的字段，没设过的一律不写。
+ * 原先存的是补齐默认值后的全量 key，于是「这个字段用户配过没有」这个状态在存储里
+ * 表达不出来——导致 env 兜底对布尔字段永远失效（default:true 恒为真值就跳过 env），
+ * 也导致判据没法用 hasOwnProperty（存过一次配置后每个 key 都在）。
+ * 稀疏之后取值分三层：已存 → 环境变量 → schema 默认（见 resolveConfig）。
+ *
+ * @param stored 已落盘的稀疏配置。secret 字段收到空串表示「不修改」而非「清空」——
+ *               后台看不见凭据，不能因为保存表单就把它抹掉；显式传 null 才是清空。
+ * @returns {{ok: boolean, config: object, errors: Array}} config 是要落盘的稀疏配置
+ */
+export function validateConfig(module, input, stored = {}) {
   const errors = []
   const config = {}
   const source = isPlainObject(input) ? input : {}
@@ -79,82 +92,108 @@ export function validateConfig(module, input, existing = {}) {
     const key = field.key
     const has = Object.prototype.hasOwnProperty.call(source, key)
     const raw = has ? source[key] : undefined
-    const prev = existing[key]
+    const kept = stored[key]              // 已存的值；undefined 表示「没配过」
+
+    // 没提交这个字段：保持原样（存过就留着，没存过就仍然不存）
+    if (!has) {
+      if (kept !== undefined) config[key] = kept
+      continue
+    }
 
     if (field.type === 'boolean') {
-      config[key] = has ? !!raw : (prev !== undefined ? !!prev : !!field.default)
+      // 布尔显式提交就存，true / false 都算「配过」——这正是稀疏存储换来的能力
+      config[key] = !!raw
+      continue
+    }
+
+    if (field.type === 'select') {
+      const allowed = (field.options || []).map(o => String(o.value))
+      const text = raw == null ? '' : String(raw)
+      if (text === '') {
+        if (kept !== undefined) config[key] = kept
+        continue
+      }
+      if (!allowed.includes(text)) {
+        errors.push({ key, message: `${field.label}：不是可选值之一` })
+        if (kept !== undefined) config[key] = kept
+        continue
+      }
+      config[key] = coerceSelect(field, text)
       continue
     }
 
     if (field.type === 'int') {
-      const fallback = prev !== undefined ? prev : field.default
-      if (!has || raw === '' || raw === null) { config[key] = fallback; continue }
+      if (raw === '' || raw === null) {
+        // 清空 = 回到「没配过」，交给 env / 默认值
+        continue
+      }
       const parsed = parseInt(raw, 10)
+      const keepOrDrop = () => { if (kept !== undefined) config[key] = kept }
       if (Number.isNaN(parsed)) {
         errors.push({ key, message: `${field.label}：要填数字` })
-        config[key] = fallback
-        continue
+        keepOrDrop(); continue
       }
       if (field.min !== undefined && parsed < field.min) {
         errors.push({ key, message: `${field.label}：不能小于 ${field.min}` })
-        config[key] = fallback
-        continue
+        keepOrDrop(); continue
       }
       if (field.max !== undefined && parsed > field.max) {
         errors.push({ key, message: `${field.label}：不能大于 ${field.max}` })
-        config[key] = fallback
-        continue
+        keepOrDrop(); continue
       }
       config[key] = parsed
       continue
     }
 
     // type: 'text'
-    const text = typeof raw === 'string' ? raw : (has && raw != null ? String(raw) : '')
+    const text = typeof raw === 'string' ? raw : (raw != null ? String(raw) : '')
     if (field.secret) {
       // 顺序要紧：null 必须先判。它会被上面的 text 计算折成空串，
       // 放在空串分支后面就永远走不到，「显式清空」这条路等于不存在。
-      if (raw === null) config[key] = ''
-      // 空串 = 保持原值——后台看不见凭据，不能因为保存表单就把它抹掉
-      else if (!has || text === '') config[key] = typeof prev === 'string' ? prev : ''
-      else config[key] = text.trim()
+      if (raw === null) continue                       // 清空 = 回到没配过
+      if (text === '') { if (kept !== undefined) config[key] = kept; continue }
+      config[key] = text.trim()
       continue
     }
-    config[key] = has ? text : (typeof prev === 'string' ? prev : (field.default || ''))
+    if (text === '') {
+      // 文本清空 = 回到没配过（与 config.js 里字符串项用 `||` 回落 env 的语义一致）
+      continue
+    }
+    config[key] = text
   }
 
   return { ok: errors.length === 0, config, errors }
 }
 
-/**
- * 把 schema 里声明了 env 的字段做环境变量兜底。
- *
- * 没有这层的话，docker 用户没法在 compose 里注入凭据（extractors.json 在挂载卷里，
- * 首次部署时还不存在）。让 schema 自己声明变量名，比给每个模块往 config.js 里
- * 加一个全局字段更能扩展——后者每加一个模块就要动五个文件。
- */
-export function withEnvFallback(module, config) {
-  const merged = { ...config }
-  for (const field of module.configSchema || []) {
-    if (!field.env) continue
-    // 判据是「当前值为空」而不是「配置里有没有这个 key」。
-    //
-    // 看着该用 hasOwnProperty，实则不行：validateConfig 对 schema 里每个 key 都会
-    // 创建自有属性（:123 的 text 分支也一样），而 updateModuleConfig 把整份校验后的
-    // config 写回 entry.config——所以任何存过一次配置的用户，磁盘上每个 key 都在，
-    // hasOwnProperty 恒为真，env 兜底会整个失效。
-    //
-    // 空值判断对 text/secret 恰好是对的语义（空串 = 没配过）。对 boolean/int 则表达
-    // 不了「没配过」——存进去要么 true 要么 false，没有第三态。所以 registry 在启动时
-    // 直接拒绝 boolean/int 声明 env（见 extractors/registry.js 的启动校验），
-    // 与其让它静默地行为反转，不如启动就报出来。
-    if (merged[field.key]) continue
-    const fromEnv = process.env[field.env]
-    if (fromEnv === undefined || fromEnv === '') continue
-    merged[field.key] = coerceEnvValue(field, fromEnv)
-  }
-  return merged
+/** select 的值按 options 声明的原始类型还原（下拉提交上来的都是字符串）。 */
+function coerceSelect(field, text) {
+  const hit = (field.options || []).find(o => String(o.value) === text)
+  return hit ? hit.value : text
 }
+
+/**
+ * 取生效配置：已存 → 环境变量 → schema 默认，逐字段分层。
+ *
+ * 这是稀疏存储换来的东西——「没配过」现在是个明确状态，所以 env 兜底对布尔和
+ * 整数也能正确工作了（原先 default:true 的布尔恒为真值，env 永远读不到）。
+ */
+export function resolveConfig(module, stored = {}) {
+  const effective = {}
+  for (const field of module.configSchema || []) {
+    const key = field.key
+    if (stored[key] !== undefined) { effective[key] = stored[key]; continue }
+    if (field.env) {
+      const fromEnv = process.env[field.env]
+      if (fromEnv !== undefined && fromEnv !== '') {
+        effective[key] = coerceEnvValue(field, fromEnv)
+        continue
+      }
+    }
+    effective[key] = field.default
+  }
+  return effective
+}
+
 
 /**
  * env 字符串按字段类型归一。
@@ -172,6 +211,10 @@ function coerceEnvValue(field, raw) {
   if (field.type === 'int') {
     const parsed = parseInt(text, 10)
     return Number.isNaN(parsed) ? field.default : parsed
+  }
+  if (field.type === 'select') {
+    const hit = (field.options || []).find(o => String(o.value) === text)
+    return hit ? hit.value : field.default
   }
   return text
 }
@@ -319,6 +362,7 @@ class ExtractorManager {
     const entry = this.config.modules[id]
     if (typeof entry.enabled !== 'boolean') entry.enabled = false
     if (!isPlainObject(entry.config)) entry.config = {}
+    normalizeLegacyConfig(getModule(id), entry.config)
     return entry
   }
 
@@ -332,9 +376,7 @@ class ExtractorManager {
 
   /** 生效配置：已存的 → 按 schema 补默认 → 环境变量兜底。 */
   effectiveConfig(module) {
-    const entry = this.#entry(module.id)
-    const { config } = validateConfig(module, entry.config, entry.config)
-    return withEnvFallback(module, config)
+    return resolveConfig(module, this.#entry(module.id).config)
   }
 
   refreshMinutesOf(module) {
@@ -357,7 +399,8 @@ class ExtractorManager {
       // 但确实在生效」这种没有任何线索的状态
       const envProvided = {}
       for (const field of module.configSchema || []) {
-        if (field.env && !entry.config[field.key] && process.env[field.env]) {
+        // 稀疏存储后「没配过」= 该 key 不存在，不用再靠真值判断（布尔 false 会被误判）
+        if (field.env && entry.config[field.key] === undefined && process.env[field.env]) {
           envProvided[field.key] = field.env
         }
       }
@@ -410,6 +453,10 @@ class ExtractorManager {
       throw error
     }
     entry.config = config
+    // 配置可能影响播放地址的解析结果（画质、编码等），不清缓存的话三小时内
+    // 继续下发旧参数的流——issue #60 就是这么来的。后台「源模块」页保存走的
+    // 正是这条路，而 clearUrlCache 的另外两个调用点都覆盖不到它。
+    if (typeof module.clearResolveCache === 'function') module.clearResolveCache()
     if (refreshMinutes !== undefined) {
       const value = parseInt(refreshMinutes, 10)
       if (Number.isNaN(value) || value < 1 || value > 1440) {
@@ -639,6 +686,27 @@ class ExtractorManager {
     return listModules()
       .filter(module => this.isModuleEnabled(module))
       .map(module => ({ id: module.sourceId || sourceIdOf(module.id), name: module.name, type: 'extractor' }))
+  }
+}
+
+/**
+ * 把老版本写下的「全量 key」配置就地归一成稀疏形态。
+ *
+ * 改成稀疏存储之前，validateConfig 会给 schema 里每个 key 都补上值，于是磁盘上
+ * 存着 `sessdata: ""` 这种「配过但是空」的条目。老代码的 env 兜底用真值判断，
+ * 空串会正常回落到 env；新代码用「键存不存在」判断，空串会被当成「配过」——
+ * 设了 mbiliSessdata 又在后台存过一次配置的用户，env 会突然失效。
+ *
+ * 这里只丢掉 text/secret 的空串：新 writer 从不写空串，所以空串必定来自老版本，
+ * 丢掉它精确还原了老行为。boolean/int 不动——它们在老版本里本来就没有可用的
+ * env 兜底，保留成「配过」正是维持现状。
+ */
+function normalizeLegacyConfig(module, config) {
+  if (!module) return
+  for (const field of module.configSchema || []) {
+    const type = field.type || 'text'
+    if (type !== 'text' && type !== 'select') continue
+    if (config[field.key] === '') delete config[field.key]
   }
 }
 

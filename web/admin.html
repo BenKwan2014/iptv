@@ -2495,6 +2495,15 @@
                         ${label}
                     </label>${hint}</div>`;
             }
+            if (field.type === 'select') {
+                const opts = (field.options || []).map(o =>
+                    `<option value="${escapeHtml(o.value)}" ${String(config[field.key]) === String(o.value) ? 'selected' : ''}>${escapeHtml(o.label ?? o.value)}</option>`
+                ).join('');
+                return `<div style="margin-bottom:12px;">
+                    <label style="display:block; font-size:12px; color:#888;">${label}</label>
+                    <select id="${id}" style="min-width:180px;">${opts}</select>
+                    ${hint}${envNote}</div>`;
+            }
             if (field.type === 'int') {
                 return `<div style="margin-bottom:12px;">
                     <label style="display:block; font-size:12px; color:#888;">${label}</label>

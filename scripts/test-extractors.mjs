@@ -25,7 +25,7 @@ import { clearUrlCache } from '../utils/appUtils.js'
 import { selectFromPlayurl, parseRoomList, normalizeRoom, mapLimit, RoomError } from '../extractors/bilibili-live/api.js'
 import { shouldFailRound } from '../extractors/bilibili-live/index.js'
 import {
-  ExtractorManager, validateConfig, redactConfig, withEnvFallback, normalizeGroups, emptyHealth,
+  ExtractorManager, validateConfig, redactConfig, resolveConfig, normalizeGroups, emptyHealth,
 } from '../utils/extractorManager.js'
 
 let passed = 0
@@ -73,12 +73,16 @@ check('int 字段：边界外拒绝并回退，不落坏值', () => {
   assert.equal(good.config.cachingMs, 5000, '字符串数字要被转成数字')
 })
 
-check('未提交的字段回落到已存值，再回落到 schema 默认', () => {
-  const fromExisting = validateConfig(bili, {}, { cachingMs: 1234 })
-  assert.equal(fromExisting.config.cachingMs, 1234)
-  const fromDefault = validateConfig(bili, {}, {})
-  assert.equal(fromDefault.config.cachingMs, 3000)
-  assert.equal(fromDefault.config.preferHls, true)
+check('职责分离：validateConfig 只产出要落盘的，默认值由 resolveConfig 补', () => {
+  // 未提交的字段：已存的保留，没存过的不写（稀疏）
+  assert.equal(validateConfig(bili, {}, { cachingMs: 1234 }).config.cachingMs, 1234)
+  assert.deepEqual(validateConfig(bili, {}, {}).config, {}, '空提交 + 空存储 = 什么都不落盘')
+
+  // 默认值在取值层，不在存储层
+  const effective = resolveConfig(bili, {})
+  assert.equal(effective.cachingMs, 3000)
+  assert.equal(effective.preferHls, true)
+  assert.equal(resolveConfig(bili, { cachingMs: 1234 }).cachingMs, 1234, '已存值压过默认')
 })
 
 check('secret 字段：空串 = 保持原值（后台看不见它，不能因保存而抹掉）', () => {
@@ -86,9 +90,20 @@ check('secret 字段：空串 = 保持原值（后台看不见它，不能因保
   assert.equal(config.sessdata, 'SECRET')
 })
 
-check('secret 字段：显式 null 才是清空', () => {
+check('secret 字段：显式 null 才是清空，且清空后回落到 env', () => {
+  // 稀疏存储下「清空」= 键不存在，而不是存一个空串。语义相同，但表达方式让
+  // resolveConfig 能正确回落到 env / 默认——存空串是做不到的。
   const { config } = validateConfig(bili, { sessdata: null }, { sessdata: 'SECRET' })
-  assert.equal(config.sessdata, '')
+  assert.equal('sessdata' in config, false)
+
+  const saved = process.env.mbiliSessdata
+  try {
+    process.env.mbiliSessdata = 'FROM_ENV'
+    assert.equal(resolveConfig(bili, config).sessdata, 'FROM_ENV', '清空后该由 env 接手')
+  } finally {
+    if (saved === undefined) delete process.env.mbiliSessdata
+    else process.env.mbiliSessdata = saved
+  }
 })
 
 check('未知字段被丢弃，不会混进配置', () => {
@@ -107,52 +122,79 @@ check('redactConfig 不回传 secret 明文，只回传有没有值', () => {
   assert.equal(empty.secretsSet.sessdata, false)
 })
 
-check('环境变量兜底：已配置的值优先，没配才用 env', () => {
+check('取值分层：已存 → 环境变量 → schema 默认', () => {
   const key = 'mbiliSessdata'
   const saved = process.env[key]
   try {
     process.env[key] = 'FROM_ENV'
-    assert.equal(withEnvFallback(bili, { sessdata: '' }).sessdata, 'FROM_ENV')
-    assert.equal(withEnvFallback(bili, { sessdata: 'FROM_UI' }).sessdata, 'FROM_UI')
+    assert.equal(resolveConfig(bili, {}).sessdata, 'FROM_ENV', '没配过 → 用 env')
+    assert.equal(resolveConfig(bili, { sessdata: 'FROM_UI' }).sessdata, 'FROM_UI', '配过 → 已存值优先')
     delete process.env[key]
-    assert.equal(withEnvFallback(bili, { sessdata: '' }).sessdata, '')
+    assert.equal(resolveConfig(bili, {}).sessdata, '', '都没有 → schema 默认')
   } finally {
     if (saved === undefined) delete process.env[key]
     else process.env[key] = saved
   }
 })
 
-check('env 兜底：sessdata 存过空串后仍能读到环境变量（不能改用 hasOwnProperty）', () => {
-  // validateConfig 对 schema 里每个 key 都建自有属性，updateModuleConfig 又把整份
-  // 写回 entry.config——所以存过一次配置的用户磁盘上每个 key 都在。若判据换成
-  // hasOwnProperty，env 兜底会对所有这些用户静默失效。
-  const key = 'mbiliSessdata'
-  const saved = process.env[key]
+check('稀疏存储：显式设成 false 的布尔字段能压过 env（原先做不到）', () => {
+  // 原实现存的是补齐默认值后的全量 key，default:true 的布尔恒为真值 → 直接跳过 env，
+  // env 永远读不到；而 default:false 的会被赋成字符串 "false"（真值），
+  // 「显式关掉」反而变成「强制打开」。稀疏存储让「没配过」成为明确状态才解开这一条。
+  const schema = [{ key: 'flag', type: 'boolean', env: 'mTestFlag', default: true, label: '开关' }]
+  const mod = { id: 'probe', configSchema: schema }
+  const saved = process.env.mTestFlag
   try {
-    process.env[key] = 'FROM_ENV'
-    const { config } = validateConfig(bili, { rooms: '13' }, {})
-    assert.equal(Object.prototype.hasOwnProperty.call(config, 'sessdata'), true, '空串也是自有属性')
-    assert.equal(config.sessdata, '')
-    assert.equal(withEnvFallback(bili, config).sessdata, 'FROM_ENV', '空串仍应回落到 env')
+    process.env.mTestFlag = 'false'
+    assert.equal(resolveConfig(mod, {}).flag, false, '没配过 → env 说关就关')
+    assert.equal(resolveConfig(mod, { flag: true }).flag, true, '配过 true → 压过 env')
+    process.env.mTestFlag = 'true'
+    assert.equal(resolveConfig(mod, { flag: false }).flag, false, '配过 false → 同样压过 env')
   } finally {
-    if (saved === undefined) delete process.env[key]
-    else process.env[key] = saved
+    if (saved === undefined) delete process.env.mTestFlag
+    else process.env.mTestFlag = saved
   }
 })
 
-check('boolean/int 字段声明 env 会在启动期被拒绝，而不是静默反转', () => {
-  // 硬上的话：default:true 的字段 env 永远读不到；default:false 的会被赋成字符串
-  // "false"（真值），「显式关掉」变成「强制打开」。存储表达不了「没配过」这个状态。
+check('稀疏存储：只落盘用户显式设过的字段', () => {
+  const { config } = validateConfig(bili, { rooms: '13' }, {})
+  assert.deepEqual(Object.keys(config), ['rooms'], '没提交的字段不该被补进存储')
+  const again = validateConfig(bili, { preferHls: false }, config)
+  assert.deepEqual(Object.keys(again.config).sort(), ['preferHls', 'rooms'], '已存的保留，新提交的加入')
+  assert.equal(again.config.preferHls, false, 'false 也算「配过」')
+})
+
+check('清空 = 回到「没配过」，而不是存一个空值', () => {
+  const stored = { rooms: '13', sessdata: 'SECRET' }
+  const cleared = validateConfig(bili, { rooms: '' }, stored)
+  assert.equal('rooms' in cleared.config, false, '文本清空后不该留在存储里')
+  assert.equal(cleared.config.sessdata, 'SECRET', '没提交的 secret 保持不变')
+  const wiped = validateConfig(bili, { sessdata: null }, stored)
+  assert.equal('sessdata' in wiped.config, false, 'secret 显式 null 才清空')
+})
+
+check('保存别的字段不会顺手把 secret 写成空串（稀疏存储的直接收益）', () => {
+  // 原先 validateConfig 对每个 key 都建自有属性，存过一次配置后磁盘上全是自有属性，
+  // 于是「用户配过没有」无从判断，env 兜底也就没法按 key 存在与否来做。
+  const { config } = validateConfig(bili, { rooms: '13' }, {})
+  assert.equal('sessdata' in config, false, '没提交的 secret 不该被补成空串落盘')
+})
+
+check('select 字段：只接受 options 里的值，且保留声明的原始类型', () => {
+  const mod = { id: 'probe', configSchema: [{
+    key: 'rate', type: 'select', label: '画质',
+    options: [{ value: 3, label: '高清' }, { value: 9, label: '4K' }], default: 3,
+  }] }
+  assert.equal(validateConfig(mod, { rate: '9' }, {}).config.rate, 9, '下拉提交的字符串要还原成数字')
+  const bad = validateConfig(mod, { rate: '5' }, {})
+  assert.equal(bad.ok, false)
+  assert.match(bad.errors[0].message, /不是可选值/)
+})
+
+check('select 没有 options 会在启动期被拒绝', () => {
   const withField = (field) => ({ id: 'probe', name: 'probe', fetch: async () => ({}), configSchema: [field] })
-  for (const type of ['boolean', 'int']) {
-    assert.throws(
-      () => validateModule(withField({ key: 'x', type, env: 'mtest', default: type === 'int' ? 1 : true })),
-      /暂不支持声明 env/,
-      `${type} 类型不该被接受`,
-    )
-  }
-  // text/secret 仍然可以
-  validateModule(withField({ key: 'x', type: 'text', env: 'mtest', default: '' }))
+  assert.throws(() => validateModule(withField({ key: 'x', type: 'select', label: 'x' })), /没有 options/)
+  validateModule(withField({ key: 'x', type: 'select', label: 'x', options: [{ value: 1, label: 'a' }] }))
 })
 
 check('normalizeGroups 挡住畸形返回，不让一个坏模块搞崩整轮合并', () => {
@@ -467,6 +509,28 @@ try {
     assert.equal(module.health.lastSuccessAt, null, '配置变了，上一轮结果不再代表当前配置')
   })
 
+  check('向后兼容：老版本写的「全量 key」配置里，空串不该挡住 env 兜底', () => {
+    // 改稀疏存储之前，磁盘上存的是 sessdata:"" 这种「配过但是空」的条目。
+    // 老代码 env 兜底用真值判断（空串回落 env），新代码用「键存不存在」——
+    // 不归一的话，设了 mbiliSessdata 又存过一次配置的用户 env 会突然失效。
+    const manager = newManager()
+    manager.config.modules['bilibili-live'] = {
+      enabled: true,
+      config: { rooms: '13', sessdata: '', preferHls: true, preferAvc: true, cachingMs: 3000 },
+    }
+    const saved = process.env.mbiliSessdata
+    try {
+      process.env.mbiliSessdata = 'FROM_ENV'
+      const cfg = manager.effectiveConfig(getModule('bilibili-live'))
+      assert.equal(cfg.sessdata, 'FROM_ENV', '老配置里的空串要被归一掉，让 env 接手')
+      assert.equal(cfg.rooms, '13', '有值的字段保持不变')
+      assert.equal(cfg.cachingMs, 3000, 'int 不做归一，保留成「配过」')
+    } finally {
+      if (saved === undefined) delete process.env.mbiliSessdata
+      else process.env.mbiliSessdata = saved
+    }
+  })
+
   check('deferredRef 原样透传，供写盘落成 ${replace}/<ref>', () => {
     // 延迟解析模块（咪咕将来就是这个形态）产出 ref 而不是 url。
     // ref 必须保持单个路径段：buildChannelId 用 /^\$\{replace\}\/([^/?#]+)/ 取
@@ -560,4 +624,4 @@ try {
   rmSync(tmp, { recursive: true, force: true })
 }
 
-console.log(`\n全部通过：${passed}/50 ✅`)
+console.log(`\n全部通过：${passed}/55 ✅`)
