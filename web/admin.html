@@ -2937,6 +2937,9 @@
             }
         }
 
+        // 展开区当前渲染的是哪个模块。用来判断「这次渲染是不是在原地重建同一个表单」。
+        let renderedExtractorDetailId = null;
+
         /** 展开区：选中模块的开关 / 健康详情 / helper / configSchema 表单。 */
         function renderExtractorDetail() {
             const box = document.getElementById('extractorDetail');
@@ -2946,6 +2949,23 @@
             if (!m) {
                 box.classList.add('hidden');
                 box.innerHTML = '';
+                renderedExtractorDetailId = null;
+                return;
+            }
+
+            // 表单里有未保存的输入、且展开的还是同一个模块 → **不重建**，保住用户敲的东西。
+            //
+            // 起因：模块的启用开关现在在每张卡片上，于是「顺手停用 A 模块」会走
+            // toggleExtractorModule → applyExtractorResult → renderExtractors → 无条件用
+            // 服务端状态重建 B 模块的表单。刚粘进去的一批房间号就这么没了，而界面上
+            // 没有任何视觉线索（开关的 stopPropagation 刻意不改变选中态，表单看着纹丝不动、
+            // 值却回退了）。这是 fbf190c 把开关搬到卡片上引入的：搬之前开关只属于当前
+            // 展开的那个模块，「点开关」和「重建这个表单」天然绑定。
+            //
+            // 代价是健康状态那几行暂时不刷新——用几个数字的新鲜度换用户敲进去的内容，值。
+            // 保存成功后标记会清掉，下一次渲染自然就更新了。
+            if (renderedExtractorDetailId === m.id && dirtySaveScopes.has(`xt:${m.id}`)) {
+                applySaveDirtyMarks();
                 return;
             }
 
@@ -2976,13 +2996,15 @@
             // 助手随展开区一起重建，每次渲染后重新挂一次
             initMiguBookmarklet();
 
-            // 表单刚刚按**服务端状态**整个重建过，用户之前敲进去还没保存的值已经没了。
-            // 此时若脏标记还亮着就是在说谎（点保存也只会把服务端原值再存一遍）。
-            // 所以清掉标记，并明确告诉用户输入被丢弃了 —— 静默丢弃才是最坏的。
-            // 正常保存路径不会走到这里报警：saveExtractorConfig 成功后先清标记再重渲染。
+            renderedExtractorDetailId = m.id;
+
+            // 走到这里说明表单确实被按**服务端状态**重建了（换了模块，或上面那道保护没命中）。
+            // 用户之前敲进去还没保存的值已经没了，此时脏标记还亮着就是在说谎
+            // （点保存只会把服务端原值再存一遍）。清掉，并明确告诉用户 —— 静默丢弃最坏。
+            // 正常保存路径不会误报：saveExtractorConfig 成功后先清标记再重渲染。
             if (dirtySaveScopes.has(`xt:${m.id}`)) {
                 setSaveDirty(`xt:${m.id}`, false);
-                showStatus(`${m.name} 有未保存的配置改动，已被本次刷新丢弃，请重新填写`, 'error');
+                showStatus(`${m.name} 有未保存的配置改动已被丢弃，请重新填写`, 'error');
             }
             applySaveDirtyMarks();
         }
@@ -3484,7 +3506,7 @@
                     throw new Error(`外部源API请求失败: ${externalRes.status}`);
                 }
                 const externalPayload = await externalRes.json();
-                externalConfig = normalizeExternalConfig(externalPayload);
+                adoptExternalConfig(normalizeExternalConfig(externalPayload));
                 console.log('外部源配置加载成功:', externalConfig.sources?.length || 0, '个源');
                 
                 // 加载内置源配置
@@ -3674,6 +3696,27 @@
                     item.style.display = text.includes(keyword) ? 'block' : 'none';
                 });
             }
+        }
+
+        /**
+         * 用服务端数据整份替换页面副本。**所有** `externalConfig = ...` 都该走这里。
+         *
+         * 替换的那一刻，「未保存的改动」按定义就归零了：用户若在请求在途期间改过字段
+         * （表单全程可编辑，只有按钮被 disable），那笔改动已经随这次替换被丢弃——它既
+         * 不在已发出的请求体里，也不在新的页面副本里。所以脏标记必须清，并且要**说出来**：
+         *   · 不清 → 橙点指向一个已经不存在的改动，而且除非用户真去点一次保存否则永远
+         *     熄不掉（改分组名、复制频道到分组这些完全不相干的操作都会触发替换）；
+         *   · 清了不说 → 用户那几笔改动被静默吃掉。
+         * 正常保存路径不会误报：各条路径都在发起动作前就已 setSaveDirty('ext', false)，
+         * 走到这里时标记本就是灭的。
+         */
+        function adoptExternalConfig(cfg) {
+            if (dirtySaveScopes.has('ext')) {
+                setSaveDirty('ext', false);
+                showStatus('自定义源有未保存的改动已被丢弃，请重新填写', 'error');
+            }
+            externalConfig = cfg;
+            return externalConfig;
         }
 
         function normalizeExternalConfig(payload) {
@@ -4554,7 +4597,7 @@
                     showStatus(result.message || '删除失败', 'error');
                     const externalRes = await fetch(API_PREFIX + '/api/external-sources');
                     const externalPayload = await externalRes.json();
-                    externalConfig = normalizeExternalConfig(externalPayload);
+                    adoptExternalConfig(normalizeExternalConfig(externalPayload));
                     renderExternalSources();
                 }
             } catch (error) {
@@ -4562,7 +4605,7 @@
                 // 恢复数据
                 const externalRes = await fetch(API_PREFIX + '/api/external-sources');
                 const externalPayload = await externalRes.json();
-                externalConfig = normalizeExternalConfig(externalPayload);
+                adoptExternalConfig(normalizeExternalConfig(externalPayload));
                 renderExternalSources();
             }
         }
@@ -4639,7 +4682,7 @@
                 // 重新加载配置确保UI同步（无论成功失败都加载）
                 const externalRes = await fetch(API_PREFIX + '/api/external-sources');
                 const externalPayload = await externalRes.json();
-                externalConfig = normalizeExternalConfig(externalPayload);
+                adoptExternalConfig(normalizeExternalConfig(externalPayload));
                 
                 // 根据 result.success 判断而不是 response.ok
                 if (result.success !== false) {
@@ -4725,7 +4768,7 @@
                 // 重新加载配置确保UI同步
                 const externalRes = await fetch(API_PREFIX + '/api/external-sources');
                 const externalPayload = await externalRes.json();
-                externalConfig = normalizeExternalConfig(externalPayload);
+                adoptExternalConfig(normalizeExternalConfig(externalPayload));
                 
                 // 判断抓取结果
                 if (result.success !== false) {
@@ -4788,7 +4831,7 @@
                     // 「档 ↔ 源」绑定失效），也让「在哪些配置档显示」勾选行立即可用（issue #29/#68）
                     try {
                         const externalRes = await fetch(API_PREFIX + '/api/external-sources');
-                        externalConfig = normalizeExternalConfig(await externalRes.json());
+                        adoptExternalConfig(normalizeExternalConfig(await externalRes.json()));
                         sourceProfileData = null;   // 源列表变了，绑定矩阵下次打开时重新拉
                     } catch (e) { /* 回读失败不影响已保存 */ }
                     renderExternalSources(); // 保存成功后刷新UI
@@ -4862,7 +4905,7 @@
                 // 重新加载配置
                 const externalRes = await fetch(API_PREFIX + '/api/external-sources');
                 const externalPayload = await externalRes.json();
-                externalConfig = normalizeExternalConfig(externalPayload);
+                adoptExternalConfig(normalizeExternalConfig(externalPayload));
                 
                 if (result.success !== false) {
                     showStatus(`${sourceName} 导入成功！共 ${result.channelCount || 0} 个频道，已同步到频道列表`, 'success');
@@ -6268,7 +6311,7 @@ if(success){
             if (!response.ok || result.success === false) {
                 throw new Error(result.message || '保存自定义源配置失败');
             }
-            externalConfig = await fetchExternalConfigSnapshot();
+            adoptExternalConfig(await fetchExternalConfigSnapshot());
             const channelsResponse = await fetch(API_PREFIX + '/api/channels');
             if (channelsResponse.ok) {
                 allChannels = await channelsResponse.json();
@@ -6297,7 +6340,7 @@ if(success){
             });
 
             if (!changed) {
-                externalConfig = latestExternalConfig;
+                adoptExternalConfig(latestExternalConfig);
                 return false;
             }
 
@@ -7465,7 +7508,7 @@ if(success){
                 showStatus(`已复制到 ${result.added} 个分组`, 'success');
                 closeChannelDetail();
                 const externalRes = await fetch(API_PREFIX + '/api/external-sources');
-                if (externalRes.ok) { externalConfig = normalizeExternalConfig(await externalRes.json()); }
+                if (externalRes.ok) { adoptExternalConfig(normalizeExternalConfig(await externalRes.json())); }
                 await loadMyPlaylist(false);
                 const channelsRes = await fetch(API_PREFIX + '/api/channels');
                 if (channelsRes.ok) { allChannels = await channelsRes.json(); }
