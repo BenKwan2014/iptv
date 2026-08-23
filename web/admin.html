@@ -706,6 +706,27 @@
             border-top: none;
         }
 
+        /* B 站登录态徽标：登录与否必须一眼看见，不能只靠密码框里的灰色占位 */
+        .bili-login-state {
+            margin-left: auto;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 1px 8px;
+            border-radius: 10px;
+        }
+
+        .bili-login-state.on {
+            color: #52c41a;
+            background: #f6ffed;
+            border: 1px solid #b7eb8f;
+        }
+
+        .bili-login-state.off {
+            color: #888;
+            background: #f5f5f5;
+            border: 1px solid #d9d9d9;
+        }
+
         .card-open-hint {
             margin-left: auto;
             flex-shrink: 0;
@@ -3008,7 +3029,7 @@
                 // 助手挂在它自己那一段的开头（B 站的扫码登录属于「登录态」那段，
                 // 顶在整个表单最上面会莫名其妙）。没声明 helperSection 的照旧渲染在最外层。
                 if (helper && helper.section && helper.section === section) {
-                    html += extractorHelperHtml(helper.key);
+                    html += extractorHelperHtml(helper.key, secretsSet);
                 }
 
                 if (chunk.some(f => f.group)) {
@@ -3031,7 +3052,7 @@
 
         // 模块可以声明 helper，在自己的卡片里多渲染一块辅助 UI。
         // markup 留在这里而不是模块文件：配套的 CSS、引导弹窗、bookmarklet 代码都在本页。
-        function extractorHelperHtml(key) {
+        function extractorHelperHtml(key, secretsSet) {
             if (key === 'migu-bookmarklet') {
                 return `<div class="bookmarklet-section" style="margin:0 0 12px;">
                     <div class="bookmarklet-title"><span>📖</span><span>快速获取咪咕账号信息</span></div>
@@ -3042,16 +3063,23 @@
                 </div>`;
             }
             if (key === 'bilibili-login') {
+                // 登录与否要**看得见**。原先唯一的线索是密码框里那句灰色占位
+                // 「已设置，留空则不修改」—— 藏在一个看起来空空如也的输入框里，
+                // 用户扫码成功后回到表单，完全看不出到底成没成。
+                const loggedIn = !!(secretsSet && secretsSet.sessdata);
                 // 两个入口并排，与咪咕的形态对齐：主按钮做常规操作，「?」给说明。
                 // 这里的「?」不是说明而是备用方案——B 站的 SESSDATA 是 HttpOnly，
                 // 咪咕那种「书签读 document.cookie」的招读不到，只能扫码或手动翻 DevTools。
                 return `<div class="bookmarklet-section" style="margin:0 0 12px;">
-                    <div class="bookmarklet-title"><span>🔑</span><span>获取 SESSDATA（登录 B 站账号）</span></div>
+                    <div class="bookmarklet-title">
+                        <span>🔑</span><span>B 站登录态</span>
+                        <span id="biliLoginState" class="bili-login-state ${loggedIn ? 'on' : 'off'}">${loggedIn ? '✅ 已登录（画质可达原画）' : '未登录（画质封顶超清）'}</span>
+                    </div>
                     <div class="bookmarklet-actions">
-                        <button class="btn btn-sm btn-primary" onclick="openBiliQrLogin()">📱 扫码登录</button>
+                        <button class="btn btn-sm btn-primary" onclick="openBiliQrLogin()">📱 ${loggedIn ? '重新扫码登录' : '扫码登录'}</button>
                         <button class="bookmarklet-help-btn" onclick="openBiliSessdataGuide()" title="不想扫码？手动获取的步骤">?</button>
                     </div>
-                    <div style="font-size:12px; color:#888; margin-top:6px;">用 B 站手机 App 扫一下即可，凭据直接存到服务端、不经过这个页面。</div>
+                    <div style="font-size:12px; color:#888; margin-top:6px;">用 B 站手机 App 扫一下即可，凭据直接存到服务端、不经过这个页面。下面的输入框留空即不修改已保存的凭据。</div>
                 </div>`;
             }
             return '';
@@ -3199,7 +3227,7 @@
                 </div>
                 <div style="font-size:12px; margin-bottom:12px;">${extractorHealthHtml(m.health || {})}</div>
                 <div style="border-top:1px solid #f5f5f5; padding-top:12px;">
-                    ${m.helperSection ? '' : extractorHelperHtml(m.helper)}
+                    ${m.helperSection ? '' : extractorHelperHtml(m.helper, m.secretsSet || {})}
                     ${extractorFieldsHtml(m.id, m.configSchema || [], m.config || {}, m.secretsSet || {}, m.envProvided || {}, m.helperSection ? { key: m.helper, section: m.helperSection } : null)}
                     <div style="margin-bottom:12px;">
                         <label style="display:block; font-size:12px; color:#888;">刷新间隔（分钟）</label>
@@ -3377,6 +3405,14 @@
                 // 整份状态已随响应回来，重渲染让 SESSDATA 的「已设置」立刻反映出来
                 extractorsState = r.data;
                 renderExtractors();
+                // 定向更新登录状态：renderExtractorDetail 在表单有未保存输入时会跳过重建
+                //（那是为了不吃掉用户敲的东西），但登录状态是刚刚发生的事实，
+                // 不能因为表单脏就显示成旧的。
+                const stateEl = document.getElementById('biliLoginState');
+                if (stateEl) {
+                    stateEl.textContent = '✅ 已登录（画质可达原画）';
+                    stateEl.className = 'bili-login-state on';
+                }
                 setTimeout(closeBiliQrLogin, 1200);
                 return;
             }
