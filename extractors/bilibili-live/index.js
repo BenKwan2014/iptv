@@ -6,7 +6,7 @@
  * 不实现 resolve()——B 站的地址是直链（带 expires token，约 2 小时过期），
  * 靠 defaultRefreshMinutes 的短周期刷新兜住，不需要播放时二次解析。
  */
-import { resolveRoom, parseRoomList, mapLimit, RiskControlError, RoomOfflineError, DEFAULT_GROUP } from './api.js'
+import { resolveRoom, parseRoomList, mapLimit, areaList, topRoomsOfArea, RiskControlError, RoomOfflineError, DEFAULT_GROUP } from './api.js'
 
 // 并发上限。B 站对短时间内的大量请求会回 -352，实测 3 路是安全且够快的折中；
 // 外部源那边「串行 + 每个之间硬睡 2 秒」的做法在房间数上去之后是分钟级，不抄。
@@ -23,6 +23,89 @@ const CONCURRENCY = 3
  */
 export function shouldFailRound(groupCount, hardErrors) {
   return groupCount === 0 && hardErrors > 0
+}
+
+/**
+ * 「自动加入热门直播间的分区」那个多行文本框 → 分区名数组。
+ * 与 parseRoomList 同款约定：一行一个、去首尾空白、忽略空行与 # 开头的注释。
+ */
+export function parseAreaNames(text) {
+  return String(text || '')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith('#'))
+}
+
+/**
+ * 手填清单 + 热门榜 → 去重后的抓取清单。
+ *
+ * 手填的排前面：那是用户明确指定的主播，热门榜只是「顺便给点内容」；顺序还决定了
+ * 同名频道在播放器「源1 / 源2」里的先后。
+ * 去重按房间号的字符串形式——热门榜里可能正好有用户已经手填过的那个房间，
+ * 不去重的话同一个直播间会在播放列表里出现两次（同名、同地址，纯噪音）。
+ */
+export function mergeRoomRefs(manual, auto) {
+  const seen = new Set()
+  const out = []
+  for (const ref of [...(manual || []), ...(auto || [])]) {
+    const key = String(ref)
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(ref)
+  }
+  return out
+}
+
+/**
+ * 按配置的分区名，取各分区人气前 N 的直播间。
+ *
+ * 存在的理由：不这么做的话，用户想用 B 站直播就得自己去网页上一个个找房间号——
+ * 那是这个模块最劝退的一步。默认填「赛事」，开箱就是当前正在打的比赛。
+ *
+ * **不硬编码房间号**：主播会退播、赛事会结束，写死的清单必然烂掉。每轮抓取现查，
+ * 拿到的永远是此刻真在播的。
+ *
+ * 失败不抛：分区名写错、某个分区接口抽风，都只记一条 warning 让健康状态显示出来，
+ * 手填的清单照常抓。整轮成败由外层的 shouldFailRound 判定——这里抛的话，
+ * 一个写错的分区名就会让整个模块报失败、把上一轮的频道覆盖没。
+ *
+ * @returns {Promise<{rooms: number[], warnings: string[]}>}
+ */
+async function collectTopRooms(config, ctx) {
+  const perArea = Number(config.topPerArea)
+  const names = parseAreaNames(config.topAreas)
+  if (!(perArea > 0) || !names.length) return { rooms: [], warnings: [] }
+
+  const options = { timeoutMs: ctx.timeoutMs || 10000 }
+  const warnings = []
+
+  let areas
+  try {
+    areas = await areaList(options)
+  } catch (error) {
+    return { rooms: [], warnings: [`分区清单获取失败，本轮不自动加入热门直播间：${error.message}`] }
+  }
+
+  const byName = new Map(areas.map(area => [area.name, area.id]))
+  const rooms = []
+  for (const name of names) {
+    const id = byName.get(name)
+    if (id == null) {
+      warnings.push(`分区「${name}」在 B 站不存在，已跳过（当前可用：${areas.map(a => a.name).join(' / ')}）`)
+      continue
+    }
+    try {
+      const found = await topRoomsOfArea(id, perArea, options)
+      // topRoomsOfArea 会多取一些备用（未开播的后面会被跳过），这里只取前 perArea 个：
+      // 多出来的会让实际频道数超出用户设定，且白白多打几次取流请求。
+      rooms.push(...found.slice(0, perArea))
+    } catch (error) {
+      // 风控要往上抛：让 health() 报「被风控」而不是一条不起眼的 warning
+      if (error instanceof RiskControlError) throw error
+      warnings.push(`分区「${name}」热门榜获取失败，已跳过：${error.message}`)
+    }
+  }
+  return { rooms, warnings }
 }
 
 export default {
@@ -47,6 +130,27 @@ export default {
       placeholder: '一行一个：房间号 / 直播间地址 / b23.tv 短链\n13\nhttps://live.bilibili.com/1022\n# 井号开头是注释',
       hint: '房间号是地址路径里的数字，不是 live_from= 那种参数。直接粘完整地址最稳。未开播的房间会自动跳过。',
       default: '',
+    },
+    {
+      key: 'topAreas',
+      label: '自动加入热门直播间的分区',
+      type: 'text',
+      multiline: true,
+      placeholder: '一行一个分区名\n赛事\n网游\n# 井号开头是注释',
+      // 默认「赛事」：那是 B 站的官方赛事转播区，人气比普通直播区高一个数量级
+      //（实测 3921 万 vs 254 万），内容全是正在打的比赛、不会混进普通主播，
+      // 是「不用自己找房间号也能开箱即用」这件事最合适的默认值。
+      default: '赛事',
+      hint: '省去自己找房间号。当前可填：赛事 / 网游 / 手游 / 单机游戏 / 娱乐 / 电台 / 虚拟主播 / 聊天室 / 生活 / 知识 / 互动玩法 / 购物。分区名以 B 站为准（写错会在下面的健康状态里提示）。留空则只用上面手填的清单。',
+    },
+    {
+      key: 'topPerArea',
+      label: '每个分区取前几名',
+      type: 'int',
+      min: 0,
+      max: 20,
+      default: 5,
+      hint: '按人气从高到低。填 0 等于关掉这个功能。未开播/取流失败的会自动跳过，所以实际条数可能少于这个值。',
     },
     {
       key: 'sessdata',
@@ -90,11 +194,18 @@ export default {
    * @param {object} ctx    { timeoutMs, signal }
    */
   async fetch(config, ctx = {}) {
-    const refs = parseRoomList(config.rooms)
+    const manualRefs = parseRoomList(config.rooms)
+    const autoResult = await collectTopRooms(config, ctx)
+
+    const refs = mergeRoomRefs(manualRefs, autoResult.rooms)
+
     if (!refs.length) {
       return {
         groups: [],
-        meta: { skipped: [], warnings: ['直播间清单是空的——先在配置里填几个房间号'] },
+        meta: {
+          skipped: [],
+          warnings: [...autoResult.warnings, '没有可抓的直播间——填几个房间号，或在「自动加入热门直播间的分区」里填个分区名'],
+        },
       }
     }
 
@@ -107,7 +218,7 @@ export default {
     }
 
     const skipped = []
-    const warnings = []
+    const warnings = [...autoResult.warnings]
     let riskControl = null
     // 「没开播」与「出错了」要分开计：两者都产出 0 个频道，但前者是正常状态、
     // 后者是这一轮失败了。混在一起的话，断网时会被记成「成功抓到 0 个频道」，

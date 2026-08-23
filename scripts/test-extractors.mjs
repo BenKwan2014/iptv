@@ -23,7 +23,7 @@ import { join } from 'node:path'
 import { listModules, getModule, sourceIdOf, resolverFor, validateModule, MODULE_ID_RE } from '../extractors/registry.js'
 import { clearUrlCache } from '../utils/appUtils.js'
 import { selectFromPlayurl, parseRoomList, normalizeRoom, mapLimit, RoomError } from '../extractors/bilibili-live/api.js'
-import { shouldFailRound } from '../extractors/bilibili-live/index.js'
+import { shouldFailRound, parseAreaNames, mergeRoomRefs } from '../extractors/bilibili-live/index.js'
 import {
   ExtractorManager, validateConfig, redactConfig, resolveConfig, normalizeGroups, emptyHealth,
 } from '../utils/extractorManager.js'
@@ -553,16 +553,19 @@ try {
     assert.deepEqual(result.results, [])
   })
 
-  await checkAsync('空房间清单：成功但 0 频道，且不联网', async () => {
+  await checkAsync('什么都没配（房间清单空 + 热门分区空）：成功但 0 频道，且不联网', async () => {
+    // 注意 topAreas 默认是「赛事」——只清空 rooms 的话模块会去抓热门赛事直播间
+    //（那正是「不用自己找房间号」这个功能的意义），所以这条要测「真的什么都没配」
+    // 必须把 topAreas / topPerArea 也一起清掉。
     const manager = newManager()
     manager.setModuleEnabled('bilibili-live', true)
-    manager.updateModuleConfig('bilibili-live', { rooms: '' })
+    manager.updateModuleConfig('bilibili-live', { rooms: '', topAreas: '', topPerArea: 0 })
     const result = await manager.updateAll({ forceAll: true, onlyId: 'bilibili-live' })
     assert.equal(result.results[0].success, true)
     const state = manager.getState()
     const module = state.modules.find(m => m.id === 'bilibili-live')
     assert.equal(module.health.status, 'empty', '0 频道是「没人播」不是「失败」')
-    assert.ok(module.health.warnings.some(w => w.includes('清单')))
+    assert.ok(module.health.warnings.some(w => w.includes('房间号')))
   })
 
   check('配置损坏时拒绝写盘，不把用户配置覆盖成空', () => {
@@ -704,5 +707,49 @@ try {
 } finally {
   rmSync(tmp, { recursive: true, force: true })
 }
+
+// ---- 热门直播间自动加入（省去用户自己找房间号）----
+// 存在的理由：不这么做的话，想用 B 站直播就得先去网页上一个个找房间号，那是这个
+// 模块最劝退的一步。默认「赛事」分区 —— B 站的官方赛事转播区，人气比普通直播区高
+// 一个数量级（实测 3921 万 vs 254 万），拿到的就是当前正在打的比赛。
+
+check('分区名解析：一行一个、去空白、忽略空行与 # 注释', () => {
+  assert.deepEqual(parseAreaNames('赛事\n  网游  \n\n# 这行是注释\n手游'), ['赛事', '网游', '手游'])
+  assert.deepEqual(parseAreaNames(''), [])
+  assert.deepEqual(parseAreaNames(null), [])
+  assert.deepEqual(parseAreaNames('# 全是注释\n\n'), [])
+})
+
+check('★ 手填清单排在热门榜之前', () => {
+  // 顺序不只是好看：它决定同名频道在播放器「源1 / 源2」里的先后，
+  // 用户明确指定的那个应该是源1
+  assert.deepEqual(mergeRoomRefs([111, 222], [333, 444]), [111, 222, 333, 444])
+})
+
+check('★ 手填的房间正好在热门榜里时只出现一次', () => {
+  // 不去重的话同一个直播间会在播放列表里出现两次：同名、同地址，纯噪音
+  assert.deepEqual(mergeRoomRefs([111, 222], [222, 333]), [111, 222, 333])
+})
+
+check('去重按字符串形式，数字 222 与字符串 "222" 视为同一个房间', () => {
+  // parseRoomList 产出的可能是字符串（用户粘的地址），热门榜产出的是数字
+  assert.deepEqual(mergeRoomRefs(['222'], [222, 333]), ['222', 333])
+})
+
+check('空输入不炸', () => {
+  assert.deepEqual(mergeRoomRefs([], []), [])
+  assert.deepEqual(mergeRoomRefs(null, undefined), [])
+})
+
+check('topAreas / topPerArea 已进 configSchema 且默认值符合「开箱即用」', () => {
+  const schema = bili.configSchema
+  const areas = schema.find(f => f.key === 'topAreas')
+  const per = schema.find(f => f.key === 'topPerArea')
+  assert.ok(areas, 'topAreas 字段丢了')
+  assert.ok(per, 'topPerArea 字段丢了')
+  assert.equal(areas.default, '赛事', '默认分区应是「赛事」——开箱即得当前正在打的比赛')
+  assert.equal(per.default, 5)
+  assert.equal(per.min, 0, '填 0 必须能关掉这个功能')
+})
 
 console.log(`\n全部通过：${passed} ✅`)

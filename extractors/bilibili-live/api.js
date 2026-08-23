@@ -107,6 +107,52 @@ async function apiGet(path, params, { cookie, timeoutMs = 10000 } = {}) {
  *    两种都不好，归一之后两种输入都能用。
  * 2. 短链跟随显式限制跳数并把最终地址写进错误信息，避免跳转环。
  */
+/**
+ * B 站的直播大区清单（网游 / 手游 / 单机游戏 / 娱乐 / 电台 / 虚拟主播 / 聊天室 / 生活）。
+ *
+ * 动态拉而不是把 8 个 id 写死：B 站增删过大区，写死的话表现是「用户填的分区名突然
+ * 匹配不上、热门榜静默变空」。一次抓取只多一个请求，不值得为此冒僵化的风险。
+ *
+ * @returns {Promise<Array<{id:number,name:string}>>}
+ */
+export async function areaList(options) {
+  const data = await apiGet('/room/v1/Area/getList', {}, options)
+  const list = Array.isArray(data) ? data : []
+  return list
+    .filter(area => area && area.id != null && area.name)
+    .map(area => ({ id: Number(area.id), name: String(area.name).trim() }))
+}
+
+/**
+ * 某个大区按人气排的前 N 个直播间。
+ *
+ * 用**老接口** /room/v1/Area/getRoomList：新版的
+ * /xlive/web-interface/v1/second/getList 需要 WBI 签名（不签就回 -352），
+ * 那意味着要实现并长期维护 B 站一套没文档、会变的签名算法——对这个项目太重了。
+ * 老接口同样按 sort_type=online 排序，够用。
+ *
+ * 大型赛事天然排在最前：实测网游大区前 5 里 4 个是赛事直播（TI 决赛、CS2、无畏契约
+ * 总决赛），因为百万级人气碾压普通主播。所以不需要专门的赛事接口。
+ *
+ * @returns {Promise<number[]>} 房间号，按人气从高到低
+ */
+export async function topRoomsOfArea(parentAreaId, count, options) {
+  const data = await apiGet('/room/v1/Area/getRoomList', {
+    platform: 'web',
+    parent_area_id: parentAreaId,
+    area_id: 0,
+    sort_type: 'online',
+    page: 1,
+    // 多要一些再截断：未开播/异常的房间在后面 resolveRoom 时会被跳过，
+    // 只要正好 count 个的话，跳掉几个就不够数了
+    page_size: Math.min(count * 2, 50),
+  }, options)
+  const list = Array.isArray(data) ? data : []
+  return list
+    .map(room => Number(room?.roomid))
+    .filter(id => Number.isInteger(id) && id > 0)
+}
+
 export async function normalizeRoom(rawToken, { timeoutMs = 10000 } = {}) {
   const token = toHalfWidth(String(rawToken || '').trim())
   if (!token) throw new RoomError('空的房间标识')
