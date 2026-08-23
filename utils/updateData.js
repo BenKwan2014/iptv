@@ -356,6 +356,10 @@ async function updatePE(hours) {
 
   printYellow("开始更新体育直播频道...")
 
+  // 单场赛事抓取失败的计数。收尾统一报一次，避免逐场刷屏。
+  let matchFailed = 0
+  let lastMatchError = ''
+
   // 缓存本次PE内容，供 regenerateOnly 模式使用
   let peM3uCache = ""
   let peTxtCache = ""
@@ -433,8 +437,10 @@ async function updatePE(hours) {
           peTxtCache += txtLine
         }
       } catch (error) {
-        // printYellow(`${data.mgdbId} ${pkInfoTitle} 更新失败 此警告不影响正常使用 可忽略`)
-        // printYellow(error)
+        // 逐场打日志会刷屏（一轮近 200 场），所以原来那两行被注释掉了——但完全静默
+        // 又让「少了几场比赛」无从排查。改成计数，收尾统一报一次。
+        matchFailed++
+        lastMatchError = error?.message || String(error)
       }
     }
     printGreen(`日期 ${date} 更新完成！`)
@@ -450,6 +456,9 @@ async function updatePE(hours) {
   // 重命名
   renameFileSync(interfacePath, interfacePath.replace(".bak", ""))
   renameFileSync(interfaceTXTPath, interfaceTXTPath.replace(".bak", ""))
+  if (matchFailed > 0) {
+    printYellow(`体育赛事有 ${matchFailed} 场抓取失败，本轮不含这些场次：${lastMatchError}`)
+  }
   printGreen("体育直播频道更新完成")
   const end = Date.now()
   printYellow(`体育直播频道更新耗时: ${(end - start) / 1000}秒`)
