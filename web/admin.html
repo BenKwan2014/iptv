@@ -4927,20 +4927,33 @@
             savedToastTimer = setTimeout(() => { savedToastTimer = null; showStatus(msg, 'success'); }, 800);
         }
 
-        function showStatus(message, type) {
+        // 上一条提示的隐藏定时器。必须记下来并在下一条到来时清掉：
+        // 原实现每次都另起一个 3 秒定时器却不撤销旧的，于是「先弹 A、1 秒后弹 B」时，
+        // A 的定时器会在第 3 秒把还没读完的 B 一起掐掉。
+        let statusHideTimer = null;
+
+        /**
+         * @param {string} message 提示文案
+         * @param {string} type    success / error / info
+         * @param {number} ms      停留时长，默认 3 秒。需要用户**记下内容**的提示要给足时间
+         *                         ——比如「访问入口已变更为 /xxx/admin」，它后面跟着一次跳转，
+         *                         提示比跳转先消失的话，这句话等于没说。
+         */
+        function showStatus(message, type, ms = 3000) {
             const status = document.getElementById('status');
             status.textContent = message;
             status.className = 'status ' + type;
-            
+
             // 触发动画
             setTimeout(() => {
                 status.classList.add('show');
             }, 10);
-            
-            // 3秒后自动隐藏
-            setTimeout(() => {
+
+            if (statusHideTimer) clearTimeout(statusHideTimer);
+            statusHideTimer = setTimeout(() => {
+                statusHideTimer = null;
                 status.classList.remove('show');
-            }, 3000);
+            }, ms);
         }
 
         // 渲染系统配置
@@ -5161,7 +5174,9 @@ if(success){
                             // 地址明文写进提示并停 5 秒（比原来的 3 秒长）：密码里若有需要 URL 编码的
                             // 字符，浏览器编码后与服务端的原样比对对不上，跳过去会是 404 —— 那时
                             // 用户至少看得见正确地址、能自己敲。服务端不清洗 pass，这个口子暂时堵不上。
-                            showStatus(`访问入口已变更，5 秒后跳转到：${entry}　（若跳转后打不开，请手动访问该地址）`, 'success');
+                            // 6 秒 > 下面的 5 秒跳转：提示必须活到跳转发生，否则用户记不下地址。
+                            // 这句话是「服务端不清洗 pass、密码含特殊字符时跳过去可能 404」的唯一补偿。
+                            showStatus(`访问入口已变更，5 秒后跳转到：${entry}　（若跳转后打不开，请手动访问该地址）`, 'success', 6000);
                             setTimeout(() => { window.location.href = window.location.origin + entry; }, 5000);
                         }
                         return { entry, apiPrefix };
@@ -5357,7 +5372,7 @@ if(success){
                 if (result.success) {
                     showStatus(redirectTo
                         ? `服务重启中...访问入口已变更为 ${redirectTo}，约 15 秒后自动跳转（若打不开请手动访问该地址）`
-                        : '服务重启中...请等待约 5-10 秒后刷新页面', 'success');
+                        : '服务重启中...请等待约 5-10 秒后刷新页面', 'success', redirectTo ? 16000 : 3000);
 
                     // 15秒后回到正确的地址：入口变了就跳新入口，否则原地刷新
                     setTimeout(() => {
