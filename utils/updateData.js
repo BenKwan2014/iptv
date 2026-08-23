@@ -35,6 +35,23 @@ export function findLocalLogo(name) {
  * @param {boolean} options.startupMode - 启动模式，根据配置决定是否更新
  * @param {boolean} options.regenerateOnly - 仅重新生成播放列表，使用缓存的咪咕数据（用于外部源变更时）
  */
+/**
+ * 本轮该不该刷咪咕 token。**提成纯函数是为了能被测试锁住**——它是一行布尔表达式，
+ * 极易在后续改动里被顺手改回 `!(hours % 720)`，而改错了没有任何报错，
+ * 只是悄悄开始高频请求咪咕的登录接口。判据的来龙去脉见调用处的注释。
+ *
+ * @param {number}  hours          进程内累计运行小时数（app.js 的 var hours）
+ * @param {boolean} regenerateOnly 仅用缓存重新生成播放列表
+ * @param {boolean} startupMode    启动那一次更新
+ * @param {boolean} enableMigu     咪咕源总开关
+ */
+export function shouldRefreshMiguToken({ hours, regenerateOnly, startupMode, enableMigu }) {
+  if (!enableMigu) return false
+  if (regenerateOnly || startupMode) return false
+  if (!(hours > 0)) return false
+  return hours % 720 === 0
+}
+
 async function updateTV(hours, options = {}) {
   const { startupMode = false, regenerateOnly = false } = options
   
@@ -128,8 +145,26 @@ async function updateTV(hours, options = {}) {
   // txt
   writeFileSync(interfaceTXTPath, "")
 
-  if (enableMigu && !(hours % 720)) {
-    // 每720小时(一个月)刷新token（咪咕禁用时无需刷新）
+  // 每 720 小时（一个月）刷新一次咪咕 token。refreshToken() 打的是
+  // migu-app-umnb.miguvideo.com/login/token_refresh_migu_plus —— 带登录态的续期请求，
+  // config.js 原注释：可能是导致封号的原因。所以「一个月一次」必须真的是一个月一次。
+  //
+  // hours 是**进程内**计数器（app.js 的 `var hours = 0`，只在定时任务里 += updateInterval），
+  // 而 `0 % 720 === 0` 恒真。光判 `!(hours % 720)` 会让下面三种场景每次都刷：
+  //   1. 容器启动 —— app.js 的 `update(hours, { startupMode: true })` 此时 hours 就是 0。
+  //      NAS 重启 / compose 更新 / 崩溃拉起，每次都刷。
+  //   2. 启动后头 updateInterval 小时内（默认 8h）任何一次源刷新触发的重新生成 ——
+  //      5 分钟一轮的源检查和 60 秒后的订阅重试都用当时还是 0 的 hours。
+  //   3. 后台操作 —— 保存系统配置 / 导入配置 / 上传或删除台标 / 复制频道，
+  //      共 8 处 `update(0, { regenerateOnly: true })`，每点一次刷一次。
+  //      （extractorsAPI 早就为此专门传 update(1, …) 绕开，注释在那边。）
+  //
+  // 三道闸各自独立、都不能省：
+  //   · !regenerateOnly —— 「用缓存重新生成播放列表」本来就不该做任何联网的账号操作，
+  //     这一条同时挡住上面 2 和 3 的全部现有与未来调用方，不用逐个改 update(0,…)。
+  //   · !startupMode   —— 挡住 1。
+  //   · hours > 0      —— 兜底：将来若有人以别的方式在 hours 还是 0 时触发完整更新。
+  if (shouldRefreshMiguToken({ hours, regenerateOnly, startupMode, enableMigu })) {
     // 账号来自咪咕模块配置（原先是 config.js 的全局导出）
     const { userId: miguUserId = "", token: miguToken = "" } = getModuleConfig('migu')
     if (miguUserId != "" && miguToken != "") {
