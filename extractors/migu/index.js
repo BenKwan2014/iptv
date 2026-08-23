@@ -15,19 +15,19 @@
  * 开关继续是 config.js 的 enableMigu：它被 updateData / channelMerger / app.js
  * 等多处直接 import，在 extractors.json 里另开一份会两个开关打架。
  *
- * 已收编：频道列表抓取（fetch）、播放时解析（resolve，见 ./resolve.js）。
+ * 已收编：频道列表抓取（fetch）、播放时解析（resolve，见 ./resolve.js）、
+ * 账号与画质参数（userId / token / rateType / enableHDR / enableH265 /
+ * enableClientDispatch）——它们全在下面的 configSchema 里，加载期由
+ * legacySystemConfigKeys 从 system-config.json 一次性迁入（只搬文件里真有的，
+ * 纯 env 部署 env 继续 live 生效）；coerceEnvValue 对 boolean/select 做了
+ * parseBool 语义的归一（menableHDR=false / mrateType=4 都正确生效），
+ * updateModuleConfig 保存时触发 clearResolveCache。别再从 config.js 取这些值。
  *
- * 刻意**不**收编、且不是「以后有空再说」的两块：
+ * 刻意**不**收编、且不是「以后有空再说」的一块：
  *   - 体育赛事（utils/updateData.js 的 updatePE）。模块 fetch() 有 90 秒墙钟上限，
  *     而它要串行打 141+ 次赛事接口，塞进来必超时 → 记为模块失败 → 冷启动时
  *     0 频道守卫触发 → 整份播放列表停止生成。且两者失败语义相反：频道列表失败
  *     要沿用旧数据，赛事失败宁可没有也不要分发过期 pID。
- *   - 画质参数（config.js 的 rateType / enableHDR / enableH265 / enableClientDispatch）。
- *     归属上确实该在这里，但现有 configSchema 机制接不住：withEnvFallback 只兜
- *     字符串真值，menableHDR=false / mrateType=4 会静默失效；且存量
- *     system-config.json 里的值无接管方，设了蓝光/4K 的用户会当场降档到 720p。
- *     前置条件是先扩 withEnvFallback（用 hasOwnProperty + parseBool 语义）、
- *     加 type:'select'、updateModuleConfig 补 clearResolveCache、做双读兼容迁移。
  */
 import { dataList } from "../../utils/fetchList.js"
 import { resolve, clearCache } from "./resolve.js"
@@ -71,6 +71,22 @@ export function dedupeAcrossGroups(groups) {
     if (dataList.length > 0) out.push({ ...group, dataList })
   }
   return out
+}
+
+/**
+ * 这一轮算不算失败（与 B 站模块的 shouldFailRound 同一套约定）。
+ *
+ * fetchList 对逐个分类的失败只吞错保其余分类，但「一个频道都没拿到且确有分类
+ * 失败」必须判失败并抛出——当成功返回的话，extractorManager 会用空结果覆盖上
+ * 一轮缓存、consecutiveFailures 归零：既不退避重试，还让 criticalShortfall 把
+ * 所有播放列表重生成挡到下个刷新周期（默认 6 小时）。抛错走的失败路径反而全都
+ * 对：保缓存、指数退避、5 分钟 tick 自愈。部分分类失败不算整轮失败，只记
+ * meta.warnings 让「源管理」的健康状态看得见。
+ *
+ * 抽成纯函数是为了能单测——否则要真断网才走得到这条路径。
+ */
+export function shouldFailRound(channelCount, failedCateCount) {
+  return channelCount === 0 && failedCateCount > 0
 }
 
 export default {
@@ -203,7 +219,7 @@ export default {
   clearResolveCache: clearCache,
 
   async fetch() {
-    const cates = await dataList()
+    const { cates, failed } = await dataList()
 
     // 咪咕接口返回的就是 [{name, dataList}] 形状，与注册表契约天然同构，
     // 这里只补三个字段，其余原样透传（EPG 要 pID，台标要 pics）。
@@ -222,9 +238,20 @@ export default {
 
     const deduped = dedupeAcrossGroups(groups)
     const count = deduped.reduce((sum, g) => sum + g.dataList.length, 0)
+
+    if (shouldFailRound(count, failed.length)) {
+      throw new Error(`咪咕分类数据本轮全部抓取失败（${failed.length} 个分类）：网络不可达或接口异常`)
+    }
+
     return {
       groups: deduped,
-      meta: { skipped: [], warnings: [], requested: count },
+      meta: {
+        skipped: [],
+        // 部分分类失败不算整轮失败，但要让「源管理」的健康状态看得见，
+        // 不能像原来那样只在日志里刷一行就完事。
+        warnings: failed.map(name => `分类「${name}」本轮抓取失败，该分类频道缺失`),
+        requested: count,
+      },
     }
   },
 }

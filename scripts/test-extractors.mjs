@@ -24,6 +24,7 @@ import { listModules, getModule, sourceIdOf, resolverFor, validateModule, MODULE
 import { clearUrlCache } from '../utils/appUtils.js'
 import { selectFromPlayurl, parseRoomList, normalizeRoom, mapLimit, selectTopRooms, RoomError } from '../extractors/bilibili-live/api.js'
 import { shouldFailRound, parseAreaNames, mergeRoomRefs } from '../extractors/bilibili-live/index.js'
+import { shouldFailRound as miguShouldFailRound } from '../extractors/migu/index.js'
 import {
   ExtractorManager, validateConfig, redactConfig, resolveConfig, normalizeGroups, emptyHealth,
 } from '../utils/extractorManager.js'
@@ -455,6 +456,18 @@ try {
     assert.equal(manager.config.migrated?.migu, undefined, '读失败绝不能当成「迁过了」')
   })
 
+  check('★ 迁移：旧文件里没有咪咕键时不打标记——之后导入 v3 备份还能迁到（搬家场景）', () => {
+    // 回归：首启对空 legacy 也打标记的话，全新部署 v4 再在后台导入 v3 备份
+    // （system-config.json 里带着账号）时，reload() 会因标记直接跳过迁移，
+    // 导入的 VIP 账号成死数据、画质静默降档到游客档。
+    const manager = newManager({ port: '1905' })   // 全新安装：没有任何咪咕键
+    assert.equal(manager.config.migrated?.migu, undefined, '空 legacy 不该焊死标记')
+    writeFileSync(manager.legacyConfigPath, JSON.stringify({ userId: 'u1', token: 't1', rateType: 4 }))
+    manager.reload()   // configBackupAPI 导入配置后走的就是这条
+    assert.equal(manager.effectiveConfig(getModule('migu')).rateType, 4, '导入的配置要被搬进模块')
+    assert.equal(manager.config.migrated?.migu, true, '这回真搬了，标记照打')
+  })
+
   check('★ 只有声明了 loginFlow 的模块支持扫码登录', () => {
     // API 层是通用的、不认识任何平台：靠模块声明 loginFlow 决定支不支持。
     // 咪咕的 SESSDATA 等价物是 cookie 里读得到的，不需要扫码；将来要加，
@@ -719,6 +732,80 @@ try {
     assert.throws(() => manager.setModuleEnabled('不存在', true), /未知的抓取模块/)
     assert.throws(() => manager.updateModuleConfig('不存在', {}), /未知的抓取模块/)
   })
+
+  await checkAsync('★ 同一模块的并发抓取合并为一份在飞（tick / 立即刷新 / 启动抓取互撞）', async () => {
+    // 回归：三条触发路径互不知情，后台「立即刷新」还是 fire-and-forget、可连点。
+    // 撞在一起就是对同一平台瞬时并发翻倍——B 站为防 -352 风控特意把模块内并发
+    // 压到 3 路，两轮并行等于 6 路；且两轮的成败会互相覆盖健康状态。
+    const manager = newManager()
+    manager.setModuleEnabled('bilibili-live', true)
+    const module = getModule('bilibili-live')
+    const origFetch = module.fetch
+    let calls = 0
+    module.fetch = async () => { calls++; await new Promise(r => setTimeout(r, 30)); return { groups: oneGroup } }
+    try {
+      await Promise.all([
+        manager.updateAll({ onlyId: 'bilibili-live' }),
+        manager.updateAll({ onlyId: 'bilibili-live' }),
+      ])
+    } finally { module.fetch = origFetch }
+    assert.equal(calls, 1, '在飞的必须复用同一份，不能对平台翻倍并发')
+  })
+
+  await checkAsync('★ 在飞轮跑的是旧配置时，「立即刷新」串行补跑一轮新配置，不复用旧轮', async () => {
+    // 回归（对抗审查抓到的）：无脑复用在飞轮的话，「保存配置 → 点立即刷新」拿到的
+    // 是旧配置那轮的结果，且旧轮完成时的记账会把 updateModuleConfig 置下的
+    // 「立刻重抓」信号抹掉——刚扫码写入的 SESSDATA 要等满 45 分钟才生效。
+    const manager = newManager()
+    manager.setModuleEnabled('bilibili-live', true)
+    const module = getModule('bilibili-live')
+    const origFetch = module.fetch
+    const seenRooms = []
+    let release
+    const gate = new Promise(r => { release = r })
+    module.fetch = async (config) => { seenRooms.push(config.rooms); await gate; return { groups: oneGroup } }
+    try {
+      const first = manager.updateAll({ onlyId: 'bilibili-live' })    // 旧配置在飞
+      await new Promise(r => setTimeout(r, 10))
+      manager.updateModuleConfig('bilibili-live', { rooms: '999' })   // 保存新配置
+      const second = manager.updateAll({ onlyId: 'bilibili-live' })   // 立即刷新
+      release()
+      await Promise.all([first, second])
+    } finally { module.fetch = origFetch }
+    assert.equal(seenRooms.length, 2, '配置变了必须补跑一轮，不能吞掉强制刷新')
+    assert.equal(seenRooms[1], '999', '补跑那轮用的必须是新配置')
+  })
+
+  await checkAsync('★ 在飞轮跑到一半配置变了：记账不得抹掉「立刻重抓」信号', async () => {
+    // 同一回归的 tick 路径：没有人点「立即刷新」，只是保存了配置。在飞旧轮完成时
+    // recordSuccess 整份重建 health，若把 lastSuccessAt 写回非 null，下一轮 5 分钟
+    // tick 就不会重抓，新配置要等满整个刷新周期。
+    const manager = newManager()
+    manager.setModuleEnabled('bilibili-live', true)
+    const module = getModule('bilibili-live')
+    const origFetch = module.fetch
+    let release
+    const gate = new Promise(r => { release = r })
+    module.fetch = async () => { await gate; return { groups: oneGroup } }
+    try {
+      const round = manager.updateAll({ onlyId: 'bilibili-live' })
+      await new Promise(r => setTimeout(r, 10))
+      manager.updateModuleConfig('bilibili-live', { rooms: '999' })
+      release()
+      await round
+    } finally { module.fetch = origFetch }
+    const health = manager.cache.modules['bilibili-live'].health
+    assert.equal(health.lastSuccessAt, null, '旧轮的记账不能冻结「配置已变更、立刻重抓」')
+  })
+
+  check('listSourceIds 不按模块开关过滤——「配置档 ↔ 源」的绑定行要留在矩阵里', () => {
+    // 回归：按 isModuleEnabled 过滤的话，关掉模块后它的绑定行从矩阵消失，开回来
+    // 得重设一遍（app.js /api/source-profiles 的注释明确要求「绑定关系要留着」）。
+    const manager = newManager()   // bilibili-live 默认是关的
+    const ids = manager.listSourceIds().map(s => s.id)
+    assert.ok(ids.includes('xt:bilibili-live'), '关着的模块也要列出')
+    assert.ok(ids.includes('migu'), '代理开关模块以字面量 id 列出，且只此一份（app.js 不再单列）')
+  })
 } finally {
   rmSync(tmp, { recursive: true, force: true })
 }
@@ -795,6 +882,22 @@ check('topAreas / topPerArea 已进 configSchema 且默认值符合「开箱即�
   assert.equal(areas.default, '赛事', '默认分区应是「赛事」——开箱即得当前正在打的比赛')
   assert.equal(per.default, 8, "实测赛事区人气在第 6~7 名有 82% 断崖，5 会漏掉 300 万人在看的比赛")
   assert.equal(per.min, 0, '填 0 必须能关掉这个功能')
+})
+
+check('★ 咪咕：分类全失败判失败保缓存，部分失败/真没频道不误伤', () => {
+  // 与 B 站 shouldFailRound 同一套约定。全失败当成功返回的话：空结果覆盖上一轮
+  // 内存缓存、无退避、criticalShortfall 把所有播放列表重生成挡到下个刷新周期。
+  assert.equal(miguShouldFailRound(0, 11), true, '一个频道都没有且确有分类失败 → 判失败')
+  assert.equal(miguShouldFailRound(0, 0), false, '接口正常但真没频道 → 如实返回（不太可能但不该误判）')
+  assert.equal(miguShouldFailRound(500, 2), false, '部分分类失败不算整轮失败，记 meta.warnings')
+})
+
+await checkAsync('★ B 站：热门榜获取失败且无手填 → 整轮判失败（保上一轮缓存），不再是「成功 0 频道」', async () => {
+  // 回归：默认配置正是纯热门榜（topAreas=赛事、rooms 留空）。分区清单/热门榜的
+  // 网络层失败此前被吞成 warning、fetch() 返回空 groups——被记成「成功 0 频道」，
+  // 上一轮频道被覆盖成空且不退避。timeoutMs=1 模拟断网：现在必须抛。
+  const config = resolveConfig(bili, {})
+  await assert.rejects(() => bili.fetch(config, { timeoutMs: 1 }), /失败/)
 })
 
 console.log(`\n全部通过：${passed} ✅`)

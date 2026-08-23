@@ -2708,7 +2708,7 @@
                                 <strong style="color: #333; font-size: 16px;">当前版本</strong>
                             </div>
                             <div style="padding-left: 30px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-                                <span id="versionText" style="font-size: 15px; color: #333; font-weight: 600;">v3.17.0</span>
+                                <span id="versionText" style="font-size: 15px; color: #333; font-weight: 600;">v4.0.0</span>
                                 <button class="btn btn-sm" onclick="checkUpdate()" id="checkUpdateBtn">检查更新</button>
                             </div>
                             <div id="updateInfo" style="padding-left: 30px; margin-top: 8px; font-size: 13px; display: none;"></div>
@@ -2910,7 +2910,7 @@
                     <label style="display:flex; align-items:center; gap:6px;">
                         <input type="checkbox" id="${id}" onchange="setSaveDirty('xt:${moduleId}')" ${config[field.key] !== false ? 'checked' : ''}>
                         ${label}
-                    </label>${hint}</div>`;
+                    </label>${hint}${envNote}</div>`;
             }
             if (field.type === 'select') {
                 const opts = (field.options || []).map(o =>
@@ -2925,26 +2925,62 @@
                 return `<div style="margin-bottom:12px;">
                     <label style="display:block; font-size:12px; color:#888;">${label}</label>
                     <input type="number" id="${id}" oninput="setSaveDirty('xt:${moduleId}')" value="${escapeHtml(config[field.key] != null ? config[field.key] : '')}" style="width:140px;">
-                    ${hint}</div>`;
+                    ${hint}${envNote}</div>`;
             }
             if (field.secret) {
-                // 后端从不回传凭据明文，只回传「有没有值」。留空即不修改。
+                // 后端从不回传凭据明文，只回传「有没有值」。留空即不修改；
+                // 「清除」按钮把该字段标记为待清空，保存时发显式 null（空串≠清空，
+                // 否则每次保存都会把用户看不见的凭据抹掉）。
                 const ph = secretsSet[field.key] ? '已设置，留空则不修改' : '未设置';
+                const clearBtn = secretsSet[field.key]
+                    ? `<button class="btn btn-sm" type="button" onclick="markSecretCleared('${moduleId}','${field.key}')" title="清空已保存的凭据（点「保存配置」生效）">🗑️ 清除</button>`
+                    : '';
                 return `<div style="margin-bottom:12px;">
                     <label style="display:block; font-size:12px; color:#888;">${label}</label>
-                    <input type="password" id="${id}" oninput="setSaveDirty('xt:${moduleId}')" value="" placeholder="${escapeHtml(ph)}" autocomplete="new-password" style="width:100%;">
+                    <div style="display:flex; gap:6px; align-items:center;">
+                        <input type="password" id="${id}" oninput="this.removeAttribute('data-cleared'); setSaveDirty('xt:${moduleId}')" value="" placeholder="${escapeHtml(ph)}" autocomplete="new-password" style="flex:1; min-width:0;">
+                        ${clearBtn}
+                    </div>
                     ${hint}${envNote}</div>`;
             }
             if (field.multiline) {
                 return `<div style="margin-bottom:12px;">
                     <label style="display:block; font-size:12px; color:#888;">${label}</label>
                     <textarea id="${id}" oninput="setSaveDirty('xt:${moduleId}')" rows="6" placeholder="${escapeHtml(field.placeholder || '')}" style="width:100%; font-family:monospace;">${escapeHtml(config[field.key] || '')}</textarea>
-                    ${hint}</div>`;
+                    ${hint}${envNote}</div>`;
             }
             return `<div style="margin-bottom:12px;">
                 <label style="display:block; font-size:12px; color:#888;">${label}</label>
                 <input type="text" id="${id}" oninput="setSaveDirty('xt:${moduleId}')" value="${escapeHtml(config[field.key] || '')}" placeholder="${escapeHtml(field.placeholder || '')}" style="width:100%;">
-                ${hint}</div>`;
+                ${hint}${envNote}</div>`;
+        }
+
+        /**
+         * 「清除凭据」：把 secret 输入框标记为待清空，保存时对该字段发显式 null。
+         * 之后用户又输入了新值的话，oninput 会摘掉标记（输入优先于清空）。
+         */
+        function markSecretCleared(moduleId, key) {
+            const el = document.getElementById(`xf-${moduleId}-${key}`);
+            if (!el) return;
+            el.value = '';
+            el.dataset.cleared = '1';
+            el.placeholder = '将清空已保存的凭据，点「保存配置」生效';
+            setSaveDirty(`xt:${moduleId}`);
+        }
+
+        /**
+         * 渲染完成后给每个控件记下「渲染出来的初始值」。保存时只提交与它不同的字段——
+         * 表单里显示的很多是 env / 默认值兜底出来的「生效值」，原样整份提交会把它们
+         * 固化成文件值，击穿稀疏存储：纯环境变量部署的用户打开卡片存一次，之后改
+         * compose 里的 mrateType 就再也不生效（服务端对「未提交的字段」＝保持原样）。
+         */
+        function captureExtractorInitialValues(m) {
+            for (const field of m.configSchema || []) {
+                if (field.hidden) continue;
+                const el = document.getElementById(`xf-${m.id}-${field.key}`);
+                if (!el) continue;
+                el.dataset.initial = field.type === 'boolean' ? String(el.checked) : el.value;
+            }
         }
 
         /**
@@ -3181,6 +3217,8 @@
 
             // 助手随展开区一起重建，每次渲染后重新挂一次
             initMiguBookmarklet();
+            // 记录本次渲染的初始值，保存时只提交用户改过的字段（见函数注释）
+            captureExtractorInitialValues(m);
 
             renderedExtractorDetailId = m.id;
 
@@ -3234,6 +3272,13 @@
                 if (field.hidden) continue;   // 没渲染就没有值可提交，跳过即保持原值
                 const el = document.getElementById(`xf-${id}-${field.key}`);
                 if (!el) continue;
+                // 点过「清除」且没再输入：发显式 null（服务端约定 null=清空、空串=不修改）
+                if (field.secret && el.dataset.cleared === '1') { config[field.key] = null; continue; }
+                // 只提交用户改过的字段：表单里显示的多是 env/默认值兜底出来的生效值，
+                // 原样提交会把它们固化成文件值——纯环境变量部署的用户存一次配置，
+                // 之后改 compose 就再也不生效（服务端对「未提交的字段」＝保持原样）。
+                const current = field.type === 'boolean' ? String(el.checked) : el.value;
+                if (el.dataset.initial !== undefined && current === el.dataset.initial) continue;
                 if (field.type === 'boolean') config[field.key] = el.checked;
                 else config[field.key] = el.value;
             }
@@ -3253,6 +3298,13 @@
         // 剩下的路只有让用户去 F12 里翻——对家用 IPTV 的普通用户是道硬门槛。
         // 扫码把它变成「用 App 扫一下」，凭据在服务端落地、不经过这个页面。
         let biliQrTimer = null;
+        // 轮询代际：每次「重新获取」/ 关弹窗都 +1。轮询请求在途时旧链是停不掉的
+        // （clearTimeout 只能清「还没触发」的 timer），只能让旧响应回来后比对代际
+        // 自灭——否则新旧两条轮询链并行共用一个 timer 句柄，旧 key 约 3 分钟后
+        // 过期时会误杀新链：用户扫着屏上仍有效的新码，却已没有任何轮询在查，
+        // SESSDATA 永远存不上且毫无反馈。
+        let biliQrGen = 0;
+        let biliQrFailStreak = 0;
 
         function openBiliQrLogin() {
             document.getElementById('biliQrModal').style.display = 'block';
@@ -3261,6 +3313,7 @@
 
         function closeBiliQrLogin() {
             document.getElementById('biliQrModal').style.display = 'none';
+            biliQrGen++;   // 在途的轮询请求回来时按代际自灭
             stopBiliQrPolling();
         }
 
@@ -3269,14 +3322,20 @@
         }
 
         async function startBiliQrLogin() {
-            stopBiliQrPolling();   // 「重新获取」时必须先停掉上一轮，否则两个轮询会并行
+            const gen = ++biliQrGen;   // 作废上一轮（含在途请求），本轮只认这个代际
+            stopBiliQrPolling();
+            biliQrFailStreak = 0;
             const box = document.getElementById('biliQrBox');
             const status = document.getElementById('biliQrStatus');
             box.innerHTML = '<span style="color:#999;">正在获取二维码…</span>';
             status.textContent = '';
             status.style.color = '#666';
 
-            const r = await extractorPost({ action: 'loginStart', id: 'bilibili-live' });
+            let r = null;
+            try {
+                r = await extractorPost({ action: 'loginStart', id: 'bilibili-live' });
+            } catch (e) { r = null; }
+            if (gen !== biliQrGen) return;   // 等响应期间用户又点了「重新获取」或关了弹窗
             if (!r || !r.success) {
                 box.innerHTML = '<span style="color:#ff4d4f;">二维码获取失败</span>';
                 status.textContent = (r && r.message) || '请稍后重试';
@@ -3285,21 +3344,37 @@
             }
             box.innerHTML = `<img src="${r.data.image}" alt="B 站登录二维码" style="width:240px; height:240px;">`;
             status.textContent = '等待扫码…';
-            pollBiliQr(r.data.key);
+            pollBiliQr(r.data.key, gen);
         }
 
-        async function pollBiliQr(key) {
+        async function pollBiliQr(key, gen) {
             const status = document.getElementById('biliQrStatus');
+            if (gen !== biliQrGen) return;
             // 弹窗被关掉就别再轮询了（关闭时已 clearTimeout，这里是二次保险：
             // 上一次请求可能还在路上，回来时弹窗已经关了）
             if (document.getElementById('biliQrModal').style.display !== 'block') return;
 
-            const r = await extractorPost({ action: 'loginPoll', id: 'bilibili-live', key });
+            // extractorPost 不 catch 的话，二维码 3 分钟有效期里要打近百次请求，
+            // 一次网络抖动 / 服务端重启 / 反代吐 HTML 就让轮询无声死亡——用户在
+            // 手机上确认了登录，这边却没人查、SESSDATA 存不上。连续失败才停。
+            let r = null;
+            try {
+                r = await extractorPost({ action: 'loginPoll', id: 'bilibili-live', key });
+            } catch (e) { r = null; }
+            if (gen !== biliQrGen) return;
             if (!r || !r.success) {
-                status.textContent = (r && r.message) || '轮询失败';
-                status.style.color = '#ff4d4f';
+                biliQrFailStreak++;
+                if (biliQrFailStreak <= 5) {
+                    status.textContent = '⚠️ 网络波动，重试中…';
+                    status.style.color = '#faad14';
+                    biliQrTimer = setTimeout(() => pollBiliQr(key, gen), 2000);
+                } else {
+                    status.textContent = ((r && r.message) || '轮询失败') + '，请点「重新获取」';
+                    status.style.color = '#ff4d4f';
+                }
                 return;
             }
+            biliQrFailStreak = 0;
             const st = r.data.status;
             if (st === 'ok') {
                 stopBiliQrPolling();
@@ -3319,7 +3394,7 @@
             }
             status.textContent = st === 'scanned' ? '📱 已扫码，请在手机上确认' : '等待扫码…';
             status.style.color = st === 'scanned' ? '#1890ff' : '#666';
-            biliQrTimer = setTimeout(() => pollBiliQr(key), 2000);
+            biliQrTimer = setTimeout(() => pollBiliQr(key, gen), 2000);
         }
 
         function openBiliSessdataGuide() {
@@ -3855,7 +3930,7 @@
             }
             
             if (!allChannels || allChannels.length === 0) {
-                channelContainer.innerHTML = '<div class="empty-group" style="grid-column: 1/-1;">暂无频道数据<br><br>可能原因：<br>1. 服务刚启动，数据正在加载中...<br>2. 未配置咪咕账号（请在"系统配置"中填写）<br>3. 网络连接问题</div>';
+                channelContainer.innerHTML = '<div class="empty-group" style="grid-column: 1/-1;">暂无频道数据<br><br>可能原因：<br>1. 服务刚启动，数据正在加载中...<br>2. 内容来源未配置（可在"源管理"页打开对应模块卡片配置）<br>3. 网络连接问题</div>';
                 console.log('频道数据为空:', allChannels);
                 return;
             }
@@ -5409,7 +5484,7 @@ const success=document.execCommand('copy');
 document.body.removeChild(textarea);
 
 if(success){
-    alert('✅ 咪咕账号信息已复制成功！\\n\\n━━━━━━━━━━━━━━━━━━\\n用户ID: '+userId+'\\nToken: '+token+'\\n━━━━━━━━━━━━━━━━━━\\n\\n请粘贴到管理后台【系统设置】');
+    alert('✅ 咪咕账号信息已复制成功！\\n\\n━━━━━━━━━━━━━━━━━━\\n用户ID: '+userId+'\\nToken: '+token+'\\n━━━━━━━━━━━━━━━━━━\\n\\n请粘贴到管理后台【源管理 → 咪咕视频 → 配置】');
 }else{
     prompt('⚠️ 自动复制失败，请手动复制用户ID：',userId);
     prompt('请手动复制Token：',token);
@@ -5664,20 +5739,27 @@ if(success){
                 if (!r.success) { showStatus(r.message || '导入失败', 'error'); return; }
                 input.value = '';
                 // 备份可能带来了不同的访问密码/后台路径：原地 reload 会 403 或落进频道路由报错，
-                // 必须比对并跳转到新入口（换机迁移正是本功能的主场景）
+                // 必须比对并跳转到新入口（换机迁移正是本功能的主场景）。
+                // 新入口以**服务端回传**（r.entry）为准：服务端算的是「文件 + 环境变量」合并后
+                // 的生效值——密码只配在 compose（mpass）的部署，备份文件里 pass 为空，前端按
+                // 备份文件自拼会误判「入口已变更」，把正常后台踢到 403（与保存系统配置同口径）。
                 const sc = payload.files['system-config.json'];
-                if (sc && typeof sc === 'object') {
+                let newEntry = typeof r.entry === 'string' ? r.entry : null;
+                if (newEntry === null && sc && typeof sc === 'object') {
+                    // 兜底（服务端未回传 entry 时才走）：按备份文件拼。
+                    // 复用 sanitizeAdminPath，与 config.js sanitizeSegment 同口径：
+                    // 空/含斜杠空白/保留字回退 admin。
                     const newPass = typeof sc.pass === 'string' ? sc.pass : '';
-                    // 与 config.js sanitizeSegment 同口径：空/含斜杠空白/保留字回退 admin。
-                    // 复用 sanitizeAdminPath —— 这里原本内联了一份逐字相同的实现，
-                    // 两份口径将来必然走偏（改一处漏一处 = 导入后跳到打不开的地址）。
                     const newAdmin = sanitizeAdminPath(typeof sc.adminPath === 'string' ? sc.adminPath : '');
+                    newEntry = '/' + [newPass, newAdmin].filter(Boolean).join('/');
+                }
+                if (newEntry) {
                     const curPass = (systemConfig && systemConfig.pass) || '';
-                    const curAdmin = (systemConfig && systemConfig.adminPath) || 'admin';
-                    if (newPass !== curPass || newAdmin !== curAdmin) {
-                        const entry = '/' + [newPass, newAdmin].filter(Boolean).join('/');
-                        showStatus(`导入成功。访问密码 / 后台路径已随备份变更，正在跳转到新入口：${entry}`, 'success');
-                        setTimeout(() => { location.href = entry; }, 3000);
+                    const curAdmin = sanitizeAdminPath((systemConfig && systemConfig.adminPath) || '');
+                    const curEntry = '/' + [curPass, curAdmin].filter(Boolean).join('/');
+                    if (newEntry !== curEntry) {
+                        showStatus(`导入成功。访问密码 / 后台路径已随备份变更，正在跳转到新入口：${newEntry}`, 'success');
+                        setTimeout(() => { location.href = newEntry; }, 3000);
                         return;
                     }
                 }
@@ -5753,7 +5835,10 @@ if(success){
          * 先等 4 秒再探：服务端是**回完响应 2 秒后**才退出的，探早了会探到还没死的旧进程，
          * 误判成「已经回来了」。
          *
-         * 拿到任何 HTTP 响应就算活着 —— 403 也算（服务在，只是前缀不对，那是另一回事）。
+         * 拿到 HTTP 响应就算活着 —— 403 也算（服务在，只是前缀不对，那是另一回事）。
+         * 但网关类 5xx（502/503/504）不算：nginx/Caddy 反代部署下，后端进程退出期间
+         * 代理会替它回 502——那是「代理在、后端还没回来」，此时 reload/跳转会把用户
+         * 送到一张 502 错误页，还冲掉「等待服务恢复」的提示。
          *
          * @returns {Promise<boolean>} 超时前是否回来了
          */
@@ -5762,8 +5847,9 @@ if(success){
             const deadline = Date.now() + timeoutMs;
             while (Date.now() < deadline) {
                 try {
-                    await fetch(apiPrefix + '/api/system-config', { cache: 'no-store' });
-                    return true;
+                    const res = await fetch(apiPrefix + '/api/system-config', { cache: 'no-store' });
+                    if (![502, 503, 504].includes(res.status)) return true;
+                    // 网关 5xx：代理活着、后端没回来，继续等
                 } catch (e) { /* 连不上，继续等 */ }
                 await new Promise(r => setTimeout(r, intervalMs));
             }

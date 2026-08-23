@@ -39,8 +39,8 @@ externalSourceManager.toggleEnabled(true)
 ### 2. 通过 Web 管理后台
 
 1. 访问 http://localhost:1905/admin
-2. 进入"外部源管理"页面
-3. 点击"添加外部源"
+2. 进入「🌐 源管理」页，找到「👤 自定义源」
+3. 点击「＋ 添加自定义源」
 4. 填入频道信息和 m3u8 链接
 5. 保存配置
 

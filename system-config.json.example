@@ -1,15 +1,11 @@
 {
-  "userId": "",
-  "token": "",
   "port": 1905,
   "host": "",
-  "rateType": 3,
   "pass": "",
-  "enableHDR": true,
-  "enableH265": true,
   "programInfoUpdateInterval": "8",
   "refreshToken": true,
   "adminPath": "admin",
   "enableTvgNormalize": true,
-  "enableEpgAggregation": true
+  "enableEpgAggregation": true,
+  "_comment": "平台账号 / 画质 / H.265 等内容相关配置自 v4.0.0 起归各抓取模块管理（后台「源管理」对应模块卡片，或存于 extractors.json）；写在本文件里的 userId/token/rateType/enableHDR/enableH265 仅在首次升级时被一次性迁走，之后再改不会生效"
 }

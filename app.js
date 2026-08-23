@@ -486,7 +486,9 @@ async function handleRequest(req, res) {
     if (routePath === '/api/source-profiles' && method === 'GET') {
       try {
         const sources = []
-        if (enableMigu) sources.push({ id: 'migu', name: '咪咕源（核心）', type: 'migu' })
+        // 咪咕不在这里单列——它收编成抓取模块后由下方 listSourceIds() 以同一个
+        // id 'migu' 供给本清单，这里再 push 一条就是同 id 双行（界面出现两个
+        // 操作同一开关的复选框）。
         for (const s of (builtInSourceManager.getSourceList().sources || [])) {
           // 内置源 id 来自远程下发的 built-in-sources.json → 字符白名单消毒（防 HTML/EXTINF 属性注入）
           const safeId = s && s.id ? String(s.id).replace(/[^\w.-]/g, '') : ''
@@ -1076,7 +1078,7 @@ server.listen(port, async () => {
   } else {
     const migu = getModuleConfig('migu')
     if (!migu.userId || !migu.token) {
-      printYellow("当前为游客模式（未配置咪咕账号），咪咕频道最高画质为 720p")
+      printYellow("当前为游客模式（未配置咪咕账号），咪咕频道最高画质为 540p，填免费账号可到 720p")
     }
   }
 })

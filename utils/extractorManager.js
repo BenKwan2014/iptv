@@ -202,9 +202,10 @@ export function resolveConfig(module, stored = {}) {
 /**
  * env 字符串按字段类型归一。
  *
- * 目前只有 text/secret 能声明 env，所以走到的永远是最后一行；boolean/int 那两个分支
- * 是兜底——万一将来放开限制，也绝不能像原来那样把字符串 "false"（真值！）直接塞进
- * 布尔字段，那会让「显式关掉」变成「强制打开」。
+ * text/secret 走最后一行；boolean/select/int 的分支是实打实在用的——咪咕模块的
+ * enableH265/enableHDR/enableClientDispatch（boolean）与 rateType（select）都声明了
+ * env。绝不能把字符串 "false"（真值！）直接塞进布尔字段，那会让「显式关掉」
+ * 变成「强制打开」。
  */
 function coerceEnvValue(field, raw) {
   const text = String(raw).trim()
@@ -253,7 +254,13 @@ class ExtractorManager {
     // 配置文件损坏时置位。置位期间拒绝任何写盘——否则一次后台操作就会把
     // 损坏（被降级成空）的配置覆盖回去，用户的模块配置全没了。
     this.corrupt = null
-    this.inFlight = false
+    // 各模块在飞的抓取（id → {gen, promise}）。5 分钟 tick、启动抓取、后台
+    // 「立即刷新」互不知情，不串起来会对同一平台瞬时并发翻倍（见 #runOne）。
+    this.inFlight = new Map()
+    // 各模块配置的内存代数（id → number），updateModuleConfig / load 时 +1。
+    // 用来识别「在飞的那轮抓的是旧配置」——那样的轮不能被「立即刷新」复用，
+    // 它的记账也不能把「配置已变更、立刻重抓」的信号（lastSuccessAt=null）抹掉。
+    this.configGen = new Map()
     this.config = defaultConfig()
     this.cache = defaultCache()
     this.loaded = false
@@ -272,6 +279,11 @@ class ExtractorManager {
     this.cache = this.#readJson(this.cachePath, defaultCache(), false)
     if (!isPlainObject(this.config.modules)) this.config.modules = {}
     if (!isPlainObject(this.cache.modules)) this.cache.modules = {}
+    // 磁盘上的配置可能整份换过（备份导入走 reload→load）：把所有模块的配置代数
+    // +1，作废还在飞的抓取轮——它们跑的是换盘前的配置（见 #runOne）。
+    for (const module of listModules()) {
+      this.configGen.set(module.id, (this.configGen.get(module.id) || 0) + 1)
+    }
     this.loaded = true
     // 放在 load() 而不是启动流程里：配置导入会调 reload()，用户导入一份「搬家之前
     // 导出的备份」时，包里 extractors.json 没有这些字段、system-config.json 有，
@@ -342,6 +354,13 @@ class ExtractorManager {
 
     let changed = false
     for (const module of pending) {
+      // 旧文件里一个相关键都没有（全新安装 / 纯 env 部署）就**不打标记**，让迁移
+      // 对该模块保持待命。首启就把标记焊死的话，用户之后在后台导入 v3 备份
+      // （system-config.json 里带着账号）时 reload() 会因标记直接跳过，导入的
+      // 账号成死数据、VIP 静默降档。标记的本职是防「用户清空模块配置后被旧文件
+      // 反复回填」——那种场景旧文件里必然有键、标记照打，不受影响。
+      const hasLegacyKeys = module.legacySystemConfigKeys.some(key => legacy[key] !== undefined)
+      if (!hasLegacyKeys) continue
       const entry = this.#entry(module.id)
       const secretKeys = new Set((module.configSchema || []).filter(f => f.secret).map(f => f.key))
       const moved = []
@@ -545,8 +564,24 @@ class ExtractorManager {
   setModuleEnabled(id, on) {
     const module = getModule(id)
     if (!module) throw new Error(`未知的抓取模块: ${id}`)
+    // 代理开关模块（咪咕）的开关落在 system-config.json，extractors.json 根本没被
+    // 改动，不写盘。corrupt 期间照常写会误抛「已拒绝写入」——而开关实际已翻转
+    // 生效，前端还会因此跳过播放列表重生成，报错与真实状态自相矛盾。
+    if (typeof module.enabledSetter === 'function') {
+      this.#setModuleEnabledValue(module, on)
+      return this.getState()
+    }
+    const entry = this.#entry(module.id)
+    const prev = entry.enabled
     this.#setModuleEnabledValue(module, on)
-    this.#saveConfig()
+    try {
+      this.#saveConfig()
+    } catch (error) {
+      // 写盘被拒（配置文件损坏）：内存回滚，保证「接口报失败 ⇒ 开关没变」——
+      // 否则开关在内存里已翻转并即刻影响抓取，重启后又弹回，与报错自相矛盾。
+      entry.enabled = prev
+      throw error
+    }
     return this.getState()
   }
 
@@ -560,19 +595,36 @@ class ExtractorManager {
       error.fieldErrors = errors
       throw error
     }
+    // 所有可能失败的校验都要在动内存**之前**做完——否则接口报了失败、新配置却已
+    // 在内存生效（抓取立刻用上、getState 也回传它），用户以为没存上，实际重启前
+    // 一直在用，重启后又无声回滚，手填的凭据就这样丢了。
+    let refreshValue
+    if (refreshMinutes !== undefined) {
+      refreshValue = parseInt(refreshMinutes, 10)
+      if (Number.isNaN(refreshValue) || refreshValue < 1 || refreshValue > 1440) {
+        throw new Error('刷新间隔要在 1~1440 分钟之间')
+      }
+    }
+    const prevConfig = entry.config
+    const prevRefresh = entry.refreshMinutes
     entry.config = config
+    if (refreshValue !== undefined) entry.refreshMinutes = refreshValue
+    try {
+      this.#saveConfig()
+    } catch (error) {
+      // 写盘被拒（配置文件损坏）：内存回滚，保证「接口报失败 ⇒ 配置没变」
+      entry.config = prevConfig
+      if (prevRefresh === undefined) delete entry.refreshMinutes
+      else entry.refreshMinutes = prevRefresh
+      throw error
+    }
+    // 配置代数 +1：作废在飞的旧配置抓取轮（#runOne 不再复用它，它的记账也不再
+    // 冻结下面那个「立刻重抓」信号）。
+    this.configGen.set(id, (this.configGen.get(id) || 0) + 1)
     // 配置可能影响播放地址的解析结果（画质、编码等），不清缓存的话三小时内
     // 继续下发旧参数的流——issue #60 就是这么来的。后台「源模块」页保存走的
     // 正是这条路，而 clearUrlCache 的另外两个调用点都覆盖不到它。
     if (typeof module.clearResolveCache === 'function') module.clearResolveCache()
-    if (refreshMinutes !== undefined) {
-      const value = parseInt(refreshMinutes, 10)
-      if (Number.isNaN(value) || value < 1 || value > 1440) {
-        throw new Error('刷新间隔要在 1~1440 分钟之间')
-      }
-      entry.refreshMinutes = value
-    }
-    this.#saveConfig()
     // 配置变了，上一轮的结果不再代表当前配置——清掉「已成功过」的时间戳，
     // 让下一轮 tick 立刻重抓，而不是等到原定的刷新点。
     const cacheEntry = this.#cacheEntry(id)
@@ -697,6 +749,31 @@ class ExtractorManager {
   }
 
   async #runOne(module) {
+    // 同一模块的抓取全进程串一份：5 分钟 tick、启动抓取、后台「立即刷新」
+    // （fire-and-forget、还可能被连点）互不知情，撞在一起就是对同一平台的瞬时
+    // 并发翻倍——B 站为防 -352 风控特意把模块内并发压到 3 路，两轮并行等于 6 路，
+    // 且两轮的 recordSuccess/recordFailure 会互相覆盖健康状态。
+    const gen = this.configGen.get(module.id) || 0
+    const existing = this.inFlight.get(module.id)
+    // 在飞且配置没变过：直接复用同一份。
+    if (existing && existing.gen === gen) return existing.promise
+    // 在飞但配置已变（「保存配置 → 立即刷新」的典型时序）：不能复用——那轮抓的
+    // 是旧配置；也不能并行另起——对平台并发还是翻倍。等旧轮结束后串行补跑一轮。
+    const promise = existing
+      ? existing.promise.then(() => this.#runOneInner(module), () => this.#runOneInner(module))
+      : this.#runOneInner(module)
+    const record = { gen, promise }
+    this.inFlight.set(module.id, record)
+    try {
+      return await promise
+    } finally {
+      // 只清自己那份：补跑轮登记的 record 可能已经替换了旧的
+      if (this.inFlight.get(module.id) === record) this.inFlight.delete(module.id)
+    }
+  }
+
+  async #runOneInner(module) {
+    const genAtStart = this.configGen.get(module.id) || 0
     this.attempted.add(module.id)
     const config = this.effectiveConfig(module)
     printBlue(`抓取模块 ${module.name} 更新中...`)
@@ -717,6 +794,13 @@ class ExtractorManager {
       const kept = this.#cacheEntry(module.id).groups.length
       printRed(`抓取模块 ${module.name} 失败：${error.message}${kept ? '（沿用上一轮结果）' : ''}`)
       return { id: module.id, name: module.name, success: false, message: error.message }
+    } finally {
+      // 本轮开跑后配置又变了：把 updateModuleConfig 置下的「立刻重抓」信号
+      // （lastSuccessAt=null）还原——上面的记账整份重建了 health，会把它抹掉；
+      // 抹掉的话新配置要等满整个刷新周期（B 站 45 分钟、咪咕 6 小时）才生效。
+      if ((this.configGen.get(module.id) || 0) !== genAtStart) {
+        this.#cacheEntry(module.id).health.lastSuccessAt = null
+      }
     }
   }
 
@@ -784,10 +868,15 @@ class ExtractorManager {
       .map(module => module.name)
   }
 
-  /** 后台「按配置档禁用源」矩阵要枚举的源。 */
+  /**
+   * 后台「按配置档禁用源」矩阵要枚举的源。
+   *
+   * 刻意**不**按 isModuleEnabled 过滤：这份清单是「配置档 ↔ 源」的绑定用的，
+   * 与模块此刻开没开无关——关掉的模块不出频道，但绑定行要留在矩阵里，
+   * 开回来才不用重设（app.js /api/source-profiles 的注释是同一句话）。
+   */
   listSourceIds() {
     return listModules()
-      .filter(module => this.isModuleEnabled(module))
       .map(module => ({ id: module.sourceId || sourceIdOf(module.id), name: module.name, type: 'extractor' }))
   }
 }

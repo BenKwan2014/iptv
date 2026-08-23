@@ -5,7 +5,7 @@ import update from "./updateData.js"
 import { clearUrlCache } from "./appUtils.js"
 import {
   reloadConfig, sanitizeSegment,
-  userId, token, port, host, rateType, pass,
+  port, host, rateType, pass,
   enableHDR, enableH265, programInfoUpdateInterval, refreshToken, adminPath,
   enableMigu, enableBuiltInSources, enableBuiltInSubscriptions, enableDisplayNameUnify, enableClientDispatch,
   enableExtractors
@@ -18,8 +18,6 @@ const SYSTEM_CONFIG_PATH = dataPath('system-config.json')
  */
 // 各配置项对应的环境变量名（用于提示哪些项被环境变量控制）
 const ENV_KEY_MAP = {
-  userId: 'muserId',
-  token: 'mtoken',
   port: 'mport',
   host: 'mhost',
   rateType: 'mrateType',
@@ -47,8 +45,8 @@ function envBool(value) {
 export function getSystemConfigAPI() {
   try {
     // 返回「实际生效」的配置：config.js 已把 system-config.json + 环境变量 + 默认值 解析合并。
-    // 这样无论 id/token 等是用环境变量(muserId/mtoken…)还是配置文件设置的，
-    // 管理页表单都能正确显示当前生效值（修复换电脑/无浏览器自动填充时表单显示为空的问题）。
+    // 这样无论各项是用环境变量还是配置文件设置的，管理页表单都能正确显示当前生效值
+    //（修复换电脑/无浏览器自动填充时表单显示为空的问题）。
 
     // 标记哪些项被环境变量设置（前端据此提示：清空保存会回退到环境变量值，需改 compose）
     const envOverrides = {}
@@ -58,11 +56,13 @@ export function getSystemConfigAPI() {
       }
     }
 
+    // 刻意**不**回传 userId/token：账号已收进咪咕模块（后台「源管理」页，secret 掩码、
+    // 只回「有没有值」），系统配置页的表单也不再渲染这两个字段。这里继续明文回显的话，
+    // 未设访问密码的部署任何人 GET 一下就拿走等同登录态的 token，模块页的掩码被同一
+    // 页面的另一个请求绕空。system-config.json 文件里的原值保留不动（供文件级回滚）。
     return {
       success: true,
       data: {
-        userId,
-        token,
         port: parseInt(port) || 1905,
         host,
         rateType: parseInt(rateType) || 3,

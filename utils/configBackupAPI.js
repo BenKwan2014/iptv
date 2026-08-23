@@ -13,7 +13,7 @@
 import { existsSync, readFileSync, unlinkSync } from "node:fs"
 import { writeJsonFileSync } from "./fileUtil.js"
 import { dataPath } from "./paths.js"
-import { reloadConfig } from "../config.js"
+import { reloadConfig, pass, adminPath } from "../config.js"
 import { clearUrlCache } from "./appUtils.js"
 import { getExtractorManager } from "./extractorManager.js"
 import { externalSourceManager } from "./channelMerger.js"
@@ -197,6 +197,12 @@ export function importConfigAPI(payload) {
       success: true,
       imported: accepted.map(([name]) => name),
       skipped,
+      // 新入口按导入后的**生效配置**算（refreshRuntime 刚 reloadConfig 过，config.js
+      // 已把文件 + 环境变量合并）。密码只配在 compose（mpass）的部署，备份文件里
+      // pass 为空——前端按备份文件自拼入口会误判「已变更」，把正常后台踢到 403。
+      // 口径与 systemConfigAPI 保存响应的 entry/apiPrefix 完全一致。
+      entry: '/' + [pass, adminPath].filter(Boolean).join('/'),
+      apiPrefix: pass ? '/' + pass : '',
       message: `已导入 ${accepted.length} 个配置文件，播放列表正在后台重建（多数配置即时生效；端口修改需重启）。导入前的配置已自动备份到数据目录 config-pre-import-backup.json`,
     }
   } catch (error) {

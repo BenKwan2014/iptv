@@ -432,18 +432,24 @@ export async function resolveRoom(roomRef, options = {}) {
     },
     group: sanitizeText(info.area || DEFAULT_GROUP),
     warning: anchor.warning,
+    // 归一后的真实房间号。mergeRoomRefs 的去重键是用户填的字面量（URL / 短号 /
+    // 短链各长各样），同一间房换个写法就绕过去了——外层要按这个再去一次重。
+    roomId: String(info.roomId),
   }
 }
 
 /**
- * 频道名/分组名去掉换行与引号。
+ * 频道名/分组名去掉换行与引号，英文逗号换全角。
  *
  * 引号换成单引号是因为 EXTINF 的属性值是双引号包裹的（见 updateData.js 的
  * tvg-id="${channelItem.name}"）——一个裸双引号会把整行语法撑坏，
  * 这与 utils/externalSources.js:11-18 处理 issue #84 时的顾虑是同一个。
+ * 逗号同理：回读端按「第一个逗号」切频道名（playlistConfig.js 的 /,(.+)$/），
+ * 主播标题里一个 ASCII 逗号（如 "Day2,小组赛"）会把 tvg 属性从中间切开、
+ * 频道名变成带引号残渣的垃圾串。
  */
 function sanitizeText(text) {
-  return String(text || '').replace(/[\r\n]+/g, ' ').replace(/"/g, "'").trim()
+  return String(text || '').replace(/[\r\n]+/g, ' ').replace(/"/g, "'").replace(/,/g, '，').trim()
 }
 
 /**

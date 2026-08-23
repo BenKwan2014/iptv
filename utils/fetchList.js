@@ -27,7 +27,9 @@ async function cateList() {
   return liveList
 }
 
-// 所有数据
+// 所有数据。返回 { cates, failed }——failed 是本轮抓取失败的分类名清单，
+// 调用方（extractors/migu）据此区分「部分失败」（记 warning）与「全军覆没」
+// （必须抛错走失败路径，否则空结果会被当成功覆盖上一轮缓存且不退避重试）。
 async function dataList() {
   let cates = await cateList()
 
@@ -50,9 +52,7 @@ async function dataList() {
 
   // 去除重复节目
   cates = uniqueData(cates)
-  // console.dir(cates, { depth: null })
-  // console.log(cates)
-  return cates
+  return { cates, failed }
 }
 
 // 对data的dataList去重（分类内去重，不同分类允许同一频道同时存在）

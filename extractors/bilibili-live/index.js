@@ -65,25 +65,34 @@ export function mergeRoomRefs(manual, auto) {
  * **不硬编码房间号**：主播会退播、赛事会结束，写死的清单必然烂掉。每轮抓取现查，
  * 拿到的永远是此刻真在播的。
  *
- * 失败不抛：分区名写错、某个分区接口抽风，都只记一条 warning 让健康状态显示出来，
- * 手填的清单照常抓。整轮成败由外层的 shouldFailRound 判定——这里抛的话，
- * 一个写错的分区名就会让整个模块报失败、把上一轮的频道覆盖没。
+ * 失败不抛，但要**分账记**：「分区名写错」是配置问题，只记 warning；「分区清单 /
+ * 热门榜接口获取失败」是网络层问题，除记 warning 外还计入 fetchFailures——
+ * 外层 fetch() 把它并进 hardErrors 交给 shouldFailRound 判整轮成败。不分账的话，
+ * 默认配置（纯热门榜、不手填）下一次断网 / 接口 5xx 会被当成「正常抓到 0 个
+ * 直播间」，上一轮的频道被覆盖成空且不退避重试；这里抛的话，一个写错的分区名
+ * 又会让整个模块报失败。两头都不对，所以记账、让外层按「还有没有别的收成」裁决。
  *
- * @returns {Promise<{rooms: number[], warnings: string[]}>}
+ * @returns {Promise<{rooms: number[], warnings: string[], fetchFailures: number, failureMessages: string[]}>}
  */
 async function collectTopRooms(config, ctx) {
   const perArea = Number(config.topPerArea)
   const names = parseAreaNames(config.topAreas)
-  if (!(perArea > 0) || !names.length) return { rooms: [], warnings: [] }
+  if (!(perArea > 0) || !names.length) return { rooms: [], warnings: [], fetchFailures: 0, failureMessages: [] }
 
   const options = { timeoutMs: ctx.timeoutMs || 10000 }
   const warnings = []
+  // 网络层失败的原话单独记一份：整轮判失败时错误消息要引用**这里**的原因，
+  // 不能拿 warnings[0]——那可能是「分区名不存在」这类配置提示，归因会张冠李戴。
+  const failureMessages = []
 
   let areas
   try {
     areas = await areaList(options)
   } catch (error) {
-    return { rooms: [], warnings: [`分区清单获取失败，本轮不自动加入热门直播间：${error.message}`] }
+    // 风控要往上抛：让 health() 报「被风控」而不是一条不起眼的 warning
+    if (error instanceof RiskControlError) throw error
+    const message = `分区清单获取失败，本轮不自动加入热门直播间：${error.message}`
+    return { rooms: [], warnings: [message], fetchFailures: 1, failureMessages: [message] }
   }
 
   const byName = new Map(areas.map(area => [area.name, area.id]))
@@ -100,10 +109,12 @@ async function collectTopRooms(config, ctx) {
     } catch (error) {
       // 风控要往上抛：让 health() 报「被风控」而不是一条不起眼的 warning
       if (error instanceof RiskControlError) throw error
-      warnings.push(`分区「${name}」热门榜获取失败，已跳过：${error.message}`)
+      const message = `分区「${name}」热门榜获取失败，已跳过：${error.message}`
+      failureMessages.push(message)
+      warnings.push(message)
     }
   }
-  return { rooms, warnings }
+  return { rooms, warnings, fetchFailures: failureMessages.length, failureMessages }
 }
 
 export default {
@@ -152,7 +163,9 @@ export default {
       //（实测 3921 万 vs 254 万），内容全是正在打的比赛、不会混进普通主播，
       // 是「不用自己找房间号也能开箱即用」这件事最合适的默认值。
       default: '赛事',
-      hint: '推荐用这个，不用自己找房间号。默认「赛事」＝当前正在打的比赛（英雄联盟 / 王者 / DOTA2 等官方赛事转播）。可填：赛事 / 网游 / 手游 / 单机游戏 / 娱乐 / 电台 / 虚拟主播 / 聊天室 / 生活 / 知识 / 互动玩法 / 购物；写错会在上面的健康状态里提示。留空＝只用右边手填的。',
+      // 注意别写「留空＝关闭」：文本清空保存＝回到没配过（稀疏存储约定），会
+      // 回落默认「赛事」而不是关闭——真想关自动加入的口子是 topPerArea 填 0。
+      hint: '推荐用这个，不用自己找房间号。默认「赛事」＝当前正在打的比赛（英雄联盟 / 王者 / DOTA2 等官方赛事转播）。可填：赛事 / 网游 / 手游 / 单机游戏 / 娱乐 / 电台 / 虚拟主播 / 聊天室 / 生活 / 知识 / 互动玩法 / 购物；写错会在上面的健康状态里提示。清空保存会回到默认「赛事」；想只用右边手填的，把下面「每个分区取前几名」填 0。',
     },
     {
       key: 'topPerArea',
@@ -230,6 +243,13 @@ export default {
     const refs = mergeRoomRefs(manualRefs, autoResult.rooms)
 
     if (!refs.length) {
+      // 一间房都没有，且热门榜是「获取失败」而非「没配 / 没人播」——这一轮就是
+      // 失败，必须抛：返回空的话会被记成「成功抓到 0 频道」，上一轮缓存被覆盖成
+      // 空、consecutiveFailures 归零，既不退避也要等满刷新周期才重试。默认配置
+      // 正是纯热门榜，一次瞬时网络故障就会清空全部 B 站频道。
+      if (autoResult.fetchFailures > 0) {
+        throw new Error(autoResult.failureMessages[0] || '热门榜获取失败，本轮没有可抓的直播间')
+      }
       return {
         groups: [],
         meta: {
@@ -250,10 +270,15 @@ export default {
     const skipped = []
     const warnings = [...autoResult.warnings]
     let riskControl = null
+    // 第一条「真出错」（非未开播）的原话，供整轮失败时归因——skipped[0] 靠不住，
+    // 它多半是「未开播」这个被明确定义为正常状态的原因。
+    let firstHardReason = null
     // 「没开播」与「出错了」要分开计：两者都产出 0 个频道，但前者是正常状态、
     // 后者是这一轮失败了。混在一起的话，断网时会被记成「成功抓到 0 个频道」，
     // 把上一轮的缓存覆盖成空——用户的频道就此消失且不退避重试。
-    let hardErrors = 0
+    // 热门榜的网络层失败也计进来：手填的房间恰好都没开播 + 热门榜挂了，同样
+    // 该判整轮失败保缓存，而不是「成功 0 频道」。
+    let hardErrors = autoResult.fetchFailures
 
     const results = await mapLimit(refs, CONCURRENCY, async (ref) => {
       try {
@@ -265,7 +290,10 @@ export default {
           riskControl = riskControl || error
           return null
         }
-        if (!(error instanceof RoomOfflineError)) hardErrors++
+        if (!(error instanceof RoomOfflineError)) {
+          hardErrors++
+          firstHardReason = firstHardReason || error.message
+        }
         skipped.push({ ref: String(ref), reason: error.message })
         return null
       }
@@ -273,10 +301,18 @@ export default {
 
     if (riskControl) throw riskControl
 
-    // 按 B 站分区归组，与咪咕/外部源的 [{name, dataList}] 同构
+    // 按 B 站分区归组，与咪咕/外部源的 [{name, dataList}] 同构。
+    // mergeRoomRefs 只按用户填的字面量去重，URL / 短号 / 短链写法各异时同一间房
+    // 会漏网（rooms 字段还推荐「直接粘完整地址」）——这里按归一后的真实房间号
+    // 再去一次重。refs 手填在前、mapLimit 按下标写结果，保留首个即保留手填优先序。
     const byGroup = new Map()
+    const seenRooms = new Set()
     for (const result of results) {
       if (!result) continue
+      if (result.roomId) {
+        if (seenRooms.has(result.roomId)) continue
+        seenRooms.add(result.roomId)
+      }
       if (result.warning) warnings.push(result.warning)
       const groupName = result.group || DEFAULT_GROUP
       if (!byGroup.has(groupName)) byGroup.set(groupName, { name: groupName, dataList: [] })
@@ -286,7 +322,13 @@ export default {
     const groups = [...byGroup.values()]
 
     if (shouldFailRound(groups.length, hardErrors)) {
-      throw new Error(`${hardErrors}/${refs.length} 个直播间获取失败，无一成功：${skipped[0]?.reason || '未知原因'}`)
+      // 归因要分账：热门榜接口失败与直播间获取失败是两码事，混着算分子会把
+      // 「热门榜挂了 + 手填的都没开播」报成「N/M 个直播间获取失败：未开播」。
+      const roomErrors = hardErrors - autoResult.fetchFailures
+      const parts = []
+      if (autoResult.fetchFailures > 0) parts.push(autoResult.failureMessages[0])
+      if (roomErrors > 0) parts.push(`${roomErrors}/${refs.length} 个直播间获取失败：${firstHardReason || '未知原因'}`)
+      throw new Error(`${parts.join('；')}（本轮无一成功，沿用上一轮结果）`)
     }
 
     return {

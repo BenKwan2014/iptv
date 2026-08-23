@@ -9,7 +9,7 @@ async function fetchURLByAndroid720p() {
   const start = Date.now()
 
   // 获取数据
-  const datas = await dataList()
+  const { cates: datas } = await dataList()
 
   printGreen("数据获取成功！")
   // 必须绝对路径
