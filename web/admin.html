@@ -4958,7 +4958,19 @@ if(success){
         }
 
         // 保存系统配置
-        async function saveSystemConfig() {
+        /**
+         * 保存系统配置。
+         *
+         * 返回值三态（调用方靠它决定后续动作）：
+         *   false            保存失败
+         *   true             保存成功，访问入口没变
+         *   { entry, apiPrefix }  保存成功，且访问密码/管理路径变了 —— 本页当前地址已失效
+         *
+         * @param {boolean} deferRedirect 入口变更时**不**自动跳转，由调用方处理。
+         *   「保存并重启」要用：它得先用**新**前缀把重启请求打出去（旧前缀已经 403 了），
+         *   再跳到新入口，顺序反了就是重启静默失败。
+         */
+        async function saveSystemConfig({ deferRedirect = false } = {}) {
             try {
                 const port = parseInt(document.getElementById('sysPort').value) || 1905;
                 let host = document.getElementById('sysHost').value.trim();
@@ -5011,12 +5023,16 @@ if(success){
                     const curAdminPath = sanitizeAdminPath((systemConfig && systemConfig.adminPath) || 'admin');
                     if (passInput !== curPass || newAdminPath !== curAdminPath) {
                         const entry = '/' + [passInput, newAdminPath].filter(Boolean).join('/');
-                        // 地址明文写进提示并停 5 秒（比原来的 3 秒长）：密码里若有需要 URL 编码的
-                        // 字符，浏览器编码后与服务端的原样比对对不上，跳过去会是 404 —— 那时
-                        // 用户至少看得见正确地址、能自己敲。服务端不清洗 pass，这个口子暂时堵不上。
-                        showStatus(`访问入口已变更，5 秒后跳转到：${entry}　（若跳转后打不开，请手动访问该地址）`, 'success');
-                        setTimeout(() => { window.location.href = window.location.origin + entry; }, 5000);
-                        return 'redirect'; // 页面即将跳转，「保存并重启」此时不能跟着重启
+                        // API 前缀只含密码那一段（app.js:116 的判定就是 /<pass>/…）；密码清空时为空串
+                        const apiPrefix = passInput ? '/' + passInput : '';
+                        if (!deferRedirect) {
+                            // 地址明文写进提示并停 5 秒（比原来的 3 秒长）：密码里若有需要 URL 编码的
+                            // 字符，浏览器编码后与服务端的原样比对对不上，跳过去会是 404 —— 那时
+                            // 用户至少看得见正确地址、能自己敲。服务端不清洗 pass，这个口子暂时堵不上。
+                            showStatus(`访问入口已变更，5 秒后跳转到：${entry}　（若跳转后打不开，请手动访问该地址）`, 'success');
+                            setTimeout(() => { window.location.href = window.location.origin + entry; }, 5000);
+                        }
+                        return { entry, apiPrefix };
                     }
                     showStatus(result.message, 'success');
                     return true;
@@ -5030,17 +5046,28 @@ if(success){
             }
         }
 
-        // 保存并重启（issue #72）：一次确认 → 保存成功才重启；保存失败或触发管理路径跳转则不重启
+        // 保存并重启（issue #72）：一次确认 → 保存成功才重启。
+        //
+        // 原实现是 `if (saved === true) restart()`，而访问密码 / 管理页面路径一变，
+        // saveSystemConfig 就返回非 true —— 于是「同时改了端口和管理路径」时**重启被跳过**，
+        // 端口改动静默不生效，界面只说了要跳转、没说重启没做。
+        //
+        // 现在入口变了也重启，但必须用**新**前缀发请求：服务端 reloadConfig() 一返回就按
+        // 新的 /<pass>/… 认路，旧前缀的 /api/restart 会被拒成 403（这正是原来那条静默失败）。
+        // 顺序也不能反：先重启、再跳到新入口，否则页面已经走了、重启请求发不出去。
         async function saveAndRestartService() {
             const confirmed = await showConfirm(
                 '保存系统配置并立即重启服务？\n\n重启期间服务将暂时不可用（约5-10秒）；Docker/PM2 会自动重启，直接运行 node 需要手动重启。',
                 '保存并重启'
             );
             if (!confirmed) return;
-            const saved = await saveSystemConfig();
-            if (saved === true) {
-                await restartService(true); // 已确认过，跳过二次确认
-            }
+            const saved = await saveSystemConfig({ deferRedirect: true });
+            if (saved === false) return;   // 保存失败就别重启了
+            const moved = (saved && typeof saved === 'object') ? saved : null;
+            await restartService(true, {   // 已确认过，跳过二次确认
+                apiPrefix: moved ? moved.apiPrefix : API_PREFIX,
+                redirectTo: moved ? moved.entry : null,
+            });
         }
 
         // ===== 配置备份 / 迁移（issue #99）=====
@@ -5167,7 +5194,14 @@ if(success){
         }
 
         // 重启服务
-        async function restartService(skipConfirm = false) {
+        /**
+         * @param {boolean} skipConfirm  已经确认过，跳过二次确认
+         * @param {string}  apiPrefix    发重启请求用的前缀。改了访问密码时必须传**新**前缀，
+         *                               旧前缀会被服务端拒成 403（重启静默失败）。
+         * @param {string|null} redirectTo 重启完成后要落到的入口。入口变了就不能 reload
+         *                               当前地址 —— 那是个已经失效的 URL。
+         */
+        async function restartService(skipConfirm = false, { apiPrefix = API_PREFIX, redirectTo = null } = {}) {
             if (!skipConfirm) {
                 const confirmed = await showConfirm(
                     '确定要重启服务吗？\n\n注意：\n1. 重启期间服务将暂时不可用（约5-10秒）\n2. 请确保已保存所有配置\n3. Docker/PM2 会自动重启，直接运行 node 需要手动重启',
@@ -5181,18 +5215,21 @@ if(success){
             try {
                 showStatus('正在重启服务，请稍候...', 'success');
 
-                const response = await fetch(API_PREFIX + '/api/restart', {
+                const response = await fetch(apiPrefix + '/api/restart', {
                     method: 'POST'
                 });
 
                 const result = await response.json();
 
                 if (result.success) {
-                    showStatus('服务重启中...请等待约 5-10 秒后刷新页面', 'success');
-                    
-                    // 15秒后自动刷新页面
+                    showStatus(redirectTo
+                        ? `服务重启中...访问入口已变更为 ${redirectTo}，约 15 秒后自动跳转（若打不开请手动访问该地址）`
+                        : '服务重启中...请等待约 5-10 秒后刷新页面', 'success');
+
+                    // 15秒后回到正确的地址：入口变了就跳新入口，否则原地刷新
                     setTimeout(() => {
-                        location.reload();
+                        if (redirectTo) window.location.href = window.location.origin + redirectTo;
+                        else location.reload();
                     }, 15000);
                 } else {
                     showStatus(result.message || '重启失败', 'error');
