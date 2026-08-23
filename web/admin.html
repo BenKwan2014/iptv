@@ -1181,27 +1181,53 @@
             margin-top: 4px;
         }
 
-        /* 「东西搬走了」的指路条。临时性质，见 markup 处的注释。 */
-        .settings-moved-notice {
-            margin: 10px 0;
-            padding: 12px 14px;
+        /* 「东西搬走了」的全局指路条。临时性质，见 markup 处的注释。 */
+        .moved-notice {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+            padding: 9px 14px;
             background: #f0f9ff;
             border: 1px solid #91d5ff;
             border-left: 4px solid #1890ff;
             border-radius: 6px;
             color: #003a8c;
             font-size: 13px;
-            line-height: 1.8;
+            line-height: 1.7;
         }
 
-        .settings-moved-notice a {
+        .moved-notice-text {
+            flex: 1 1 320px;
+            min-width: 0;
+        }
+
+        .moved-notice a {
             color: #1890ff;
             font-weight: 600;
             text-decoration: none;
         }
 
-        .settings-moved-notice a:hover {
+        .moved-notice a:hover {
             text-decoration: underline;
+        }
+
+        .moved-notice-close {
+            flex-shrink: 0;
+            padding: 4px 12px;
+            font-size: 12px;
+            color: #1890ff;
+            background: #fff;
+            border: 1px solid #91d5ff;
+            border-radius: 4px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .moved-notice-close:hover {
+            background: #1890ff;
+            color: #fff;
         }
 
         .system-config-warning {
@@ -2127,6 +2153,20 @@
                     <button class="restart-btn" onclick="restartService()">🔄 重启服务</button>
                 </div>
             </div>
+
+            <!-- 搬家指路。放在全局 header 里而不是某一页，是因为找不到东西的人可能停在
+                 任何子页面上（「设置」下面就有 5 个）。默认显示，点「知道了」写
+                 localStorage 后不再出现。
+                 键名带版本号：将来若要再公告一次，换个键即可，不会被这次的已读状态吃掉。
+                 **临时性质**——约两个版本（v3.19 前后）没人再问就把这一段和它的 CSS、
+                 dismissMovedNotice()、以及 loadData 里的那次调用一起摘掉，别让它长住。 -->
+            <div class="moved-notice" id="movedNotice" style="display:none;">
+                <span class="moved-notice-text">
+                    📦 <strong>咪咕账号 / 画质</strong>、<strong>内容开关</strong>、<strong>源模块</strong>已从「设置」移到
+                    <a href="javascript:void(0)" onclick="switchTab(1)">🌐 源管理</a> 页。
+                </span>
+                <button class="moved-notice-close" onclick="dismissMovedNotice()" title="不再显示">知道了</button>
+            </div>
         </div>
 
         <div class="main-content">
@@ -2297,15 +2337,6 @@
                 </div>
 
                 <div class="settings-subpanel active" id="settingsSub0">
-                <!-- 搬家指路。放在「系统配置」页而不是「关于我们」，是因为找不到东西的人
-                     会直奔这一页 —— 咪咕账号与画质原先就在下面的表格里，是本页最高频的
-                     两项。等两个版本（约 v3.19）没人再问了就删掉，别让它长住。
-                     故意不做「知道了」按钮：没有存储它的地方，而且看一眼就够了。 -->
-                <div class="settings-moved-notice">
-                    📦 <strong>咪咕账号 / 画质</strong>、<strong>内容开关</strong>、<strong>源模块</strong>已移到顶部的
-                    <a href="javascript:void(0)" onclick="switchTab(1)">🌐 源管理</a> 页 —— 平台的内容来源现在都集中在那里。
-                    本页只保留端口、访问密码、备份等平台级设置。
-                </div>
                 <div class="system-config-warning">
                     ⚠️ 修改系统配置后需要<strong>重启服务</strong>才能生效
                 </div>
@@ -3414,6 +3445,7 @@
                 systemConfig = await systemRes.json();
                 console.log('系统配置加载成功');
                 renderSubscribeBar();  // 配置加载后重渲染订阅栏，让「公网地址」按钮按 mhost 出现（issue #62）
+                initMovedNotice();     // 搬家指路条（临时，见 markup 处注释）
 
                 // 加载 EPG 聚合源配置（issue #38）；失败不影响其余加载
                 loadEpgSources();
@@ -4759,6 +4791,26 @@
         }
 
         // 显示状态消息（Toast 通知）
+        // ===== 「东西搬走了」全局指路条（临时，约 v3.19 摘掉，见 markup 处注释）=====
+        // 键名带版本号：将来若要再公告别的事，换个键就行，不会被这次的已读状态吃掉。
+        const MOVED_NOTICE_KEY = 'iptv.notice.sources-moved.v3.18';
+
+        function initMovedNotice() {
+            const el = document.getElementById('movedNotice');
+            if (!el) return;
+            // localStorage 在隐私模式 / 被禁用时读写都会抛，不能让它带崩整个初始化。
+            // 读不到就当没读过——多显示一次远好过整页 JS 挂掉。
+            let dismissed = false;
+            try { dismissed = localStorage.getItem(MOVED_NOTICE_KEY) === '1'; } catch (e) {}
+            el.style.display = dismissed ? 'none' : 'flex';
+        }
+
+        function dismissMovedNotice() {
+            const el = document.getElementById('movedNotice');
+            if (el) el.style.display = 'none';
+            try { localStorage.setItem(MOVED_NOTICE_KEY, '1'); } catch (e) {}
+        }
+
         function showStatus(message, type) {
             const status = document.getElementById('status');
             status.textContent = message;
