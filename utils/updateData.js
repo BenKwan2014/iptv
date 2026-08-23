@@ -280,12 +280,55 @@ async function updateTV(hours, options = {}) {
 /**
  * @param {Number} hours -更新小时数 
  */
+/**
+ * 把上次缓存的体育赛事内容追加回已生成的播放列表。
+ *
+ * 两个调用方：regenerateOnly 快速模式（避免重复打约 290 次赛事接口），以及
+ * updatePE 在赛事接口不可达时的兜底——后者不兜的话，赛事会整批从播放列表消失，
+ * 而 updateTV 早已把不含赛事的 interface.txt 重命名到位，用户只看到「体育频道
+ * 莫名没了」。
+ *
+ * @param {string} label 日志前缀，标明是哪条路径触发的
+ * @returns {boolean} 是否成功恢复
+ */
+function restorePEFromCache(label) {
+  if (!existsSync(PE_CACHE_PATH)) {
+    printYellow(`${label}：尚无PE缓存，体育赛事频道本次暂缺（等待下次完整更新）`)
+    return false
+  }
+  try {
+    const cache = JSON.parse(readFileSync(PE_CACHE_PATH, 'utf-8'))
+    if (cache.m3u) {
+      appendFileSync(dataPath('interface.txt'), cache.m3u)
+    }
+    if (cache.txt) {
+      appendFileSync(dataPath('interfaceTXT.txt'), cache.txt)
+    }
+    printGreen(`${label}：已从缓存恢复体育赛事频道（${cache.updatedAt || '时间未知'}）`)
+    return true
+  } catch (e) {
+    printYellow(`${label}：PE缓存读取失败，体育赛事频道本次暂缺: ${e.message}`)
+    return false
+  }
+}
+
 async function updatePE(hours) {
 
   const date = new Date()
   const start = date.getTime()
   // 获取PE数据
   const datas = await fetchUrl("http://v0-sc.miguvideo.com/vms-match/v6/staticcache/basic/match-list/normal-match-list/0/all/default/1/miguvideo")
+
+  // 空值守卫：utils/net.js 的 fetchUrl 失败时返回 undefined 而不抛，所以不判的话
+  // 上面那句「获取成功」照打，然后在循环里 datas.body?.days[i] 才炸——`?.` 挡不住
+  // datas 本身是 undefined。而那时 copyFileSync 已经执行、updateTV 也早把不含赛事的
+  // interface.txt 重命名到位，用户看到的是「体育频道莫名没了 + 日志只说更新失败」。
+  // 改成：拿不到就退回上次缓存（与 regenerateOnly 同一条路），赛事不至于整批掉线。
+  if (!datas?.body?.days) {
+    printYellow("体育赛事接口暂不可达，改用上次缓存")
+    restorePEFromCache('体育赛事')
+    return
+  }
   printGreen("体育直播频道获取成功")
   // console.dir(datas, { depth: null })
 
@@ -418,22 +461,7 @@ async function runUpdate(hours, options = {}) {
   } else {
     // regenerateOnly 模式：updateTV 已重建 interface.txt，需将上次缓存的体育赛事内容追加回去
     // 避免重复调用大量 PE API，保持快速模式
-    if (existsSync(PE_CACHE_PATH)) {
-      try {
-        const cache = JSON.parse(readFileSync(PE_CACHE_PATH, 'utf-8'))
-        if (cache.m3u) {
-          appendFileSync(dataPath('interface.txt'), cache.m3u)
-        }
-        if (cache.txt) {
-          appendFileSync(dataPath('interfaceTXT.txt'), cache.txt)
-        }
-        printGreen(`快速模式：已从缓存恢复体育赛事频道（${cache.updatedAt || '时间未知'}）`)
-      } catch (e) {
-        printYellow(`快速模式：PE缓存读取失败，体育赛事频道本次暂缺: ${e.message}`)
-      }
-    } else {
-      printYellow("快速模式：尚无PE缓存，体育赛事频道本次暂缺（等待下次完整更新）")
-    }
+    restorePEFromCache('快速模式')
   }
 }
 

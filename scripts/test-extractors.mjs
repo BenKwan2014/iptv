@@ -20,7 +20,7 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { listModules, getModule, sourceIdOf, resolverFor, MODULE_ID_RE } from '../extractors/registry.js'
+import { listModules, getModule, sourceIdOf, resolverFor, validateModule, MODULE_ID_RE } from '../extractors/registry.js'
 import { clearUrlCache } from '../utils/appUtils.js'
 import { selectFromPlayurl, parseRoomList, normalizeRoom, mapLimit, RoomError } from '../extractors/bilibili-live/api.js'
 import { shouldFailRound } from '../extractors/bilibili-live/index.js'
@@ -30,6 +30,7 @@ import {
 
 let passed = 0
 const check = (name, fn) => { fn(); passed++; console.log(`  ✅ ${name}`) }
+
 const checkAsync = async (name, fn) => { await fn(); passed++; console.log(`  ✅ ${name}`) }
 
 console.log('抓取模块注册表测试')
@@ -119,6 +120,39 @@ check('环境变量兜底：已配置的值优先，没配才用 env', () => {
     if (saved === undefined) delete process.env[key]
     else process.env[key] = saved
   }
+})
+
+check('env 兜底：sessdata 存过空串后仍能读到环境变量（不能改用 hasOwnProperty）', () => {
+  // validateConfig 对 schema 里每个 key 都建自有属性，updateModuleConfig 又把整份
+  // 写回 entry.config——所以存过一次配置的用户磁盘上每个 key 都在。若判据换成
+  // hasOwnProperty，env 兜底会对所有这些用户静默失效。
+  const key = 'mbiliSessdata'
+  const saved = process.env[key]
+  try {
+    process.env[key] = 'FROM_ENV'
+    const { config } = validateConfig(bili, { rooms: '13' }, {})
+    assert.equal(Object.prototype.hasOwnProperty.call(config, 'sessdata'), true, '空串也是自有属性')
+    assert.equal(config.sessdata, '')
+    assert.equal(withEnvFallback(bili, config).sessdata, 'FROM_ENV', '空串仍应回落到 env')
+  } finally {
+    if (saved === undefined) delete process.env[key]
+    else process.env[key] = saved
+  }
+})
+
+check('boolean/int 字段声明 env 会在启动期被拒绝，而不是静默反转', () => {
+  // 硬上的话：default:true 的字段 env 永远读不到；default:false 的会被赋成字符串
+  // "false"（真值），「显式关掉」变成「强制打开」。存储表达不了「没配过」这个状态。
+  const withField = (field) => ({ id: 'probe', name: 'probe', fetch: async () => ({}), configSchema: [field] })
+  for (const type of ['boolean', 'int']) {
+    assert.throws(
+      () => validateModule(withField({ key: 'x', type, env: 'mtest', default: type === 'int' ? 1 : true })),
+      /暂不支持声明 env/,
+      `${type} 类型不该被接受`,
+    )
+  }
+  // text/secret 仍然可以
+  validateModule(withField({ key: 'x', type: 'text', env: 'mtest', default: '' }))
 })
 
 check('normalizeGroups 挡住畸形返回，不让一个坏模块搞崩整轮合并', () => {
@@ -526,4 +560,4 @@ try {
   rmSync(tmp, { recursive: true, force: true })
 }
 
-console.log(`\n全部通过：${passed}/48 ✅`)
+console.log(`\n全部通过：${passed}/50 ✅`)

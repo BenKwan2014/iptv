@@ -73,20 +73,40 @@ const MODULES = [
   bilibiliLive,
 ]
 
-// 启动即校验，把「模块写错了」变成启动失败而不是运行期的诡异行为
-const registry = new Map()
-for (const module of MODULES) {
+/**
+ * 校验一个模块定义。不合法直接抛——把「模块写错了」变成启动失败，
+ * 而不是运行期的诡异行为。导出是为了能被测试直接打，不用在测试里另写一份。
+ */
+export function validateModule(module) {
   if (!module || !MODULE_ID_RE.test(module.id || '')) {
     throw new Error(`抓取模块 id 非法: ${JSON.stringify(module?.id)}`)
-  }
-  if (registry.has(module.id)) {
-    throw new Error(`抓取模块 id 重复: ${module.id}`)
   }
   if (typeof module.fetch !== 'function') {
     throw new Error(`抓取模块 ${module.id} 没有实现 fetch()`)
   }
   if (module.capabilities?.resolve && typeof module.resolve !== 'function') {
     throw new Error(`抓取模块 ${module.id} 声明了 resolve 能力但没实现 resolve()`)
+  }
+  for (const field of module.configSchema || []) {
+    // env 兜底靠「当前值为空」判断有没有配过，而 boolean/int 表达不了这个状态——
+    // 存进去要么 true 要么 false，没有第三态。硬上的话 default:true 的字段 env 永远
+    // 读不到，default:false 的字段会被赋成字符串 "false"（真值），「显式关掉」变成
+    // 「强制打开」。与其静默行为反转，不如启动就拒绝。
+    // 要放开的话，得先让 extractors.json 能区分「没配过」和「配成了默认值」。
+    if (field.env && (field.type === 'boolean' || field.type === 'int')) {
+      throw new Error(
+        `抓取模块 ${module.id} 的字段 ${field.key} 是 ${field.type} 类型，暂不支持声明 env——`
+        + '当前存储无法区分「没配过」与「配成了默认值」，env 兜底会静默失效或反转。'
+      )
+    }
+  }
+}
+
+const registry = new Map()
+for (const module of MODULES) {
+  validateModule(module)
+  if (registry.has(module.id)) {
+    throw new Error(`抓取模块 id 重复: ${module.id}`)
   }
   registry.set(module.id, module)
 }

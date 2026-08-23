@@ -137,11 +137,43 @@ export function withEnvFallback(module, config) {
   const merged = { ...config }
   for (const field of module.configSchema || []) {
     if (!field.env) continue
+    // 判据是「当前值为空」而不是「配置里有没有这个 key」。
+    //
+    // 看着该用 hasOwnProperty，实则不行：validateConfig 对 schema 里每个 key 都会
+    // 创建自有属性（:123 的 text 分支也一样），而 updateModuleConfig 把整份校验后的
+    // config 写回 entry.config——所以任何存过一次配置的用户，磁盘上每个 key 都在，
+    // hasOwnProperty 恒为真，env 兜底会整个失效。
+    //
+    // 空值判断对 text/secret 恰好是对的语义（空串 = 没配过）。对 boolean/int 则表达
+    // 不了「没配过」——存进去要么 true 要么 false，没有第三态。所以 registry 在启动时
+    // 直接拒绝 boolean/int 声明 env（见 extractors/registry.js 的启动校验），
+    // 与其让它静默地行为反转，不如启动就报出来。
     if (merged[field.key]) continue
     const fromEnv = process.env[field.env]
-    if (fromEnv) merged[field.key] = String(fromEnv).trim()
+    if (fromEnv === undefined || fromEnv === '') continue
+    merged[field.key] = coerceEnvValue(field, fromEnv)
   }
   return merged
+}
+
+/**
+ * env 字符串按字段类型归一。
+ *
+ * 目前只有 text/secret 能声明 env，所以走到的永远是最后一行；boolean/int 那两个分支
+ * 是兜底——万一将来放开限制，也绝不能像原来那样把字符串 "false"（真值！）直接塞进
+ * 布尔字段，那会让「显式关掉」变成「强制打开」。
+ */
+function coerceEnvValue(field, raw) {
+  const text = String(raw).trim()
+  if (field.type === 'boolean') {
+    // 与 config.js 的 parseBool 同款语义：只有明确的 false/0/no 才算假
+    return !/^(false|0|no|off)$/i.test(text)
+  }
+  if (field.type === 'int') {
+    const parsed = parseInt(text, 10)
+    return Number.isNaN(parsed) ? field.default : parsed
+  }
+  return text
 }
 
 /**
