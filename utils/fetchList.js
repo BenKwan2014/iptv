@@ -20,13 +20,10 @@ async function cateList() {
     return item.name != "热门"
   })
 
-  // 央视作为首个分组
-  liveList.sort((a, b) => {
-    if (a.name === "央视") return -1;
-    if (b.name === "央视") return 1
-    return 0
-  })
-
+  // 分组顺序**原样沿用咪咕返回的顺序**（当前是 体育/央视/卫视/地方/影视/新闻/教育/
+  // 熊猫/综艺/少儿/纪实）。这里原先有一段手写 sort 把「央视」顶到第一位，已删——
+  // 顺序现在同时也是 extractors/migu/index.js 里跨分组去重的优先级（先出现者胜），
+  // 两处各自定义顺序必然走偏：改一个忘一个，表现是频道悄悄换了分组。
   return liveList
 }
 
