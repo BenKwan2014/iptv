@@ -487,46 +487,92 @@
             margin-bottom: 12px;
         }
 
-        .external-container {
+        /* ===== 源管理页：分段 + 卡片网格 =====
+           平台的全部内容来源（自定义源 / 抓取模块 / 内置源）集中在这一页，三段共用
+           这套外壳。自定义源刻意排最上——「添加源」是本页最高频的入口，要第一眼看到。 */
+        .source-section {
+            margin-bottom: 28px;
+        }
+
+        .source-section + .source-section {
+            border-top: 1px solid #f0f0f0;
+            padding-top: 20px;
+        }
+
+        .source-section-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+        }
+
+        .source-section-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #333;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .source-section-count {
+            font-size: 12px;
+            font-weight: 500;
+            color: #888;
+        }
+
+        .source-section-hint {
+            font-size: 12px;
+            color: #888;
+            margin-top: 4px;
+            line-height: 1.7;
+            max-width: 780px;
+        }
+
+        .source-grid {
             display: grid;
-            grid-template-columns: 250px 1fr 280px;
-            gap: 20px;
-            height: calc(100vh - 250px);
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 12px;
+            align-items: stretch;
         }
 
-        .external-sidebar {
-            border-right: 2px solid #f0f0f0;
-            padding-right: 15px;
-            overflow-y: auto;
-            height: 100%;
-        }
-
+        /* 自定义源卡片。类名沿用 .external-nav-item —— selectExternalSource() 靠
+           「这个类名 + 在 #externalSourceList 里的 DOM 顺序下标」定位选中项，而下标
+           又直接索引 externalConfig.sources[]（全文 20 余处）。改名就得同步改那一整
+           套下标契约，风险远大于收益。这里只换外观：竖排列表项 → 网格卡片。 */
         .external-nav-item {
-            padding: 12px 15px;
-            margin-bottom: 5px;
+            padding: 12px 14px;
             background: #fafafa;
-            border-radius: 4px;
+            border: 1px solid #eee;
+            border-top: 3px solid transparent;
+            border-radius: 6px;
             cursor: pointer;
-            transition: all 0.3s;
-            border-left: 3px solid transparent;
+            transition: all 0.2s;
             position: relative;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
         }
 
         .external-nav-item:hover {
             background: #e6f7ff;
-            border-left-color: #40a9ff;
+            border-color: #91d5ff;
+            border-top-color: #40a9ff;
         }
 
         .external-nav-item.active {
             background: #e6f7ff;
-            border-left-color: #1890ff;
-            font-weight: 600;
+            border-color: #91d5ff;
+            border-top-color: #1890ff;
+            box-shadow: 0 2px 8px rgba(24, 144, 255, 0.15);
         }
 
         .external-nav-title {
             font-size: 14px;
+            font-weight: 600;
             color: #333;
-            margin-bottom: 4px;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -534,6 +580,151 @@
 
         .external-nav-item.active .external-nav-title {
             color: #1890ff;
+        }
+
+        /* 抓取模块 / 内置源的卡片。与自定义源卡片同尺寸同间距，只是内容不同。 */
+        .source-card {
+            padding: 12px 14px;
+            background: #fafafa;
+            border: 1px solid #eee;
+            border-top: 3px solid transparent;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .source-card:hover {
+            background: #e6f7ff;
+            border-color: #91d5ff;
+            border-top-color: #40a9ff;
+        }
+
+        .source-card.active {
+            background: #e6f7ff;
+            border-color: #91d5ff;
+            border-top-color: #1890ff;
+            box-shadow: 0 2px 8px rgba(24, 144, 255, 0.15);
+        }
+
+        /* 内置源没有可展开的配置，只有一个开关——别给鼠标「可点开」的暗示 */
+        .source-card.static,
+        .source-card.static:hover {
+            cursor: default;
+            background: #fafafa;
+            border-color: #eee;
+            border-top-color: transparent;
+        }
+
+        .source-card-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-width: 0;
+        }
+
+        .source-card-title .name {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .source-card-desc {
+            font-size: 12px;
+            color: #888;
+            line-height: 1.6;
+        }
+
+        .source-card-foot {
+            font-size: 11px;
+            color: #999;
+            margin-top: auto;
+            padding-top: 2px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        /* ＋ 添加卡片：同格排布，虚线表明「这不是一个源，是入口」 */
+        .source-card-add {
+            border: 1px dashed #91d5ff;
+            border-radius: 6px;
+            background: #f0f9ff;
+            color: #1890ff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            min-height: 84px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .source-card-add:hover {
+            background: #e6f7ff;
+            border-color: #1890ff;
+        }
+
+        .source-card-add .plus {
+            font-size: 24px;
+            line-height: 1;
+        }
+
+        .source-badge {
+            display: inline-block;
+            padding: 1px 6px;
+            font-size: 11px;
+            font-weight: 500;
+            border-radius: 3px;
+            background: #f0f0f0;
+            color: #666;
+            border: 1px solid #e0e0e0;
+            flex-shrink: 0;
+        }
+
+        .source-badge.builtin {
+            background: #f9f0ff;
+            color: #722ed1;
+            border-color: #d3adf7;
+        }
+
+        .source-badge.beta {
+            background: #fa8c16;
+            color: #fff;
+            border-color: #fa8c16;
+        }
+
+        /* 展开的详情区：卡片网格在上、详情在下。280px 那一栏是使用说明。
+           默认收起 —— 页面上还有「抓取模块」「内置源」两段，详情一直撑开会把它们
+           顶到屏幕外，那就违背了「把源模块提到显眼位置」这件事本身。 */
+        .external-detail-wrap {
+            display: grid;
+            grid-template-columns: 1fr 280px;
+            gap: 20px;
+            margin-top: 14px;
+        }
+
+        .external-detail-wrap.hidden,
+        .extractor-detail.hidden {
+            display: none;
+        }
+
+        /* 模块配置的展开区，与自定义源详情同一视觉层级 */
+        .extractor-detail {
+            margin-top: 14px;
+            background: white;
+            border: 1px solid #e8e8e8;
+            border-radius: 8px;
+            padding: 16px;
         }
 
         .external-nav-meta {
@@ -571,6 +762,8 @@
             border: 1px solid #ffd591;
         }
 
+        /* 高度随内容走：卡片网格取代了原来的定高三栏布局，height:100% 会塌成 0。
+           上限 calc(100vh - 260px) 是为了让下面的「抓取模块」段仍够得着。 */
         .external-detail {
             background: white;
             border: 1px solid #e8e8e8;
@@ -578,7 +771,7 @@
             overflow-y: auto;
             display: flex;
             flex-direction: column;
-            height: 100%;
+            max-height: calc(100vh - 260px);
         }
 
         .external-usage-side {
@@ -589,7 +782,8 @@
             font-size: 13px;
             line-height: 1.8;
             overflow-y: auto;
-            height: 100%;
+            max-height: calc(100vh - 260px);
+            align-self: start;
         }
 
         .external-usage-side h4 {
@@ -896,19 +1090,12 @@
                 flex-shrink: 0;
             }
 
-            .external-container {
+            .external-detail-wrap {
                 grid-template-columns: 1fr;
-                height: auto;
             }
 
-            .external-sidebar {
-                border-right: none;
-                border-bottom: 2px solid #f0f0f0;
-                padding-right: 0;
-                padding-bottom: 10px;
-                margin-bottom: 15px;
-                max-height: 150px;
-                height: auto;
+            .source-grid {
+                grid-template-columns: 1fr;
             }
 
             .external-usage-side {
@@ -916,8 +1103,8 @@
             }
 
             .external-detail {
-                height: auto;
-                min-height: 400px;
+                max-height: none;
+                min-height: 300px;
             }
 
             .external-field-row {
@@ -1956,32 +2143,113 @@
                 </div>
             </div>
 
+            <!-- 源管理：平台的全部内容来源集中在这一页。
+                 段落顺序刻意把「自定义源」放最上 —— 「添加自定义源」是本页最高频的
+                 入口，排在第一屏才显眼；抓取模块与内置源都是配好一次就少动的东西。
+                 「抓取模块」原来是设置页的第 6 个二级标签，两层点击太深，整段搬到这里。 -->
             <div class="panel">
-                <div class="external-header">
-                    <button class="btn btn-primary" onclick="addExternalSource()">➥ 添加源</button>
-                </div>
-                <div class="external-container">
-                    <div class="external-sidebar">
-                        <div style="padding: 8px 12px; background: #f6ffed; border-left: 3px solid #52c41a; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between;">
-                            <span style="font-weight: 600; color: #52c41a;">👤 自定义源</span>
-                            <span id="externalSourceCount" style="font-size: 12px; color: #666;"></span>
+
+                <!-- ① 自定义源 ------------------------------------------------ -->
+                <div class="source-section">
+                    <div class="source-section-head">
+                        <div>
+                            <div class="source-section-title">
+                                👤 自定义源 <span class="source-section-count" id="externalSourceCount"></span>
+                            </div>
+                            <div class="source-section-hint">
+                                自己添加的直连 / 抓取 / 订阅源。卡片顺序 = 播放列表输出顺序 = 播放器里同名频道「源1 / 源2」的先后，
+                                偏好的源用 ◀ ▶ 往前排。点卡片展开编辑。
+                            </div>
                         </div>
-                        <div id="externalSourceList"></div>
                     </div>
-                    <div class="external-detail" id="externalDetail">
-                        <div class="external-empty">请在左侧选择或添加源</div>
+
+                    <div class="source-grid" id="externalSourceList"></div>
+
+                    <!-- 详情默认收起（hidden）：本页下面还有「抓取模块」「内置源」两段，
+                         详情一直撑开会把它们顶出第一屏，那就违背搬家的初衷了。 -->
+                    <div class="external-detail-wrap hidden" id="externalDetailWrap">
+                        <div class="external-detail" id="externalDetail"></div>
+                        <div class="external-usage-side">
+                            <h4>📖 使用说明</h4>
+                            <div style="background: #f6ffed; padding: 12px; border-radius: 4px; margin-bottom: 15px;">
+                                <strong style="color: #52c41a;">👤 自定义源配置</strong>
+                                <ol style="margin: 8px 0 0 0; padding-left: 20px; font-size: 13px; color: #666; line-height: 1.8;">
+                                    <li>点击"添加自定义源"选择模式：<strong>抓取模式</strong>或<strong>直连模式</strong></li>
+                                    <li><strong>抓取模式</strong>：填写频道名、分组和网页地址，点击"抓取并保存"</li>
+                                    <li><strong>直连模式</strong>：填写频道名、分组和m3u8链接，点击"保存"</li>
+                                    <li>可编辑、删除、启用/禁用</li>
+                                    <li>设置自动刷新间隔（默认4小时）</li>
+                                </ol>
+                            </div>
+                        </div>
                     </div>
-                    <div class="external-usage-side">
-                        <h4>📖 使用说明</h4>
-                        <div style="background: #f6ffed; padding: 12px; border-radius: 4px; margin-bottom: 15px;">
-                            <strong style="color: #52c41a;">👤 自定义源配置</strong>
-                            <ol style="margin: 8px 0 0 0; padding-left: 20px; font-size: 13px; color: #666; line-height: 1.8;">
-                                <li>点击"添加源"选择模式：<strong>抓取模式</strong>或<strong>直连模式</strong></li>
-                                <li><strong>抓取模式</strong>：填写频道名、分组和网页地址，点击"抓取并保存"</li>
-                                <li><strong>直连模式</strong>：填写频道名、分组和m3u8链接，点击"保存"</li>
-                                <li>可编辑、删除、启用/禁用</li>
-                                <li>设置自动刷新间隔（默认4小时）</li>
-                            </ol>
+                </div>
+
+                <!-- ② 抓取模块 ------------------------------------------------ -->
+                <div class="source-section">
+                    <div class="source-section-head">
+                        <div>
+                            <div class="source-section-title">
+                                🧩 抓取模块 <span class="source-badge beta">测试中 Beta</span>
+                            </div>
+                            <div class="source-section-hint">
+                                平台自带的抓取模块（咪咕 / 哔哩哔哩直播…）。可单独开关，关掉即不联网、不出现在播放列表，
+                                配置原样保留、开回来即恢复。改动即时保存、无需重启。点卡片展开配置。
+                            </div>
+                        </div>
+                        <label style="display:flex; align-items:center; gap:6px; white-space:nowrap;">
+                            <input type="checkbox" id="extractorsEnabled" onchange="setExtractorsEnabled(this.checked)">
+                            启用抓取模块
+                        </label>
+                    </div>
+
+                    <div id="extractorNotice"></div>
+                    <div class="source-grid" id="extractorList"></div>
+                    <div class="extractor-detail hidden" id="extractorDetail"></div>
+                </div>
+
+                <!-- ③ 内置源 -------------------------------------------------- -->
+                <div class="source-section">
+                    <div class="source-section-head">
+                        <div>
+                            <div class="source-section-title">📦 内置源</div>
+                            <div class="source-section-hint">
+                                随程序自带的内容，<strong>不受上面的「启用抓取模块」总开关约束</strong>。关闭后对应内容不再加载，可能导致频道大幅减少。
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="source-grid">
+                        <div class="source-card static">
+                            <div class="source-card-title">
+                                <span class="name">内置单频道源</span>
+                                <span class="source-badge builtin">内置</span>
+                            </div>
+                            <div class="source-card-desc">自带的抓取型单频道源（当前为 纬来体育，清单随远程配置更新）；关闭后不加载也不抓取，省启动资源</div>
+                            <div class="source-card-foot">
+                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                    <input type="checkbox" id="cfBuiltInSources" onchange="setContentFlag('enableBuiltInSources', this.checked)">
+                                    启用
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="source-card static">
+                            <div class="source-card-title">
+                                <span class="name">内置订阅源</span>
+                                <span class="source-badge builtin">内置</span>
+                            </div>
+                            <!-- 说清楚它和上面那段的关系：这个开关控制的内容是以「精选频道」
+                                 这个订阅源的形式出现在「自定义源」里的，不是另一份东西。
+                                 不写明的话，用户会在同一页上看到疑似重复的两项。 -->
+                            <div class="source-card-desc">自带的 精选频道（央视 / 港澳台 / 地方 / 国际）。它以「精选频道」订阅源的形式出现在上面的<strong>自定义源</strong>里，不是另一份内容。</div>
+                            <div class="source-card-foot">
+                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                    <input type="checkbox" id="cfBuiltInSubscriptions" onchange="setContentFlag('enableBuiltInSubscriptions', this.checked)">
+                                    启用
+                                </label>
+                                <span>关闭后不加入；已添加的可直接删除，删后不再复活</span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1995,7 +2263,6 @@
                     <button class="mode-switch-btn" onclick="switchSettingsTab(2)">🗂️ 自动分组</button>
                     <button class="mode-switch-btn" onclick="switchSettingsTab(3)">📅 EPG 聚合</button>
                     <button class="mode-switch-btn" onclick="switchSettingsTab(4)">👤 用户管理</button>
-                    <button class="mode-switch-btn" onclick="switchSettingsTab(5)">🧩 源模块</button>
                 </div>
 
                 <div class="settings-subpanel active" id="settingsSub0">
@@ -2175,45 +2442,6 @@
                     </div>
                 </div>
                 </div>
-                <div class="settings-subpanel" id="settingsSub5">
-                <!-- 抓取模块（extractors/）：每个平台一个模块，独立开关与配置 -->
-                <div style="margin-top: 4px;">
-                    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
-                        <div>
-                            <div style="font-size:16px; font-weight:600; color:#333;">🧩 源模块 <span style="font-size:12px; font-weight:600; color:#fff; background:#fa8c16; padding:1px 8px; border-radius:10px; vertical-align:middle;">测试中 Beta</span></div>
-                            <div class="system-config-hint">平台的内容来源都在这一页开关。抓取模块（咪咕 / 哔哩哔哩直播…）可单独开关，关掉即不联网、不出现在播放列表，配置原样保留、开回来即恢复。改动即时保存、无需重启。</div>
-                        </div>
-                        <label style="display:flex; align-items:center; gap:6px; white-space:nowrap;">
-                            <input type="checkbox" id="extractorsEnabled" onchange="setExtractorsEnabled(this.checked)">
-                            启用抓取模块
-                        </label>
-                    </div>
-
-                    <div id="extractorList" style="margin-top:14px;"></div>
-
-                    <!-- 其它内容来源：不是抓取模块（由 builtInSourceManager 与内置订阅管），
-                         但同属内容来源，集中在一处便于统一开关。单独成段，避免让人以为
-                         上面的「启用抓取模块」总开关也管着它们。 -->
-                    <div style="margin-top:20px; border-top:1px solid #eee; padding-top:14px;">
-                        <div style="font-size:15px; font-weight:600; color:#333;">📦 其它内容来源</div>
-                        <div class="system-config-hint">这两项不是抓取模块，不受上面的「启用抓取模块」总开关约束。关闭后对应内容不再加载，可能导致频道大幅减少。</div>
-                        <div style="margin-top:12px;">
-                            <label style="display:flex; align-items:center; gap:6px;">
-                                <input type="checkbox" id="cfBuiltInSources" onchange="setContentFlag('enableBuiltInSources', this.checked)">
-                                启用内置单频道源
-                            </label>
-                            <div class="system-config-hint">自带的 纬来体育 / Red Bull / 4K卫视 等；关闭后不加载也不抓取（省启动资源）</div>
-                        </div>
-                        <div style="margin-top:12px;">
-                            <label style="display:flex; align-items:center; gap:6px;">
-                                <input type="checkbox" id="cfBuiltInSubscriptions" onchange="setContentFlag('enableBuiltInSubscriptions', this.checked)">
-                                启用内置订阅源
-                            </label>
-                            <div class="system-config-hint">自带的 精选频道（央视 / 港澳台 / 地方 / 国际）；关闭后不加入（已添加的可在「源管理」删除，删后不再复活）</div>
-                        </div>
-                    </div>
-                </div>
-                </div>
             </div>
 
             <!-- 关于我们面板 -->
@@ -2353,13 +2581,18 @@
                 isViewingDeleted = false;
                 await loadMyPlaylist();
             }
+            // 切换到源管理Tab时刷新抓取模块状态（健康/频道数/上次成功时间都会变）。
+            // 抓取模块原在设置页，这一句跟着它一起从 index===2 搬过来 —— 漏搬的话
+            // 打开源管理看到的是空网格，而且不报错，只是「模块都不见了」。
+            if (index === 1) {
+                loadExtractors();
+            }
             // 切换到系统配置Tab时刷新 EPG 源状态（抓取时间/匹配数等）、用户列表、频道别名
             if (index === 2) {
                 loadEpgSources();
                 loadUsers();
                 loadAliases();
                 loadGroupRules();
-                loadExtractors();
             }
         }
 
@@ -2480,66 +2713,152 @@
             return '';
         }
 
+        // 当前展开配置的模块 id；null = 全部收起。与自定义源的 selectedExternalIndex 同一套交互。
+        let selectedExtractorId = null;
+
+        // 内置源开关的回填。**刻意独立于 renderExtractors**：那边有两条提前 return
+        // （拿不到 #extractorList、零模块），走到任何一条都会跳过回填，让后端明明
+        // 开着的开关在界面上显示成「关」——用户看一眼就会去点，一点就真关了。
+        // 内置源现在自成一段、和抓取模块没有从属关系，回填也不该寄生在它的渲染里。
+        function renderContentFlags() {
+            const flags = (extractorsState && extractorsState.contentFlags) || {};
+            const bs = document.getElementById('cfBuiltInSources');
+            if (bs) bs.checked = flags.enableBuiltInSources !== false;
+            const sub = document.getElementById('cfBuiltInSubscriptions');
+            if (sub) sub.checked = flags.enableBuiltInSubscriptions !== false;
+        }
+
+        // 顶部提示条。也从 renderExtractors 里拆出来，理由同上：零模块时也该看得见。
+        function renderExtractorNotice() {
+            const box = document.getElementById('extractorNotice');
+            if (!box) return;
+            let html = '';
+            if (systemConfig && systemConfig.enableExtractors === false) {
+                // 部署级开关 enableExtractors。注意：写它的控件就是本段右上角那个
+                // 「启用抓取模块」（getState().enabled 读的就是同一个值），
+                // 「系统配置」页里并没有对应的勾选框——原文案指向了一个不存在的控件。
+                html += `<div style="border:1px solid #faad14; background:#fffbe6; border-radius:6px; padding:10px; margin-bottom:12px; color:#874d00;">
+                    抓取模块被整体关闭了（空白模式 <code>mblank=true</code> 会默认关掉它）。
+                    勾选右上角的「启用抓取模块」即可打开，也可用环境变量 <code>menableExtractors=true</code>。
+                </div>`;
+            }
+            if (extractorsState.corrupt) {
+                html += `<div style="border:1px solid #ff4d4f; background:#fff1f0; border-radius:6px; padding:10px; margin-bottom:12px; color:#a8071a;">
+                    配置文件损坏，已保留原文件并另存 <code>.corrupt</code> 副本；在修复前所有改动都会被拒绝，以免覆盖你的原数据。<br>
+                    <span style="font-size:12px;">${escapeHtml(extractorsState.corrupt.message || '')}</span>
+                </div>`;
+            }
+            box.innerHTML = html;
+        }
+
+        /** 模块卡片上那一行状态：● 正常 · 175 频道 · 2 分钟前。详细报错留给展开区。 */
+        function extractorCardStatus(h) {
+            const map = {
+                ok:     ['#52c41a', '正常'],
+                empty:  ['#faad14', '无频道'],
+                failed: ['#ff4d4f', '失败'],
+                risk:   ['#ff4d4f', '被风控'],
+                idle:   ['#999', '未抓取'],
+            };
+            const [color, text] = map[h.status] || map.idle;
+            return `<span style="color:${color};">● ${escapeHtml(text)}</span>`;
+        }
+
         function renderExtractors() {
+            renderExtractorNotice();
+            renderContentFlags();
+
             const box = document.getElementById('extractorList');
             if (!box) return;
             const cb = document.getElementById('extractorsEnabled');
             if (cb) cb.checked = extractorsState.enabled !== false;
 
-            let html = '';
-            if (systemConfig && systemConfig.enableExtractors === false) {
-                // 部署级开关（系统配置里的「启用源模块」/ menableExtractors）在更外面一层。
-                // 它关着的时候本面板的开关全都不起作用，不提示的话用户会以为是模块坏了。
-                html += `<div style="border:1px solid #faad14; background:#fffbe6; border-radius:6px; padding:10px; margin-bottom:10px; color:#874d00;">
-                    源模块在「系统配置」里被整体关闭了（空白模式 <code>mblank=true</code> 会默认关掉它）。
-                    本页的开关暂时不会生效——请先到「⚙️ 系统配置」勾选「启用源模块」并保存。
-                </div>`;
-            }
-            if (extractorsState.corrupt) {
-                html += `<div style="border:1px solid #ff4d4f; background:#fff1f0; border-radius:6px; padding:10px; margin-bottom:10px; color:#a8071a;">
-                    配置文件损坏，已保留原文件并另存 <code>.corrupt</code> 副本；在修复前所有改动都会被拒绝，以免覆盖你的原数据。<br>
-                    <span style="font-size:12px;">${escapeHtml(extractorsState.corrupt.message || '')}</span>
-                </div>`;
-            }
             const modules = extractorsState.modules || [];
             if (!modules.length) {
-                box.innerHTML = html + '<div class="system-config-hint" style="margin:0;">本版本没有内置任何抓取模块。</div>';
+                box.innerHTML = '<div class="system-config-hint" style="margin:0;">本版本没有内置任何抓取模块。</div>';
+                renderExtractorDetail();
                 return;
             }
 
-            html += modules.map(m => `
-                <div style="border:1px solid #eee; border-radius:6px; padding:12px; margin-bottom:10px;">
-                    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
-                        <label style="display:flex; align-items:center; gap:6px; min-width:0;">
-                            <input type="checkbox" ${m.enabled ? 'checked' : ''}
-                                   onchange="toggleExtractorModule('${escapeHtml(m.id)}', this.checked)">
-                            <strong>${escapeHtml(m.name)}</strong>
-                            ${m.enabledEnv ? `<span style="font-size:12px; color:#888;">（也可用环境变量 <code>${escapeHtml(m.enabledEnv)}</code> 控制）</span>` : ''}
-                        </label>
-                        <button class="btn btn-sm" onclick="refreshExtractorNow('${escapeHtml(m.id)}')">🔄 立即刷新</button>
-                    </div>
-                    <div style="font-size:12px; color:#888; margin:4px 0;">${escapeHtml(m.description || '')}</div>
-                    <div style="font-size:12px; margin-bottom:10px;">${extractorHealthHtml(m.health || {})}</div>
-                    <div style="border-top:1px solid #f5f5f5; padding-top:10px;">
-                        ${extractorHelperHtml(m.helper)}
-                        ${(m.configSchema || []).map(f => extractorFieldHtml(m.id, f, m.config || {}, m.secretsSet || {}, m.envProvided || {})).join('')}
-                        <div style="margin-bottom:12px;">
-                            <label style="display:block; font-size:12px; color:#888;">刷新间隔（分钟）</label>
-                            <input type="number" id="xf-${escapeHtml(m.id)}-__refresh" value="${m.refreshMinutes}" style="width:140px;">
-                            <div style="font-size:12px; color:#888; margin-top:3px;">默认 ${m.defaultRefreshMinutes} 分钟。直播地址是短效的（B 站约 2 小时过期），间隔不要设得比它长。</div>
-                        </div>
-                        <button class="btn btn-sm btn-success" onclick="saveExtractorConfig('${escapeHtml(m.id)}')">💾 保存配置</button>
-                    </div>
-                </div>`).join('');
-            box.innerHTML = html;
-            // 助手是随卡片一起重建的，每次渲染后重新挂一次
-            initMiguBookmarklet();
+            // 选中的模块若已不存在（换版本、模块被下架），收起详情而不是渲染空白
+            if (selectedExtractorId && !modules.some(m => m.id === selectedExtractorId)) {
+                selectedExtractorId = null;
+            }
 
-            const flags = extractorsState.contentFlags || {};
-            const bs = document.getElementById('cfBuiltInSources');
-            if (bs) bs.checked = flags.enableBuiltInSources !== false;
-            const sub = document.getElementById('cfBuiltInSubscriptions');
-            if (sub) sub.checked = flags.enableBuiltInSubscriptions !== false;
+            box.innerHTML = modules.map(m => {
+                const h = m.health || {};
+                const when = h.lastSuccessAt ? new Date(h.lastSuccessAt).toLocaleString() : '从未';
+                return `
+                <div class="source-card${m.id === selectedExtractorId ? ' active' : ''}"
+                     onclick="selectExtractorModule('${escapeHtml(m.id)}')">
+                    <div class="source-card-title">
+                        <span class="name">${escapeHtml(m.name)}</span>
+                        <span style="margin-left:auto; font-size:12px; font-weight:500; color:${m.enabled ? '#52c41a' : '#999'};">
+                            ${m.enabled ? '已启用' : '已停用'}
+                        </span>
+                    </div>
+                    <div class="source-card-desc">${escapeHtml(m.description || '')}</div>
+                    <div class="source-card-foot">
+                        ${extractorCardStatus(h)}
+                        <span>· ${h.channelCount || 0} 频道</span>
+                        <span style="margin-left:auto;" title="上次成功 ${escapeHtml(when)}">${h.lastSuccessAt ? '已抓取' : '未抓取'}</span>
+                    </div>
+                </div>`;
+            }).join('');
+
+            renderExtractorDetail();
+        }
+
+        /** 点卡片：展开该模块的配置；再点一次收起。 */
+        function selectExtractorModule(id) {
+            selectedExtractorId = (selectedExtractorId === id) ? null : id;
+            renderExtractors();
+            if (selectedExtractorId) {
+                const el = document.getElementById('extractorDetail');
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+        }
+
+        /** 展开区：选中模块的开关 / 健康详情 / helper / configSchema 表单。 */
+        function renderExtractorDetail() {
+            const box = document.getElementById('extractorDetail');
+            if (!box) return;
+
+            const m = (extractorsState.modules || []).find(x => x.id === selectedExtractorId);
+            if (!m) {
+                box.classList.add('hidden');
+                box.innerHTML = '';
+                return;
+            }
+
+            box.classList.remove('hidden');
+            box.innerHTML = `
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+                    <label style="display:flex; align-items:center; gap:6px; min-width:0;">
+                        <input type="checkbox" ${m.enabled ? 'checked' : ''}
+                               onchange="toggleExtractorModule('${escapeHtml(m.id)}', this.checked)">
+                        <strong style="font-size:15px;">${escapeHtml(m.name)}</strong>
+                        ${m.enabledEnv ? `<span style="font-size:12px; color:#888;">（也可用环境变量 <code>${escapeHtml(m.enabledEnv)}</code> 控制）</span>` : ''}
+                    </label>
+                    <span style="display:inline-flex; gap:6px;">
+                        <button class="btn btn-sm" onclick="refreshExtractorNow('${escapeHtml(m.id)}')">🔄 立即刷新</button>
+                        <button class="btn btn-sm" onclick="selectExtractorModule('${escapeHtml(m.id)}')">收起</button>
+                    </span>
+                </div>
+                <div style="font-size:12px; margin-bottom:12px;">${extractorHealthHtml(m.health || {})}</div>
+                <div style="border-top:1px solid #f5f5f5; padding-top:12px;">
+                    ${extractorHelperHtml(m.helper)}
+                    ${(m.configSchema || []).map(f => extractorFieldHtml(m.id, f, m.config || {}, m.secretsSet || {}, m.envProvided || {})).join('')}
+                    <div style="margin-bottom:12px;">
+                        <label style="display:block; font-size:12px; color:#888;">刷新间隔（分钟）</label>
+                        <input type="number" id="xf-${escapeHtml(m.id)}-__refresh" value="${m.refreshMinutes}" style="width:140px;">
+                        <div style="font-size:12px; color:#888; margin-top:3px;">默认 ${m.defaultRefreshMinutes} 分钟。直播地址是短效的（B 站约 2 小时过期），间隔不要设得比它长。</div>
+                    </div>
+                    <button class="btn btn-sm btn-success" onclick="saveExtractorConfig('${escapeHtml(m.id)}')">💾 保存配置</button>
+                </div>`;
+
+            // 助手随展开区一起重建，每次渲染后重新挂一次
+            initMiguBookmarklet();
         }
 
         async function setContentFlag(key, on) {
@@ -3237,55 +3556,59 @@
             };
         }
 
+        // 内置订阅（精选频道）的 URL，镜像 utils/externalSources.js 的 BUILT_IN_SUBSCRIPTIONS。
+        // 纯展示用：认出来就在卡片上打「内置」标，认不出来只是少个标，不影响任何功能。
+        // 之所以要标：它和用户自己加的源长得一模一样，但删除语义不同（删了不再复活），
+        // 而且本页「内置源」那一段还有个总开关管着它 —— 不标会被当成重复项。
+        const BUILT_IN_SUBSCRIPTION_URLS = [
+            'https://raw.githubusercontent.com/akiralereal/iptv/refs/heads/main/IPTV.m3u'
+        ];
+        function isBuiltInSubscription(source) {
+            return !!(source && source.subscriptionUrl && BUILT_IN_SUBSCRIPTION_URLS.includes(source.subscriptionUrl));
+        }
+
         function renderExternalSources() {
             const externalSourceList = document.getElementById('externalSourceList');
             const externalSourceCount = document.getElementById('externalSourceCount');
             const detail = document.getElementById('externalDetail');
+            const wrap = document.getElementById('externalDetailWrap');
 
             // 添加DOM元素安全检查
-            if (!externalSourceList || !externalSourceCount || !detail) {
+            if (!externalSourceList || !externalSourceCount || !detail || !wrap) {
                 console.error('自定义源相关DOM元素未找到');
                 return;
             }
 
-            // 渲染用户源列表
-            if (!externalConfig.sources || externalConfig.sources.length === 0) {
-                externalSourceCount.textContent = '0';
-                externalSourceList.innerHTML = '<div class="empty-group" style="padding: 12px; color: #999; font-size: 13px;">暂无自定义源<br>点击"添加源"开始配置</div>';
-                detail.innerHTML = '<div class="external-empty">请在左侧选择或添加源</div>';
-                selectedExternalIndex = null;
-                return;
-            }
+            const sources = externalConfig.sources || [];
+            const enabledCount = sources.filter(s => s.enabled !== false).length;
+            externalSourceCount.textContent = sources.length ? `${enabledCount}/${sources.length} 启用` : '暂无';
 
-            const enabledCount = externalConfig.sources.filter(s => s.enabled !== false).length;
-            externalSourceCount.textContent = `${enabledCount}/${externalConfig.sources.length}`;
-            
             externalSourceList.innerHTML = '';
-            externalConfig.sources.forEach((source, index) => {
+            sources.forEach((source, index) => {
                 const navItem = document.createElement('div');
                 navItem.className = 'external-nav-item' + (selectedExternalIndex === index ? ' active' : '');
-                
-                const statusIcon = source.enabled !== false ? '✓' : '×';
-                const statusColor = source.enabled !== false ? '#52c41a' : '#999';
-                
-                // 模式标识
+
+                const on = source.enabled !== false;
                 const modeText = source.mode === 'fetch' ? '抓取' : source.mode === 'subscription' ? '订阅' : '直连';
                 const modeClass = source.mode === 'fetch' ? 'fetch' : source.mode === 'subscription' ? 'subscription' : 'direct';
-                
+
                 // 订阅模式显示频道数量，其他模式显示分组
-                const metaInfo = source.mode === 'subscription' 
-                    ? `${(source.parsedChannels && source.parsedChannels.length) || 0}个频道`
+                const metaInfo = source.mode === 'subscription'
+                    ? `${(source.parsedChannels && source.parsedChannels.length) || 0} 个频道`
                     : (source.group || '未分组');
-                
+
                 navItem.innerHTML = `
-                    <div class="external-nav-title">${source.name || '未命名源'}</div>
+                    <div class="external-nav-title">${escapeHtml(source.name || '未命名源')}</div>
                     <div class="external-nav-meta">
-                        <span>${metaInfo}</span>
                         <span class="external-mode-badge ${modeClass}">${modeText}</span>
-                        <span style="color: ${statusColor};">${statusIcon}</span>
+                        ${isBuiltInSubscription(source) ? '<span class="source-badge builtin">内置</span>' : ''}
+                        <span style="color: ${on ? '#52c41a' : '#999'};">${on ? '✓ 已启用' : '× 已停用'}</span>
+                    </div>
+                    <div class="source-card-foot">
+                        <span>${escapeHtml(metaInfo)}</span>
                         <span style="margin-left:auto; display:inline-flex; gap:2px;">
-                            <button class="external-order-btn" onclick="event.stopPropagation(); moveExternalSource(${index}, -1)" ${index === 0 || updatingSourceIndex !== null ? 'disabled' : ''} title="上移：列表顺序 = 播放列表输出顺序 = 播放器同名频道「源1/源2」顺序，偏好的源放前面">▲</button>
-                            <button class="external-order-btn" onclick="event.stopPropagation(); moveExternalSource(${index}, 1)" ${index === externalConfig.sources.length - 1 || updatingSourceIndex !== null ? 'disabled' : ''} title="下移">▼</button>
+                            <button class="external-order-btn" onclick="event.stopPropagation(); moveExternalSource(${index}, -1)" ${index === 0 || updatingSourceIndex !== null ? 'disabled' : ''} title="前移：卡片顺序 = 播放列表输出顺序 = 播放器同名频道「源1/源2」顺序，偏好的源往前排">◀</button>
+                            <button class="external-order-btn" onclick="event.stopPropagation(); moveExternalSource(${index}, 1)" ${index === sources.length - 1 || updatingSourceIndex !== null ? 'disabled' : ''} title="后移">▶</button>
                         </span>
                     </div>
                 `;
@@ -3293,12 +3616,25 @@
                 externalSourceList.appendChild(navItem);
             });
 
-            // 渲染右侧详情
-            if (selectedExternalIndex !== null && externalConfig.sources[selectedExternalIndex]) {
+            // ＋ 卡片常驻网格末尾。0 个源时它就是唯一的卡片，兼作空状态。
+            // 它必须排在所有 .external-nav-item 之后 —— selectExternalSource() 用
+            // 「.external-nav-item 的 DOM 顺序下标」定位选中项，插在中间会错位。
+            const addCard = document.createElement('div');
+            addCard.className = 'source-card-add';
+            addCard.onclick = () => addExternalSource();
+            addCard.innerHTML = '<span class="plus">＋</span><span>添加自定义源</span>';
+            externalSourceList.appendChild(addCard);
+
+            // 详情只在有选中项时展开。**不再「默认选中第一个」**：本页下面还有
+            // 「抓取模块」「内置源」两段，详情一进页面就撑开会把它们顶出第一屏，
+            // 那正是把源模块搬上来要解决的问题。
+            if (selectedExternalIndex !== null && sources[selectedExternalIndex]) {
+                wrap.classList.remove('hidden');
                 renderExternalDetail(selectedExternalIndex);
-            } else if (externalConfig.sources.length > 0) {
-                // 默认选中第一个
-                selectExternalSource(0);
+            } else {
+                selectedExternalIndex = null;
+                wrap.classList.add('hidden');
+                detail.innerHTML = '';
             }
         }
 
@@ -3572,19 +3908,27 @@
         }
 
         function selectExternalSource(index) {
-            selectedExternalIndex = index;
-            
-            // 更新左侧高亮（只更新用户源列表）
+            // 再点一次已展开的卡片 = 收起。详情区很高，收得起来才够得着下面的
+            // 「抓取模块」「内置源」两段。
+            const collapse = (selectedExternalIndex === index);
+            selectedExternalIndex = collapse ? null : index;
+
+            // 更新卡片高亮。查询限定在 #externalSourceList 内，且只数 .external-nav-item
+            // ——网格末尾那张 ＋ 卡片是 .source-card-add，不会挤掉下标。
             const externalSourceList = document.getElementById('externalSourceList');
             externalSourceList.querySelectorAll('.external-nav-item').forEach((item, i) => {
-                if (i === index) {
-                    item.classList.add('active');
-                } else {
-                    item.classList.remove('active');
-                }
+                item.classList.toggle('active', i === selectedExternalIndex);
             });
-            
-            // 渲染右侧详情
+
+            const wrap = document.getElementById('externalDetailWrap');
+            if (collapse) {
+                if (wrap) wrap.classList.add('hidden');
+                const detail = document.getElementById('externalDetail');
+                if (detail) detail.innerHTML = '';
+                return;
+            }
+
+            if (wrap) wrap.classList.remove('hidden');
             renderExternalDetail(index);
         }
 
@@ -3599,7 +3943,7 @@
             }
             
             if (!source) {
-                detail.innerHTML = '<div class="external-empty">请在左侧选择或添加源</div>';
+                detail.innerHTML = '<div class="external-empty">请在上方选择或添加源</div>';
                 return;
             }
             
@@ -4036,9 +4380,9 @@
         function updateExternalField(index, field, value) {
             externalConfig.sources[index][field] = value;
             
-            // 只更新左侧列表的对应项，避免重新渲染整个表单导致输入框失焦
+            // 只更新上方对应卡片，避免重新渲染整个表单导致输入框失焦
             if (field === 'name') {
-                // 更新左侧导航项的标题和头部标题
+                // 更新卡片标题和详情区头部标题
                 const navItems = document.querySelectorAll('.external-nav-item');
                 if (navItems[index]) {
                     const titleEl = navItems[index].querySelector('.external-nav-title');
@@ -7108,7 +7452,7 @@ if(success){
                     // 选中该源
                     selectExternalSource(foundIndex);
                     
-                    // 滚动到该源在左侧列表的位置
+                    // 滚动到该源的卡片位置
                     const navItems = document.querySelectorAll('.external-nav-item');
                     if (navItems[foundIndex]) {
                         navItems[foundIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });

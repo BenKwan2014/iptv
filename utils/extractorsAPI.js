@@ -134,5 +134,8 @@ export function runExtractorNowAPI(id) {
     .then(() => regeneratePlaylist())
     .catch(error => printRed(`抓取模块 ${id} 手动刷新失败: ${error.message}`))
 
-  return { success: true, data: manager.getState(), message: '已开始刷新，稍后刷新页面查看结果' }
+  // 走 ok() 而不是裸 getState()：前端是「整份替换 extractorsState 后重渲染」，
+  // 少了 contentFlags 那一半，两个内置源开关会在界面上弹回「开」——后端明明是关的，
+  // 且不报错、不还原，直到下一次 loadExtractors。
+  return { ...ok(manager), message: '已开始刷新，稍后刷新页面查看结果' }
 }
