@@ -2358,16 +2358,17 @@
                                 <span class="name">内置订阅源</span>
                                 <span class="source-badge builtin">内置</span>
                             </div>
-                            <!-- 说清楚它和上面那段的关系：这个开关控制的内容是以「精选频道」
-                                 这个订阅源的形式出现在「自定义源」里的，不是另一份东西。
-                                 不写明的话，用户会在同一页上看到疑似重复的两项。 -->
-                            <div class="source-card-desc">自带的 精选频道（央视 / 港澳台 / 地方 / 国际）。它以「精选频道」订阅源的形式出现在上面的<strong>自定义源</strong>里，不是另一份内容。</div>
+                            <!-- 这里是内置订阅唯一的控制入口：它在「自定义源」那一段刻意不露面
+                                 （随程序自带、由维护者策展，不给用户改名/换序/删除），用户需要的
+                                 只有「要不要它」。所以这个开关必须真的管用 —— 打开时会把它播种
+                                 回来，见 extractorsAPI.setContentFlagAPI 里的 reseed 分支。 -->
+                            <div class="source-card-desc">自带的 精选频道（央视 / 港澳台 / 地方 / 国际），约 150 个频道。随程序更新，不可编辑。</div>
                             <div class="source-card-foot">
                                 <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
                                     <input type="checkbox" id="cfBuiltInSubscriptions" onchange="setContentFlag('enableBuiltInSubscriptions', this.checked)">
                                     启用
                                 </label>
-                                <span>关闭后不加入；已添加的可直接删除，删后不再复活</span>
+                                <span>关闭后这些频道不再出现在播放列表里，随时可以开回来</span>
                             </div>
                         </div>
                     </div>
@@ -3769,13 +3770,26 @@
             }
 
             const sources = externalConfig.sources || [];
-            const enabledCount = sources.filter(s => s.enabled !== false).length;
-            externalSourceCount.textContent = sources.length ? `${enabledCount}/${sources.length} 启用` : '暂无';
+            // 内置订阅（精选频道）不在这一段露面：它是随程序自带、由维护者策展的内容，
+            // 用户不该改它的名字/分组/刷新间隔，也不该把它删掉或换序 —— 需要的只有
+            // 「要不要它」这一个开关，那个开关在下方「内置源」那一段。
+            // 注意**只是不渲染，不从数组里摘掉**：externalConfig.sources 的下标是全站的
+            // 定位键（还会作为 { action:'update', index } 发给服务端），动数组等于动契约。
+            const visible = sources
+                .map((source, index) => ({ source, index }))
+                .filter(({ source }) => !isBuiltInSubscription(source));
+            const enabledCount = visible.filter(v => v.source.enabled !== false).length;
+            externalSourceCount.textContent = visible.length ? `${enabledCount}/${visible.length} 启用` : '暂无';
 
             externalSourceList.innerHTML = '';
-            sources.forEach((source, index) => {
+            visible.forEach(({ source, index }, visiblePos) => {
                 const navItem = document.createElement('div');
                 navItem.className = 'external-nav-item' + (selectedExternalIndex === index ? ' active' : '');
+                // 显式写下它在 externalConfig.sources 里的下标。
+                // 全站原先靠「.external-nav-item 的 DOM 出现顺序 == 数组下标」这个隐式约定
+                // 来定位（高亮、改名、跳转三处），只要有一张卡片不渲染，下标立刻错位、
+                // 而且是静默改错源。写成属性之后，渲染多少张、跳过哪几张都不影响定位。
+                navItem.dataset.srcIndex = String(index);
 
                 // 内置订阅（精选频道）被「内置源」那段的总开关关掉时，它的频道不会进播放列表
                 // （externalSources.js 里三处 !enableBuiltInSubscriptions 守卫），但源本身还在
@@ -3806,8 +3820,8 @@
                     <div class="source-card-foot">
                         <span>${escapeHtml(metaInfo)}</span>
                         <span style="margin-left:auto; display:inline-flex; gap:2px;">
-                            <button class="external-order-btn" onclick="event.stopPropagation(); moveExternalSource(${index}, -1)" ${index === 0 || updatingSourceIndex !== null ? 'disabled' : ''} title="前移：卡片顺序 = 播放列表输出顺序 = 播放器同名频道「源1/源2」顺序，偏好的源往前排">◀</button>
-                            <button class="external-order-btn" onclick="event.stopPropagation(); moveExternalSource(${index}, 1)" ${index === sources.length - 1 || updatingSourceIndex !== null ? 'disabled' : ''} title="后移">▶</button>
+                            <button class="external-order-btn" onclick="event.stopPropagation(); moveExternalSource(${index}, -1)" ${visiblePos === 0 || updatingSourceIndex !== null ? 'disabled' : ''} title="前移：卡片顺序 = 播放列表输出顺序 = 播放器同名频道「源1/源2」顺序，偏好的源往前排">◀</button>
+                            <button class="external-order-btn" onclick="event.stopPropagation(); moveExternalSource(${index}, 1)" ${visiblePos === visible.length - 1 || updatingSourceIndex !== null ? 'disabled' : ''} title="后移">▶</button>
                         </span>
                     </div>
                 `;
@@ -3828,6 +3842,11 @@
             // 详情只在有选中项时展开。**不再「默认选中第一个」**：本页下面还有
             // 「抓取模块」「内置源」两段，详情一进页面就撑开会把它们顶出第一屏，
             // 那正是把源模块搬上来要解决的问题。
+            // 选中项指向已隐藏的内置订阅时收起：遗留状态（老版本存下来的下标、
+            // 或换序把它换到了选中位）不该把一张本不该出现的详情捞出来。
+            if (selectedExternalIndex !== null && isBuiltInSubscription(sources[selectedExternalIndex])) {
+                selectedExternalIndex = null;
+            }
             if (selectedExternalIndex !== null && sources[selectedExternalIndex]) {
                 wrap.classList.remove('hidden');
                 renderExternalDetail(selectedExternalIndex);
@@ -3847,8 +3866,12 @@
             // 换序后整份保存会让结果写进错误的源并落盘（与 importSubscription 的守卫同口径）
             if (updatingSourceIndex !== null) { showStatus('请等待当前导入/抓取完成后再调整顺序', 'error'); return; }
             const arr = externalConfig.sources;
-            const target = index + dir;
-            if (!arr || target < 0 || target >= arr.length) return;
+            if (!arr) return;
+            // 跳过不渲染的源（内置订阅）：直接 index+dir 会和一张**看不见的卡片**对调，
+            // 用户点了一下、界面纹丝不动，再点一下又跳两格。
+            let target = index + dir;
+            while (target >= 0 && target < arr.length && isBuiltInSubscription(arr[target])) target += dir;
+            if (target < 0 || target >= arr.length) return;
             [arr[index], arr[target]] = [arr[target], arr[index]];
             // 选中项跟随移动，避免换序后右侧详情指到别的源
             if (selectedExternalIndex === index) selectedExternalIndex = target;
@@ -4137,11 +4160,11 @@
         function selectExternalSource(index) {
             selectedExternalIndex = index;
 
-            // 更新卡片高亮。查询限定在 #externalSourceList 内，且只数 .external-nav-item
-            // ——那张 ＋ 卡片是 .source-card-add，无论排在网格哪个位置都不影响下标。
+            // 更新卡片高亮：按 data-src-index 而不是 DOM 出现顺序（见 renderExternalSources
+            // 里写这个属性时的注释）。
             const externalSourceList = document.getElementById('externalSourceList');
-            externalSourceList.querySelectorAll('.external-nav-item').forEach((item, i) => {
-                item.classList.toggle('active', i === index);
+            externalSourceList.querySelectorAll('.external-nav-item').forEach(item => {
+                item.classList.toggle('active', Number(item.dataset.srcIndex) === index);
             });
 
             const wrap = document.getElementById('externalDetailWrap');
@@ -4634,9 +4657,9 @@
             // 只更新上方对应卡片，避免重新渲染整个表单导致输入框失焦
             if (field === 'name') {
                 // 更新卡片标题和详情区头部标题
-                const navItems = document.querySelectorAll('.external-nav-item');
-                if (navItems[index]) {
-                    const titleEl = navItems[index].querySelector('.external-nav-title');
+                const navItem = document.querySelector(`.external-nav-item[data-src-index="${index}"]`);
+                if (navItem) {
+                    const titleEl = navItem.querySelector('.external-nav-title');
                     if (titleEl) {
                         titleEl.textContent = value || '未命名源';
                     }
@@ -7869,7 +7892,11 @@ if(success){
                     }
                 }
 
-                if (foundIndex !== -1) {
+                if (foundIndex !== -1 && isBuiltInSubscription(externalConfig.sources[foundIndex])) {
+                    // 内置订阅（精选频道）在「源管理」里不露面，没有可跳转的卡片。
+                    // 它是随程序自带、由维护者策展的内容，本来就不打算让用户编辑。
+                    showStatus('该频道来自内置订阅源（随程序自带，不可编辑）。如需整体关闭，请到「源管理 → 内置源」', 'error', 6000);
+                } else if (foundIndex !== -1) {
                     // 展开该源（selectExternalSource 是「一律展开」语义，不会 toggle）
                     selectExternalSource(foundIndex);
 
@@ -7881,9 +7908,9 @@ if(success){
                     if (wrap) {
                         wrap.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     } else {
-                        const navItems = document.querySelectorAll('.external-nav-item');
-                        if (navItems[foundIndex]) {
-                            navItems[foundIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        const navItem = document.querySelector(`.external-nav-item[data-src-index="${foundIndex}"]`);
+                        if (navItem) {
+                            navItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
                         }
                     }
 

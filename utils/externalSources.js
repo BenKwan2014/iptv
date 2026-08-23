@@ -458,6 +458,33 @@ function inheritExistingSourceIds(incoming, current) {
 // 实测：删掉「精选频道」→ 后台随便保存一次 → 重启，它就回来了。
 const SERVER_OWNED_KEYS = ['seededBuiltInUrls', 'retiredBuiltInsV1']
 
+/**
+ * 把内置订阅源**重新**播种回来（用户在「内置源」那一段主动打开开关时调用）。
+ *
+ * 与启动期的 ensureBuiltInSubscriptions 区别在于它**无视 seededBuiltInUrls**：
+ * 那个账本的意思是「别自己复活」，而这里是用户明确点了开关说「我要它」——
+ * 两回事。README 承诺的是删掉之后不会自己回来，不是永远回不来。
+ *
+ * 之所以必须有这个：内置订阅在「源管理」里已经不露面了，用户唯一的控制就是那个
+ * 开关。若开关对「曾经删过它的人」是哑的（点开也不回来），那就等于没有控制。
+ *
+ * @returns {boolean} 是否真的加了东西
+ */
+function reseedBuiltInSubscriptions(config) {
+  if (!config || !Array.isArray(config.sources)) return false
+  if (!Array.isArray(config.seededBuiltInUrls)) config.seededBuiltInUrls = []
+  let added = false
+  for (const builtIn of BUILT_IN_SUBSCRIPTIONS) {
+    const url = builtIn.subscriptionUrl
+    if (config.sources.some(s => s && s.subscriptionUrl === url)) continue  // 已经在了
+    config.sources.push(cloneBuiltInSubscription(builtIn))
+    if (!config.seededBuiltInUrls.includes(url)) config.seededBuiltInUrls.push(url)
+    printBlue(`重新加入内置订阅源: ${builtIn.name}`)
+    added = true
+  }
+  return added
+}
+
 // 一次性退役迁移：把已退役的内置订阅源从用户配置中移除（用 retiredBuiltInsV1 标记，只跑一次，
 // 之后尊重用户的手动增删，与 seededBuiltInUrls 的「只播种一次」哲学一致）。
 function retireBuiltInSubscriptions(config) {
@@ -988,4 +1015,4 @@ class ExternalSourceManager {
 const externalSourceManager = new ExternalSourceManager()
 
 export default externalSourceManager
-export { ExternalSourceManager, fetchAndParseM3u, parsePlaylistContent, decodeAndParseLocalContent, splitCredentials, isBuiltInSubscriptionSource, GITHUB_RAW_MIRRORS, BUILT_IN_SUBSCRIPTIONS, ensureSourceIds, inheritExistingSourceIds }
+export { ExternalSourceManager, reseedBuiltInSubscriptions, fetchAndParseM3u, parsePlaylistContent, decodeAndParseLocalContent, splitCredentials, isBuiltInSubscriptionSource, GITHUB_RAW_MIRRORS, BUILT_IN_SUBSCRIPTIONS, ensureSourceIds, inheritExistingSourceIds }

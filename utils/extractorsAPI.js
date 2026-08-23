@@ -14,6 +14,8 @@ import { enableBuiltInSources, enableBuiltInSubscriptions } from "../config.js"
 import { updateExtractors } from "./channelMerger.js"
 import update from "./updateData.js"
 import { printRed } from "./colorOut.js"
+import { reseedBuiltInSubscriptions } from "./externalSources.js"
+import { externalSourceManager } from "./channelMerger.js"
 
 /**
  * 触发一次播放列表重新生成，让开关即时反映到 /m3u。
@@ -84,6 +86,23 @@ export function setContentFlagAPI(key, enabled) {
   if (!ALLOWED.has(key)) return { success: false, message: `不支持的开关: ${key}` }
   const result = setSystemFlagAPI(key, enabled)
   if (!result.success) return result
+
+  // 打开「内置订阅源」时把它播种回来。
+  //
+  // 内置订阅在「源管理 → 自定义源」里已经不露面了（那是维护者策展的内容，不给用户
+  // 改名/换序/删除），用户唯一的控制就是这个开关。而启动期的 ensureBuiltInSubscriptions
+  // 认 seededBuiltInUrls 账本 —— 对「曾经删过它的老用户」直接 continue，于是开关
+  // 点了也不会回来，等于没有控制。这里显式重新播种，绕开那个账本：
+  // 账本的意思是「别自己复活」，用户主动点开关是明确要它，两回事。
+  if (key === 'enableBuiltInSubscriptions' && enabled !== false) {
+    try {
+      if (reseedBuiltInSubscriptions(externalSourceManager.sources)) {
+        externalSourceManager.saveSources()
+      }
+    } catch (error) {
+      printRed(`重新加入内置订阅源失败: ${error.message}`)
+    }
+  }
   regeneratePlaylist()
   return ok(getExtractorManager())
 }
