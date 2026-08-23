@@ -667,13 +667,38 @@
         .card-open-hint {
             margin-left: auto;
             flex-shrink: 0;
+            font-size: 12px;
+            font-weight: 600;
+            line-height: 1.6;
             color: #1890ff;
-            font-weight: 500;
+            background: #e6f7ff;
+            border: 1px solid #91d5ff;
+            border-radius: 4px;
+            padding: 2px 9px;
+            transition: all 0.15s;
         }
 
+        /* 悬停时整个填成实心：从「这看着能点」升级到「就是这里」 */
         .source-card:hover .card-open-hint,
         .external-nav-item:hover .card-open-hint {
-            text-decoration: underline;
+            background: #1890ff;
+            border-color: #1890ff;
+            color: #fff;
+        }
+
+        /* 已展开：降成次要样式，别和「去点开」抢注意力 */
+        .source-card.active .card-open-hint,
+        .external-nav-item.active .card-open-hint {
+            color: #888;
+            background: #f5f5f5;
+            border-color: #d9d9d9;
+        }
+
+        .source-card.active:hover .card-open-hint,
+        .external-nav-item.active:hover .card-open-hint {
+            background: #8c8c8c;
+            border-color: #8c8c8c;
+            color: #fff;
         }
 
         /* 内置源卡片不可展开（只有一个开关），别给它这个暗示 */
