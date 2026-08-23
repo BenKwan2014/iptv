@@ -1427,6 +1427,20 @@
             color: #1890ff;
         }
 
+        /* 「这个按钮欠按」：按钮左侧一个小圆点 + 轻微高亮。
+           只在真的有未保存改动时出现，没有改动时页面一点不变重。 */
+        .btn.save-dirty {
+            box-shadow: 0 0 0 2px rgba(250, 140, 22, 0.35);
+        }
+
+        .btn.save-dirty::before {
+            content: '●';
+            color: #fa8c16;
+            margin-right: 5px;
+            font-size: 11px;
+            vertical-align: middle;
+        }
+
         .system-config-actions {
             display: flex;
             gap: 12px;
@@ -2376,40 +2390,40 @@
                 <div class="system-config-grid">
                     <div class="system-config-item">
                         <label>服务端口</label>
-                        <input type="number" id="sysPort" placeholder="1905">
+                        <input type="number" id="sysPort" oninput="setSaveDirty('sysconfig')" placeholder="1905">
                         <div class="system-config-hint">⚠️ 本页唯二需要<strong>重启服务</strong>才生效的设置之一（另一个是下方的「节目单更新间隔」）；其余项保存即生效。Docker 部署还需同步改端口映射。</div>
                     </div>
                     <div class="system-config-item">
                         <label>公网地址</label>
-                        <input type="text" id="sysHost" placeholder="http://example.com:xxxx">
+                        <input type="text" id="sysHost" oninput="setSaveDirty('sysconfig')" placeholder="http://example.com:xxxx">
                         <div class="system-config-hint">选填。填 <code>http(s)://…</code> 完整地址时<strong>原样使用</strong>（不写端口即 80/443，适合内网穿透/反向代理）；只填 ip/域名则自动补 http:// 和上方的服务端口</div>
                     </div>
                     <div class="system-config-item">
                         <label>访问密码</label>
-                        <input type="text" id="sysPass" placeholder="留空表示无密码">
+                        <input type="text" id="sysPass" oninput="setSaveDirty('sysconfig')" placeholder="留空表示无密码">
                         <div class="system-config-hint">设置后访问格式：http://ip:port/密码/...</div>
                     </div>
                     <div class="system-config-item">
                         <label>管理页面路径</label>
-                        <input type="text" id="sysAdminPath" placeholder="admin">
+                        <input type="text" id="sysAdminPath" oninput="setSaveDirty('sysconfig')" placeholder="admin">
                         <div class="system-config-hint">自定义后台地址（默认 admin），如填 <code>console</code> 则用 <code>/console</code> 访问，<code>/admin</code> 将失效；保存后需用新地址访问（api / player / favicon.ico 为保留字）</div>
                     </div>
                     <div class="system-config-item">
                         <label>节目单更新间隔（小时）</label>
-                        <input type="number" id="sysProgramInterval" placeholder="8">
+                        <input type="number" id="sysProgramInterval" oninput="setSaveDirty('sysconfig')" placeholder="8">
                         <div class="system-config-hint" style="color:#d4380d;">⚠️ 咪咕频道 / EPG / 体育的全量更新间隔。<strong>如果填写了咪咕 Token（登录账号），建议设置 8 小时以上</strong>——过于频繁请求可能触发风控、影响账号；修改后需点顶部「重启服务」才生效。</div>
                     </div>
                     <div class="system-config-item">
                         <label>
-                            <input type="checkbox" id="sysEnableDisplayNameUnify">
+                            <input type="checkbox" id="sysEnableDisplayNameUnify" onchange="setSaveDirty('sysconfig')">
                             统一频道显示名（合并不同源的同台命名）
                         </label>
                         <div class="system-config-hint">开启后，把不同订阅源里同一个台的不同写法（如 <code>CCTV1</code> / <code>CCTV-1</code> / <code>CCTV1综合</code>）<strong>按内置规则自动统一成同一个显示名</strong>（CCTV 系列、清晰度后缀等已内置）。默认关；手动重命名优先级更高；规则兜不住的写法可在下方「🔤 频道别名」里加规则。保存后即时生效。</div>
                     </div>
                 </div>
                 <div class="system-config-actions">
-                    <button class="btn btn-success" onclick="saveSystemConfig()">💾 保存系统配置</button>
-                    <button class="btn btn-primary" onclick="saveAndRestartService()" title="保存成功后自动重启服务，让需重启的配置一步生效">💾🔄 保存并重启</button>
+                    <button class="btn btn-success" data-save-scope="sysconfig" onclick="saveSystemConfig()">💾 保存系统配置</button>
+                    <button class="btn btn-primary" data-save-scope="sysconfig" onclick="saveAndRestartService()" title="保存成功后自动重启服务，让需重启的配置一步生效">💾🔄 保存并重启</button>
                 </div>
 
                 <!-- 配置备份 / 迁移（issue #99） -->
@@ -2759,7 +2773,7 @@
             if (field.type === 'boolean') {
                 return `<div style="margin-bottom:12px;">
                     <label style="display:flex; align-items:center; gap:6px;">
-                        <input type="checkbox" id="${id}" ${config[field.key] !== false ? 'checked' : ''}>
+                        <input type="checkbox" id="${id}" onchange="setSaveDirty('xt:${moduleId}')" ${config[field.key] !== false ? 'checked' : ''}>
                         ${label}
                     </label>${hint}</div>`;
             }
@@ -2769,13 +2783,13 @@
                 ).join('');
                 return `<div style="margin-bottom:12px;">
                     <label style="display:block; font-size:12px; color:#888;">${label}</label>
-                    <select id="${id}" style="min-width:180px;">${opts}</select>
+                    <select id="${id}" onchange="setSaveDirty('xt:${moduleId}')" style="min-width:180px;">${opts}</select>
                     ${hint}${envNote}</div>`;
             }
             if (field.type === 'int') {
                 return `<div style="margin-bottom:12px;">
                     <label style="display:block; font-size:12px; color:#888;">${label}</label>
-                    <input type="number" id="${id}" value="${escapeHtml(config[field.key] != null ? config[field.key] : '')}" style="width:140px;">
+                    <input type="number" id="${id}" oninput="setSaveDirty('xt:${moduleId}')" value="${escapeHtml(config[field.key] != null ? config[field.key] : '')}" style="width:140px;">
                     ${hint}</div>`;
             }
             if (field.secret) {
@@ -2783,18 +2797,18 @@
                 const ph = secretsSet[field.key] ? '已设置，留空则不修改' : '未设置';
                 return `<div style="margin-bottom:12px;">
                     <label style="display:block; font-size:12px; color:#888;">${label}</label>
-                    <input type="password" id="${id}" value="" placeholder="${escapeHtml(ph)}" autocomplete="new-password" style="width:100%;">
+                    <input type="password" id="${id}" oninput="setSaveDirty('xt:${moduleId}')" value="" placeholder="${escapeHtml(ph)}" autocomplete="new-password" style="width:100%;">
                     ${hint}${envNote}</div>`;
             }
             if (field.multiline) {
                 return `<div style="margin-bottom:12px;">
                     <label style="display:block; font-size:12px; color:#888;">${label}</label>
-                    <textarea id="${id}" rows="6" placeholder="${escapeHtml(field.placeholder || '')}" style="width:100%; font-family:monospace;">${escapeHtml(config[field.key] || '')}</textarea>
+                    <textarea id="${id}" oninput="setSaveDirty('xt:${moduleId}')" rows="6" placeholder="${escapeHtml(field.placeholder || '')}" style="width:100%; font-family:monospace;">${escapeHtml(config[field.key] || '')}</textarea>
                     ${hint}</div>`;
             }
             return `<div style="margin-bottom:12px;">
                 <label style="display:block; font-size:12px; color:#888;">${label}</label>
-                <input type="text" id="${id}" value="${escapeHtml(config[field.key] || '')}" placeholder="${escapeHtml(field.placeholder || '')}" style="width:100%;">
+                <input type="text" id="${id}" oninput="setSaveDirty('xt:${moduleId}')" value="${escapeHtml(config[field.key] || '')}" placeholder="${escapeHtml(field.placeholder || '')}" style="width:100%;">
                 ${hint}</div>`;
         }
 
@@ -2953,14 +2967,16 @@
                     ${(m.configSchema || []).map(f => extractorFieldHtml(m.id, f, m.config || {}, m.secretsSet || {}, m.envProvided || {})).join('')}
                     <div style="margin-bottom:12px;">
                         <label style="display:block; font-size:12px; color:#888;">刷新间隔（分钟）</label>
-                        <input type="number" id="xf-${escapeHtml(m.id)}-__refresh" value="${m.refreshMinutes}" style="width:140px;">
+                        <input type="number" id="xf-${escapeHtml(m.id)}-__refresh" oninput="setSaveDirty('xt:${escapeHtml(m.id)}')" value="${m.refreshMinutes}" style="width:140px;">
                         <div style="font-size:12px; color:#888; margin-top:3px;">默认 ${m.defaultRefreshMinutes} 分钟。直播地址是短效的（B 站约 2 小时过期），间隔不要设得比它长。</div>
                     </div>
-                    <button class="btn btn-sm btn-success" onclick="saveExtractorConfig('${escapeHtml(m.id)}')">💾 保存配置</button>
+                    <button class="btn btn-sm btn-success" data-save-scope="xt:${escapeHtml(m.id)}" onclick="saveExtractorConfig('${escapeHtml(m.id)}')">💾 保存配置</button>
                 </div>`;
 
             // 助手随展开区一起重建，每次渲染后重新挂一次
             initMiguBookmarklet();
+            // 按钮是模板字符串重建出来的，class 会丢——把脏标记贴回去
+            applySaveDirtyMarks();
         }
 
         async function setContentFlag(key, on) {
@@ -3011,7 +3027,9 @@
             if (refreshEl) body.refreshMinutes = refreshEl.value;
             // 改配置要重抓才有新频道（重生成只是把已抓到的重新写一遍），所以这里
             // 提示走「立即刷新」，而不是像开关那样自动重生成播放列表。
-            applyExtractorResult(await extractorPost(body), '配置已保存。改动需要重新抓取才生效——点「立即刷新」，或等下一轮自动刷新');
+            const r = await extractorPost(body);
+            if (r && r.success) setSaveDirty(`xt:${id}`, false);
+            applyExtractorResult(r, '配置已保存。改动需要重新抓取才生效——点「立即刷新」，或等下一轮自动刷新');
         }
 
         async function refreshExtractorNow(id) {
@@ -3740,6 +3758,7 @@
             if (selectedExternalIndex !== null && sources[selectedExternalIndex]) {
                 wrap.classList.remove('hidden');
                 renderExternalDetail(selectedExternalIndex);
+                applySaveDirtyMarks();   // 按钮是重建出来的，class 会丢
             } else {
                 selectedExternalIndex = null;
                 wrap.classList.add('hidden');
@@ -4056,6 +4075,7 @@
             const wrap = document.getElementById('externalDetailWrap');
             if (wrap) wrap.classList.remove('hidden');
             renderExternalDetail(index);
+            applySaveDirtyMarks();
 
             // 详情渲染在整个卡片网格**下方**，源一多或窄屏单列时它就在视口外：
             // 不滚过去的话点卡片「屏幕上什么都没变」，用户会再点一下——正好收起，
@@ -4157,7 +4177,7 @@
                             </label>
                         </div>
                         <div class="external-actions">
-                            <button class="btn btn-small btn-primary" onclick="fetchAndSaveSource(${index})" ${updatingSourceIndex === index ? 'disabled' : ''}>
+                            <button class="btn btn-small btn-primary" data-save-scope="ext" onclick="fetchAndSaveSource(${index})" ${updatingSourceIndex === index ? 'disabled' : ''}>
                                 ${updatingSourceIndex === index ? '🔄 抓取中...' : '🔍 抓取并保存'}
                             </button>
                             <button class="btn btn-small btn-danger" onclick="removeExternalSource(${index})" ${updatingSourceIndex === index ? 'disabled' : ''}>🗑️ 删除</button>
@@ -4231,7 +4251,7 @@
                             </label>
                         </div>
                         <div class="external-actions">
-                            <button class="btn btn-small btn-primary" onclick="importSubscription(${index})" ${updatingSourceIndex === index ? 'disabled' : ''}>
+                            <button class="btn btn-small btn-primary" data-save-scope="ext" onclick="importSubscription(${index})" ${updatingSourceIndex === index ? 'disabled' : ''}>
                                 ${updatingSourceIndex === index ? '🔄 导入中...' : '📥 导入并保存'}
                             </button>
                             <button class="btn btn-small" onclick="startSourceProbe(${index})" ${updatingSourceIndex === index || channelCount === 0 ? 'disabled' : ''} title="检测该源全部频道的连通性，标出失效频道（只标记不删除；防盗链源可能误报，以实际播放为准）">🩺 检测失效</button>
@@ -4281,7 +4301,7 @@
                             </label>
                         </div>
                         <div class="external-actions">
-                            <button class="btn btn-small btn-success" onclick="saveDirectSource(${index})">
+                            <button class="btn btn-small btn-success" data-save-scope="ext" onclick="saveDirectSource(${index})">
                                 💾 保存
                             </button>
                             <button class="btn btn-small" onclick="startSourceProbe(${index})" ${source.m3u8Url ? '' : 'disabled'} title="检测当前直播链接的连通性（只标记不删除；防盗链源可能误报，以实际播放为准）">🩺 检测失效</button>
@@ -4489,6 +4509,7 @@
                 
                 if (response.ok && result.success !== false) {
                     showStatus(`${sourceName} 删除成功并已从频道列表中移除`, 'success');
+                    setSaveDirty('ext', false);
                     
                     // 调整选中索引。删掉的正是当前展开的那个 → 收起，而不是改去展开
                     // 第 0 个：详情区现在是「点卡片才展开」的，删完凭空弹出另一个源的
@@ -4528,6 +4549,11 @@
 
         function updateExternalField(index, field, value) {
             externalConfig.sources[index][field] = value;
+            // 只写了页面副本，服务端还不知道 —— 标记「欠按保存」。
+            // scope 用全局的 'ext' 而不是按源分：任一保存按钮都会把**整份**
+            // externalConfig POST 回去，所以未保存状态本来就是全局的
+            //（也正因如此，在 A 源改了半截没保存、去 B 源点保存，A 的改动会跟着一起存进去）。
+            setSaveDirty('ext');
             
             // 只更新上方对应卡片，避免重新渲染整个表单导致输入框失焦
             if (field === 'name') {
@@ -4575,6 +4601,7 @@
                     showStatus('配置保存失败，无法更新', 'error');
                     return;
                 }
+                setSaveDirty('ext', false);   // 整份 externalConfig 已落盘
                 
                 // 保存成功后执行更新
                 showStatus(`正在提取 ${sourceName} 的 m3u8 链接...`, 'info');
@@ -4660,6 +4687,7 @@
                     showStatus('配置保存失败，无法抓取', 'error');
                     return;
                 }
+                setSaveDirty('ext', false);   // 整份 externalConfig 已落盘
                 
                 // 执行抓取
                 showStatus(`正在抓取 ${sourceName} 的 m3u8 链接...`, 'info');
@@ -4735,6 +4763,7 @@
                 const result = await response.json();
                 if (response.ok && result.success !== false) {
                     showStatus(`${source.name} 保存成功并已同步到频道列表`, 'success');
+                    setSaveDirty('ext', false);
                     // 回读配置：拿到服务端为新源分配的稳定 id（否则下次整份保存会让 id 重新生成、
                     // 「档 ↔ 源」绑定失效），也让「在哪些配置档显示」勾选行立即可用（issue #29/#68）
                     try {
@@ -4797,6 +4826,7 @@
                     showStatus('配置保存失败', 'error');
                     return;
                 }
+                setSaveDirty('ext', false);   // 整份 externalConfig 已落盘
                 
                 // 执行导入
                 showStatus(`正在获取并解析 ${sourceName} 的播放列表...`, 'info');
@@ -4853,6 +4883,36 @@
             const el = document.getElementById('movedNotice');
             if (el) el.style.display = 'none';
             try { localStorage.setItem(MOVED_NOTICE_KEY, '1'); } catch (e) {}
+        }
+
+        // ===== 「有未保存的改动」标记 =====
+        //
+        // 全站规则是「这一块底下有按钮，就必须按那个按钮；没有按钮的，改一下就已经存好了」。
+        // 光有规则还差一半：用户知道「要按」，但不知道**现在到底欠不欠按**——尤其是在
+        // 一屏放不下、字段改完得往下滚才看得到按钮的表单里。这个标记补的就是那一半。
+        //
+        // 用 scope 字符串而不是 DOM 层级关系来配对：本页的保存按钮和它管的字段经常不是
+        // 父子（系统配置是 grid 与 actions 两个兄弟节点），而且模板字符串重渲染会把
+        // 按钮整个换掉——所以状态存在这个 Set 里，渲染后重新贴回去（applySaveDirtyMarks）。
+        const dirtySaveScopes = new Set();
+
+        function setSaveDirty(scope, dirty = true) {
+            if (dirty) dirtySaveScopes.add(scope); else dirtySaveScopes.delete(scope);
+            applySaveDirtyMarks();
+        }
+
+        function applySaveDirtyMarks() {
+            document.querySelectorAll('[data-save-scope]').forEach(btn => {
+                const on = dirtySaveScopes.has(btn.getAttribute('data-save-scope'));
+                btn.classList.toggle('save-dirty', on);
+                // title 里补一句，鼠标悬停也能看到；不覆盖按钮本来的 title
+                if (on) {
+                    if (!btn.dataset.titleOrig) btn.dataset.titleOrig = btn.title || '';
+                    btn.title = (btn.dataset.titleOrig ? btn.dataset.titleOrig + '　' : '') + '有未保存的改动';
+                } else if (btn.dataset.titleOrig !== undefined) {
+                    btn.title = btn.dataset.titleOrig;
+                }
+            });
         }
 
         function showStatus(message, type) {
@@ -5084,6 +5144,7 @@ if(success){
                         const entry = '/' + [passInput, newAdminPath].filter(Boolean).join('/');
                         // API 前缀只含密码那一段（app.js:116 的判定就是 /<pass>/…）；密码清空时为空串
                         const apiPrefix = passInput ? '/' + passInput : '';
+                        setSaveDirty('sysconfig', false);
                         if (!deferRedirect) {
                             // 地址明文写进提示并停 5 秒（比原来的 3 秒长）：密码里若有需要 URL 编码的
                             // 字符，浏览器编码后与服务端的原样比对对不上，跳过去会是 404 —— 那时
@@ -5093,6 +5154,7 @@ if(success){
                         }
                         return { entry, apiPrefix };
                     }
+                    setSaveDirty('sysconfig', false);
                     showStatus(result.message, 'success');
                     return true;
                 } else {
