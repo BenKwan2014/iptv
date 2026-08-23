@@ -1181,6 +1181,29 @@
             margin-top: 4px;
         }
 
+        /* 「东西搬走了」的指路条。临时性质，见 markup 处的注释。 */
+        .settings-moved-notice {
+            margin: 10px 0;
+            padding: 12px 14px;
+            background: #f0f9ff;
+            border: 1px solid #91d5ff;
+            border-left: 4px solid #1890ff;
+            border-radius: 6px;
+            color: #003a8c;
+            font-size: 13px;
+            line-height: 1.8;
+        }
+
+        .settings-moved-notice a {
+            color: #1890ff;
+            font-weight: 600;
+            text-decoration: none;
+        }
+
+        .settings-moved-notice a:hover {
+            text-decoration: underline;
+        }
+
         .system-config-warning {
             background: #fff7e6;
             border: 1px solid #ffd666;
@@ -2274,6 +2297,15 @@
                 </div>
 
                 <div class="settings-subpanel active" id="settingsSub0">
+                <!-- 搬家指路。放在「系统配置」页而不是「关于我们」，是因为找不到东西的人
+                     会直奔这一页 —— 咪咕账号与画质原先就在下面的表格里，是本页最高频的
+                     两项。等两个版本（约 v3.19）没人再问了就删掉，别让它长住。
+                     故意不做「知道了」按钮：没有存储它的地方，而且看一眼就够了。 -->
+                <div class="settings-moved-notice">
+                    📦 <strong>咪咕账号 / 画质</strong>、<strong>内容开关</strong>、<strong>源模块</strong>已移到顶部的
+                    <a href="javascript:void(0)" onclick="switchTab(1)">🌐 源管理</a> 页 —— 平台的内容来源现在都集中在那里。
+                    本页只保留端口、访问密码、备份等平台级设置。
+                </div>
                 <div class="system-config-warning">
                     ⚠️ 修改系统配置后需要<strong>重启服务</strong>才能生效
                 </div>
