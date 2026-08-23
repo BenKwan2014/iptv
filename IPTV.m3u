@@ -8,12 +8,6 @@ http://ali-xwl.cztv.com/live/channel081080Plxw.m3u8
 https://live-auth.51kandianshi.com/szgd/csztv4.m3u8
 #EXTINF:-1 group-title="综艺",南宁娱乐
 http://hls.nntv.cn/nnlive/YSYL_244.m3u8
-#EXTINF:-1 group-title="综艺",云南娱乐
-https://hwapi.yntv.net/62hdvf/q9vs1b.m3u8
-#EXTINF:-1 group-title="综艺",梨园频道
-https://dxtx.hntv.tv/live/lypd.m3u8?txSecret=10c771842a0be59e8b575d765173ec96&txTime=7B923E0A&wsSecret=1966aa8a0405e1541cff782f56c75447&wsTime=1770400669
-#EXTINF:-1 group-title="综艺",河南曲艺
-https://dxtx.hntv.tv/live/jczy.m3u8?txSecret=e785008e49564e5e738439b4dd2ae68e&txTime=7C4C6207&wsSecret=3f9e1d6e5c78cea99a876ce40f13202b&wsTime=1770400669
 
 #EXTINF:-1 group-title="体育",Red Bull TV
 http://rbmn-live.akamaized.net/hls/live/590964/BoRB-AT/master_3360.m3u8
@@ -78,10 +72,6 @@ https://cdn.qd.je/163189/ch8
 https://cdn.qd.je/163189/chu
 #EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/Astro%20AOD.png" group-title="亚太",Astro AOD
 https://cdn.qd.je/163189/aod
-#EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/Astro%20AEC.png" group-title="亚太",Astro AEC
-https://cdn.qd.je/163189/aec
-#EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/Astro%20QJ.png" group-title="亚太",Astro QJ
-https://cdn.qd.je/163189/qj
 #EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/Astro%E6%AC%A2%E5%96%9C%E5%8F%B0.png" group-title="亚太",Astro欢喜台
 https://cdn.qd.je/163189/hxt
 #EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/%E6%B0%91%E8%A6%96%E7%AC%AC%E4%B8%80%E5%8F%B0.png" group-title="亚太",民視第一台
@@ -94,8 +84,6 @@ http://4gtv.cnlive.club/channel/n7222a63c/index.m3u8?q=1784702901150
 http://4gtv.cnlive.club/channel/n721fc25a/index.m3u8?q=1784702901150
 #EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/%E4%B8%89%E7%AB%8B%E7%B6%9C%E5%90%88%E5%8F%B0.png" group-title="亚太",三立綜合台
 http://4gtv.cnlive.club/channel/45c7d3e3/index.m3u8?q=1784702901150
-#EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/%E5%85%AB%E5%A4%A7%E7%B6%9C%E8%97%9D%E5%8F%B0.png" group-title="亚太",八大綜藝台
-http://4gtv.cnlive.club/channel/662e9334/index.m3u8?q=1784702901150
 #EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/TVBS%E7%B2%BE%E9%87%87%E5%8F%B0.png" group-title="亚太",TVBS精采台
 http://4gtv.cnlive.club/channel/49d50255/index.m3u8?q=1784702901150
 #EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/%E9%9D%96%E5%A4%A9%E7%B6%9C%E5%90%88%E5%8F%B0.png" group-title="亚太",靖天綜合台
@@ -104,14 +92,8 @@ http://4gtv.cnlive.club/channel/3f6ecb92/index.m3u8?q=1784702901150
 http://4gtv.cnlive.club/channel/3f1816f7/index.m3u8?q=1784702901150
 #EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/LiveABC%E4%BA%92%E5%8B%95%E8%8B%B1%E8%AA%9E%E9%A0%BB%E9%81%93.png" group-title="亚太",ABC互動英語
 http://4gtv.cnlive.club/channel/2a571abf/index.m3u8?q=1784702901150
-#EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/%E9%81%94%E6%96%87%E8%A5%BF%E9%A0%BB%E9%81%93.png" group-title="亚太",Da Vinci
-http://4gtv.cnlive.club/channel/n1d7d9ddb/index.m3u8?q=1784702901150
-#EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/Nick%20Jr.%20%E5%85%92%E7%AB%A5%E9%A0%BB%E9%81%93.png" group-title="亚太",Nick Jr.
-http://4gtv.cnlive.club/channel/23ac0723/index.m3u8?q=1784702901150
 #EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/%E5%B0%BC%E5%85%8B%E5%85%92%E7%AB%A5%E9%A0%BB%E9%81%93.png" group-title="亚太",Nickelodeon
 http://4gtv.cnlive.club/channel/51bbda39/index.m3u8?q=1784702901150
-#EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/DreamWorks%20%E5%A4%A2%E5%B7%A5%E5%BB%A0%E5%8B%95%E7%95%AB.png" group-title="亚太",DreamWorks
-http://4gtv.cnlive.club/channel/n451655ef/index.m3u8?q=1784702901150
 #EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/%E9%9D%96%E5%A4%A9%E5%8D%A1%E9%80%9A%E5%8F%B0.png" group-title="亚太",靖天卡通台
 http://4gtv.cnlive.club/channel/3ed78a45/index.m3u8?q=1784702901150
 #EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/%E9%9D%96%E6%B4%8B%E5%8D%A1%E9%80%9ANice%20Bingo.png" group-title="亚太",Nice Bingo
@@ -150,8 +132,6 @@ http://4gtv.cnlive.club/channel/n122ce57e/index.m3u8?q=1784702901150
 http://4gtv.cnlive.club/channel/3fae463b/index.m3u8?q=1784702901150
 #EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/TVBS%E6%AD%A1%E6%A8%82%E5%8F%B0.png" group-title="亚太",TVBS歡樂台
 http://4gtv.cnlive.club/channel/498f035d/index.m3u8?q=1784702901150
-#EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/%E5%85%AB%E5%A4%A7%E7%B2%BE%E5%BD%A9%E5%8F%B0.png" group-title="亚太",八大精彩台
-http://4gtv.cnlive.club/channel/6626a9ca/index.m3u8?q=1784702901150
 #EXTINF:-1 tvg-name="民视新闻" tvg-logo="https://epg.112114.xyz/logo/民视新闻.png" group-title="亚太",民视新闻
 http://rihou.cc:555/tv/%E6%B0%91%E8%A7%86%E6%96%B0%E9%97%BB
 #EXTINF:-1 tvg-name="公视" tvg-logo="https://epg.112114.xyz/logo/公视.png" group-title="亚太",公视高清
@@ -215,20 +195,12 @@ http://4gtv.cnlive.club/channel/7fdd881e/index.m3u8?q=1784702901150
 http://4gtv.cnlive.club/channel/3f07b409/index.m3u8?q=1784702901150
 #EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/%E9%9D%96%E6%B4%8B%E6%88%B2%E5%8A%87%E5%8F%B0.png" group-title="影视",靖洋戲劇台
 http://4gtv.cnlive.club/channel/48117ce7/index.m3u8?q=1784702901150
-#EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/ROCK%20Action.png" group-title="影视",ROCK Action
-http://4gtv.cnlive.club/channel/n21b197ce/index.m3u8?q=1784702901150
-#EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/%E9%87%87%E6%98%8C%E5%BD%B1%E5%8A%87%E5%8F%B0.png" group-title="影视",采昌影劇台
-http://4gtv.cnlive.club/channel/n97ba44a/index.m3u8?q=1784702901150
 #EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/%E9%9D%96%E5%A4%A9%E6%98%A0%E7%95%AB.png" group-title="影视",靖天映畫
 http://4gtv.cnlive.club/channel/n610faa83/index.m3u8?q=1784702901150
 #EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/%E9%9D%96%E5%A4%A9%E9%9B%BB%E5%BD%B1%E5%8F%B0.png" group-title="影视",靖天電影台
 http://4gtv.cnlive.club/channel/3fcf6ae8/index.m3u8?q=1784702901150
-#EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/%E5%BD%B1%E8%BF%B7%E6%95%B8%E4%BD%8D%E9%9B%BB%E5%BD%B1%E5%8F%B0.png" group-title="影视",影迷數位電影台
-http://4gtv.cnlive.club/channel/n79da43c0/index.m3u8?q=1784702901150
 #EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/amc%E9%9B%BB%E5%BD%B1%E5%8F%B0.png" group-title="影视",amc電影台
 http://4gtv.cnlive.club/channel/n4f2af9e/index.m3u8?q=1784702901150
-#EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/CinemaWorld.png" group-title="影视",CinemaWorld
-http://4gtv.cnlive.club/channel/n7815b83e/index.m3u8?q=1784702901150
 #EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/%E7%B6%93%E5%85%B8%E9%9B%BB%E5%BD%B1%E5%8F%B0.png" group-title="影视",經典電影台
 http://4gtv.cnlive.club/channel/n2eb7240a/index.m3u8?q=1784702901150
 #EXTINF:-1 group-title="影视",千禧经典
@@ -236,8 +208,6 @@ https://o11.163189.xyz/stream/live/tvbc/
 #EXTINF:-1 group-title="影视",ASTRO爱奇艺
 https://o11.163189.xyz/stream/live/iqiyi/
 
-#EXTINF:-1 group-title="纪实",文物宝库
-https://dxtx.hntv.tv/live/wwbk.m3u8?txSecret=317b89626134fd6bea6e129455b5ff18&txTime=7C4C635C&wsSecret=87c5daf4f4c3a09fb4e4cce0843d4a1c&wsTime=1770400669
 #EXTINF:-1 group-title="纪实",WildEarth
 https://wildearth-plex.amagi.tv/masterR1080p.m3u8
 
@@ -300,14 +270,8 @@ http://207.56.13.146:81/cdnlive/ystq.m3u8
 #EXTINF:-1 group-title="央视",高尔夫网球
 http://207.56.13.146:81/cdnlive/gefwq.m3u8
 
-#EXTINF:-1 group-title="影视",HBO喜剧
-http://23.237.104.106:8080/USA_HBO_COMEDY/tracks-v1a1/mono.m3u8
-#EXTINF:-1 group-title="影视",HBO
-http://23.237.104.106:8080/USA_HBO/tracks-v1a1/mono.m3u8
 #EXTINF:-1 group-title="影视",LMN
 http://23.237.104.106:8080/USA_LMN/tracks-v1a1/mono.m3u8
-#EXTINF:-1 group-title="影视",HBO精选
-http://23.237.104.106:8080/USA_HBO2/tracks-v1a1/mono.m3u8
 #EXTINF:-1 group-title="影视",Cinemax精选
 http://23.237.104.106:8080/USA_MOREMAX/mono.m3u8
 #EXTINF:-1 group-title="影视",Cinemax
