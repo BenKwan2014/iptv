@@ -386,12 +386,20 @@ async function updatePE(hours) {
         pkInfoTitle = `${data.confrontTeams[0].name}VS${data.confrontTeams[1].name}`
       }
       // const peResult = await fetch(`http://app-sc.miguvideo.com/vms-match/v5/staticcache/basic/all-view-list/${data.mgdbId}/2/miguvideo`).then(r => r.json())
-      const peResult = await fetchUrl(`https://vms-sc.miguvideo.com/vms-match/v6/staticcache/basic/basic-data/${data.mgdbId}/miguvideo`)
       try {
+        // 取数放进 try 里。原本在 try 之外，靠「undefined 恰好在 try 内的 .body 处才炸」
+        // 侥幸成立——一旦 fetchUrl 的失败约定变了，异常会从这里逃出两层 for、逃出
+        // updatePE，导致本轮体育频道整批丢失且 pe-cache 不更新。行为与之前逐字节相同，
+        // 只是不再依赖那个巧合。
+        const peResult = await fetchUrl(`https://vms-sc.miguvideo.com/vms-match/v6/staticcache/basic/basic-data/${data.mgdbId}/miguvideo`)
         // 比赛已结束
         if (peResult.body.endTime < Date.now()) {
           const replayResult = await fetchUrl(`http://app-sc.miguvideo.com/vms-match/v5/staticcache/basic/all-view-list/${data.mgdbId}/2/miguvideo`)
-          let replayList = replayResult.body?.replayList
+          // `?.` 必须加在 replayResult 上而不是 .body 之后：回放接口一抖动，
+          // replayResult 就是 undefined，原写法在这里直接抛，导致下面那段
+          // 「回落到 peResult.body.multiPlayList.replayList」的兜底永远走不到，
+          // 一场本来有回放数据的比赛被白白丢掉。
+          let replayList = replayResult?.body?.replayList
           if (replayList == null || replayList == undefined) {
             replayList = peResult.body.multiPlayList.replayList
           }
@@ -404,8 +412,12 @@ async function updatePE(hours) {
               continue
             }
             if (replay.name.match(/.*回放|赛.*/) != null) {
-              let timeStr = peResult.body.keyword.substring(7)
-              const peResultStartTimeStr = peResult.body.multiPlayList.preList[peResult.body.multiPlayList.preList.length - 1].startTimeStr
+              // keyword 与 multiPlayList.preList 都可能缺失，原本是裸取——任一缺失就抛，
+              // 整场比赛的全部回放被丢掉（外层 catch 只记一次 matchFailed）。
+              // 下面 live 那一段已经判过 startTimeStr == undefined，同一个模式这里漏了。
+              let timeStr = peResult.body.keyword?.substring(7) ?? ''
+              const preList = peResult.body.multiPlayList?.preList
+              const peResultStartTimeStr = preList?.[preList.length - 1]?.startTimeStr
               if (peResultStartTimeStr != undefined) {
                 timeStr = peResultStartTimeStr.substring(11, 16)
               }
