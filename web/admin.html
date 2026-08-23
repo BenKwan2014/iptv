@@ -3125,12 +3125,12 @@
 
         async function toggleEpgSource(i, enabled) {
             const r = await epgPost({ action: 'update', index: i, fields: { enabled } });
-            if (r.success) epgConfig = r.data; else { showStatus(r.message || '操作失败', 'error'); loadEpgSources(); }
+            if (r.success) { epgConfig = r.data; toastSaved(); } else { showStatus(r.message || '操作失败', 'error'); loadEpgSources(); }
         }
 
         async function updateEpgSource(i, fields) {
             const r = await epgPost({ action: 'update', index: i, fields });
-            if (r.success) epgConfig = r.data; else { showStatus(r.message || '操作失败', 'error'); loadEpgSources(); }
+            if (r.success) { epgConfig = r.data; toastSaved(); } else { showStatus(r.message || '操作失败', 'error'); loadEpgSources(); }
         }
 
         async function deleteEpgSource(i) {
@@ -3249,7 +3249,7 @@
 
         async function updateUserProfile(id, profile) {
             const r = await usersPost({ action: 'update', id, fields: { profile } });
-            if (r.success) usersConfig = r.data; else { showStatus(r.message || '操作失败', 'error'); loadUsers(); }
+            if (r.success) { usersConfig = r.data; toastSaved(); } else { showStatus(r.message || '操作失败', 'error'); loadUsers(); }
         }
 
         async function deleteUser(id) {
@@ -4913,6 +4913,18 @@
                     btn.title = btn.dataset.titleOrig;
                 }
             });
+        }
+
+        // 即时落盘、但成功时一声不吭的那几处用它。
+        //
+        // 「没按钮 = 已经存好了」这条规则要成立，用户得**看得见**它存好了；否则界面毫无
+        // 变化，只能怀疑没生效然后再点一次——那正是本次归类要消除的困惑。
+        // 防抖 800ms：连续调间隔/优先级、拖拽排序这类高频操作合并成一次提示，不刷屏。
+        // 失败提示不走这里（各调用点自己 showStatus('...', 'error')），不会被防抖吞掉。
+        let savedToastTimer = null;
+        function toastSaved(msg = '已保存') {
+            if (savedToastTimer) clearTimeout(savedToastTimer);
+            savedToastTimer = setTimeout(() => { savedToastTimer = null; showStatus(msg, 'success'); }, 800);
         }
 
         function showStatus(message, type) {
