@@ -17,7 +17,6 @@
  * 而来），3 小时也是签名有效期这个平台属性，不是通用的 HTTP 缓存策略。
  */
 import { get302URL, getAndroidURL, getAndroidURL720p, printLoginInfo } from "./androidURL.js"
-import { rateType, enableClientDispatch } from "../../config.js"
 import { printDebug, printGreen } from "../../utils/colorOut.js"
 
 // 键是裸 pid。过期条目只是不命中、不回收——这是搬家前的行为，不加 LRU/上限，
@@ -58,6 +57,12 @@ export async function resolve(ref, ctx = {}) {
   const pid = ref
   const userId = ctx.account?.userId ?? ""
   const token = ctx.account?.token ?? ""
+  // 画质参数来自模块自己的 configSchema（经 extractorManager.effectiveConfig →
+  // appUtils 的路由外壳传进来），不再直接 import 全局 config.js。
+  const config = ctx.config || {}
+  const rateType = config.rateType ?? 3
+  const enableClientDispatch = config.enableClientDispatch === true
+  const qualityOpts = { enableHDR: config.enableHDR, enableH265: config.enableH265 }
 
   const cached = readCache(pid)
   if (cached) return cached
@@ -66,9 +71,9 @@ export async function resolve(ref, ctx = {}) {
   try {
     // 未登录请求720p
     if (rateType >= 3 && (userId == "" || token == "")) {
-      resObj = await getAndroidURL720p(pid)
+      resObj = await getAndroidURL720p(pid, qualityOpts)
     } else {
-      resObj = await getAndroidURL(userId, token, pid, rateType)
+      resObj = await getAndroidURL(userId, token, pid, rateType, qualityOpts)
     }
   } catch (error) {
     console.log(error)

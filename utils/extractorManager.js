@@ -243,6 +243,9 @@ class ExtractorManager {
   constructor() {
     this.configPath = dataPath(CONFIG_FILE)
     this.cachePath = dataPath(CACHE_FILE)
+    // 迁移的来源。做成实例字段是为了能被测试覆盖——否则测试会去读真实的
+    // system-config.json（dataPath 默认是 cwd，跑测试时就是仓库根目录）。
+    this.legacyConfigPath = dataPath('system-config.json')
     // 配置文件损坏时置位。置位期间拒绝任何写盘——否则一次后台操作就会把
     // 损坏（被降级成空）的配置覆盖回去，用户的模块配置全没了。
     this.corrupt = null
@@ -267,7 +270,66 @@ class ExtractorManager {
     if (!isPlainObject(this.cache.modules)) this.cache.modules = {}
     if (typeof this.config.enabled !== 'boolean') this.config.enabled = true
     this.loaded = true
+    // 放在 load() 而不是启动流程里：配置导入会调 reload()，用户导入一份「搬家之前
+    // 导出的备份」时，包里 extractors.json 没有这些字段、system-config.json 有，
+    // 那时也必须搬一次，否则导入完就是当场降档。
+    this.#migrateLegacyConfig()
     return this
+  }
+
+  /**
+   * 把模块声明的 legacySystemConfigKeys 从 system-config.json 一次性搬进
+   * extractors.json。幂等（靠 config.migrated 标记）、只搬文件里真有的键。
+   *
+   * 刻意直接读 system-config.json 原文而不是 config.js 的导出值——后者已经把
+   * 环境变量合并进去了，搬过来等于把 mrateType=4 固化成文件值，用户改 compose
+   * 就再也不生效。只搬文件里真有的，纯 env 部署什么都不写，env 继续 live 生效。
+   */
+  #migrateLegacyConfig() {
+    if (this.corrupt) return
+    const migrated = isPlainObject(this.config.migrated) ? this.config.migrated : {}
+    const pending = listModules().filter(m =>
+      (m.legacySystemConfigKeys || []).length && !migrated[m.id])
+    if (!pending.length) return
+
+    let legacy = null
+    try {
+      legacy = existsSync(this.legacyConfigPath)
+        ? JSON.parse(readFileSync(this.legacyConfigPath, 'utf-8'))
+        : {}
+    } catch (error) {
+      // 读不动就这轮不迁，不打标记——下次启动再试，绝不因为读失败就当作「迁过了」
+      printYellow(`旧配置读取失败，本轮跳过迁移（下次启动重试）：${error.message}`)
+      return
+    }
+    if (!isPlainObject(legacy)) legacy = {}
+
+    let changed = false
+    for (const module of pending) {
+      const entry = this.#entry(module.id)
+      const moved = []
+      for (const key of module.legacySystemConfigKeys) {
+        // 只搬「旧文件里真有」且「模块这边还没配过」的
+        if (legacy[key] === undefined) continue
+        if (entry.config[key] !== undefined) continue
+        entry.config[key] = legacy[key]
+        moved.push(`${key}=${JSON.stringify(legacy[key])}`)
+      }
+      migrated[module.id] = true
+      changed = true
+      if (moved.length) {
+        printGreen(`${module.name} 的配置已从系统配置迁入模块：${moved.join('、')}`)
+      }
+    }
+    if (!changed) return
+    this.config.migrated = migrated
+    try {
+      this.#saveConfig()
+    } catch (error) {
+      // 写不动就回滚标记，下次再试——绝不留下「标记已迁但实际没落盘」的状态
+      delete this.config.migrated
+      printRed(`迁移结果写盘失败，下次启动重试：${error.message}`)
+    }
   }
 
   /** configBackupAPI 导入配置后要调它，否则运行态与磁盘分叉。 */

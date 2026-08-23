@@ -378,11 +378,14 @@ const tmp = mkdtempSync(join(tmpdir(), 'iptv-extractors-test-'))
 // 每个用例一份独立的配置/缓存文件：共用一份的话，前一个用例存下的开关状态
 // 会污染后一个（setEnabled(false) 会让后续 updateAll 直接早退）
 let caseSeq = 0
-const newManager = () => {
+const newManager = (legacy) => {
   const seq = ++caseSeq
   const manager = new ExtractorManager()
   manager.configPath = join(tmp, `extractors-${seq}.json`)
   manager.cachePath = join(tmp, `extractor-cache-${seq}.json`)
+  // 指向测试自己的旧配置，避免读到仓库根目录里用户的真实 system-config.json
+  manager.legacyConfigPath = join(tmp, `system-config-${seq}.json`)
+  if (legacy !== undefined) writeFileSync(manager.legacyConfigPath, JSON.stringify(legacy))
   return manager.load()
 }
 const seed = (manager, groups, health = {}) => {
@@ -396,6 +399,48 @@ const oneGroup = [{
 }]
 
 try {
+  check('迁移：把系统配置里真有的画质搬进模块，幂等，且不覆盖已配过的', () => {
+    const manager = newManager({ rateType: 9, enableHDR: false, enableH265: false, port: '1905' })
+    const cfg = manager.effectiveConfig(getModule('migu'))
+    assert.equal(cfg.rateType, 9)
+    assert.equal(cfg.enableHDR, false)
+    assert.equal(cfg.enableH265, false)
+    assert.equal(manager.config.migrated?.migu, true, '要打迁移标记')
+    // 只搬 legacySystemConfigKeys 声明的键，port 是全局配置不该被卷进来
+    assert.equal('port' in manager.config.modules.migu.config, false)
+
+    // 幂等：把值改掉并落盘，再 load 一次，迁移不该把它冲回 9
+    // （注意要先落盘——load() 会重新读磁盘，只改内存的话是被重读覆盖，测不到迁移）
+    manager.updateModuleConfig('migu', { rateType: 4 })
+    manager.load()
+    assert.equal(manager.effectiveConfig(getModule('migu')).rateType, 4, '标记在就不该再搬')
+  })
+
+  check('迁移：系统配置里没有的键一个都不写，env 继续 live 生效', () => {
+    // 这是关键——搬过来等于把 mrateType=4 固化成文件值，用户改 compose 就再也不生效。
+    const manager = newManager({ port: '1905' })   // 完全没有画质字段
+    assert.deepEqual(manager.config.modules.migu?.config ?? {}, {}, '不该凭空写入')
+    const saved = process.env.mrateType
+    try {
+      process.env.mrateType = '4'
+      assert.equal(manager.effectiveConfig(getModule('migu')).rateType, 4, 'env 仍然生效')
+    } finally {
+      if (saved === undefined) delete process.env.mrateType
+      else process.env.mrateType = saved
+    }
+  })
+
+  check('迁移：旧配置文件损坏时不打标记，下次启动重试', () => {
+    const manager = new ExtractorManager()
+    const seq = ++caseSeq
+    manager.configPath = join(tmp, `extractors-bad-${seq}.json`)
+    manager.cachePath = join(tmp, `extractor-cache-bad-${seq}.json`)
+    manager.legacyConfigPath = join(tmp, `system-config-bad-${seq}.json`)
+    writeFileSync(manager.legacyConfigPath, '{ 这不是合法 JSON')
+    manager.load()
+    assert.equal(manager.config.migrated?.migu, undefined, '读失败绝不能当成「迁过了」')
+  })
+
   check('代理开关的模块不受抓取子系统总开关约束', () => {
     // config.js 明写「可 mblank=true + menableMigu=true 单独留咪咕」。
     // 咪咕若被 enableExtractors / 文件级开关一起管掉，这个既有组合就废了。
@@ -624,4 +669,4 @@ try {
   rmSync(tmp, { recursive: true, force: true })
 }
 
-console.log(`\n全部通过：${passed}/55 ✅`)
+console.log(`\n全部通过：${passed}/58 ✅`)

@@ -51,9 +51,60 @@ export default {
   // 与 app.js 的整点更新同频；咪咕地址是播放时才解析的，不存在过期问题
   defaultRefreshMinutes: 360,
 
-  // 咪咕的画质参数（rateType / enableHDR / enableH265）目前仍在 config.js，
-  // 由「系统配置」页管理。搬进这里是下一步的事，本轮不动以免影响存量用户。
-  configSchema: [],
+  // 画质参数。这些是纯咪咕的东西，原先和端口、访问密码一起摆在「系统配置」页，
+  // 现在归位到模块自己名下。存量用户的 system-config.json 由 extractorManager
+  // 的加载期迁移自动搬过来（一次性、幂等、带标记），原字段保留不删以便回滚。
+  // 文案沿用原来的——用户认得它们。
+  configSchema: [
+    {
+      key: 'rateType',
+      label: '画质',
+      type: 'select',
+      env: 'mrateType',
+      default: 3,
+      options: [
+        { value: 2, label: '标清 (480p)' },
+        { value: 3, label: '高清 (720p)' },
+        { value: 4, label: '蓝光 (1080p · 需VIP)' },
+        { value: 7, label: '原画 (1080p+ · 需VIP)' },
+        { value: 9, label: '4K (2160p · 需VIP)' },
+      ],
+      hint: '实际画质受咪咕账号档位限制：游客（不填账号）最高 540p；填免费咪咕账号可到 720p；蓝光 1080p / 原画 / 4K 需 VIP',
+    },
+    {
+      key: 'enableH265',
+      label: '启用 H.265 原画（可能存在兼容性问题）',
+      type: 'boolean',
+      env: 'menableH265',
+      default: true,
+      hint: '若部分频道只有声音、没有画面，多是播放器/设备不支持 H.265(HEVC) 编码——关闭本项即可回落到兼容性最好的 H.264。',
+    },
+    {
+      key: 'enableClientDispatch',
+      label: '客户端就近取流（跨运营商观看时开启）',
+      type: 'boolean',
+      env: 'menableClientDispatch',
+      default: false,
+      hint: '服务器和观看设备不在同一运营商网络时（如服务器接移动宽带、电视用联通），咪咕频道加载慢 / 播不了。开启后由播放器所在网络就近选 CDN 节点。同网部署无需开启。',
+    },
+    {
+      // 原「系统配置」页里这一项就是 display:none 隐藏的，没有任何说明文案。
+      // 保持隐藏——让它突然出现在界面上，对「零变化」同样是变化。仍可用
+      // menableHDR 环境变量控制，与今天一致。
+      key: 'enableHDR',
+      label: '启用 HDR',
+      type: 'boolean',
+      env: 'menableHDR',
+      default: true,
+      hidden: true,
+    },
+  ],
+
+  // 这些配置在模块化之前存在 system-config.json 里（由「系统配置」页管理）。
+  // extractorManager 在加载期把它们一次性搬进 extractors.json——只搬**文件里真有的**，
+  // 纯环境变量部署的用户什么都不写，env 继续 live 生效（否则 mrateType=4 会被固化，
+  // 用户改 compose 就不生效了）。两边键名相同，故直接列键名。
+  legacySystemConfigKeys: ['rateType', 'enableHDR', 'enableH265', 'enableClientDispatch'],
 
   // 开关代理到 config.js：那是全项目认的那一个，不另开一份
   enabledGetter: () => enableMigu,

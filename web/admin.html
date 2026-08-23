@@ -2031,17 +2031,6 @@
                         <div class="system-config-hint">填咪咕账号可解锁更高画质：免费账号即到 720p；游客不填最高 540p，1080p+ 需 VIP</div>
                     </div>
                     <div class="system-config-item">
-                        <label>画质</label>
-                        <select id="sysRateType">
-                            <option value="2">标清 (480p)</option>
-                            <option value="3">高清 (720p)</option>
-                            <option value="4">蓝光 (1080p · 需VIP)</option>
-                            <option value="7">原画 (1080p+ · 需VIP)</option>
-                            <option value="9">4K (2160p · 需VIP)</option>
-                        </select>
-                        <div class="system-config-hint">实际画质受咪咕账号档位限制：游客（不填账号）最高 540p；填免费咪咕账号可到 720p；蓝光 1080p / 原画 / 4K 需 VIP</div>
-                    </div>
-                    <div class="system-config-item">
                         <label>服务端口</label>
                         <input type="number" id="sysPort" placeholder="1905">
                     </div>
@@ -2064,26 +2053,6 @@
                         <label>节目单更新间隔（小时）</label>
                         <input type="number" id="sysProgramInterval" placeholder="8">
                         <div class="system-config-hint" style="color:#d4380d;">⚠️ 咪咕频道 / EPG / 体育的全量更新间隔。<strong>如果填写了咪咕 Token（登录账号），建议设置 8 小时以上</strong>——过于频繁请求可能触发风控、影响账号；修改后需点顶部「重启服务」才生效。</div>
-                    </div>
-                    <div class="system-config-item" style="display: none;">
-                        <label>
-                            <input type="checkbox" id="sysEnableHDR">
-                            启用 HDR
-                        </label>
-                    </div>
-                    <div class="system-config-item">
-                        <label>
-                            <input type="checkbox" id="sysEnableH265">
-                            启用 H.265 原画（可能存在兼容性问题）
-                        </label>
-                        <div class="system-config-hint">💡 若部分频道<strong>只有声音、没有画面</strong>，多是播放器/设备不支持 H.265(HEVC) 编码——<strong>关闭本项</strong>即可回落到兼容性最好的 H.264。（个别频道关掉后仍只有声音，可能是 HDR/Vivid 导致，可用环境变量 <code>menableHDR=false</code> 关闭）</div>
-                    </div>
-                    <div class="system-config-item">
-                        <label>
-                            <input type="checkbox" id="sysEnableClientDispatch">
-                            咪咕客户端就近取流（跨运营商观看时开启）
-                        </label>
-                        <div class="system-config-hint">💡 适用场景：<strong>服务器和观看设备不在同一运营商网络</strong>（如服务器接移动宽带、电视用联通网络）时，咪咕频道加载慢 / 播不了。开启后播放地址交给<strong>播放器所在网络</strong>就近选择 CDN 节点，跨网观看即可流畅。同网部署无需开启（默认关）；保存后即时生效，无需重启。</div>
                     </div>
                     <div class="system-config-item">
                         <label>
@@ -2481,6 +2450,9 @@
         }
 
         function extractorFieldHtml(moduleId, field, config, secretsSet, envProvided) {
+            // hidden：仍然可配（存储 / 环境变量都照常），只是不渲染。用于那些
+            // 原本在系统配置页就是 display:none 的项——让它突然出现同样是变化。
+            if (field.hidden) return '';
             const id = `xf-${moduleId}-${field.key}`;
             const label = escapeHtml(field.label || field.key);
             const hint = field.hint ? `<div style="font-size:12px; color:#888; margin-top:3px;">${escapeHtml(field.hint)}</div>` : '';
@@ -2615,6 +2587,7 @@
             if (!module) return;
             const config = {};
             for (const field of module.configSchema || []) {
+                if (field.hidden) continue;   // 没渲染就没有值可提交，跳过即保持原值
                 const el = document.getElementById(`xf-${id}-${field.key}`);
                 if (!el) continue;
                 if (field.type === 'boolean') config[field.key] = el.checked;
@@ -4399,18 +4372,14 @@
             document.getElementById('sysToken').value = systemConfig.token || '';
             document.getElementById('sysPort').value = systemConfig.port || 1905;
             document.getElementById('sysHost').value = systemConfig.host || '';
-            document.getElementById('sysRateType').value = systemConfig.rateType || 3;
             document.getElementById('sysPass').value = systemConfig.pass || '';
             document.getElementById('sysAdminPath').value = systemConfig.adminPath || 'admin';
             document.getElementById('sysProgramInterval').value = systemConfig.programInfoUpdateInterval || '8';
-            document.getElementById('sysEnableHDR').checked = systemConfig.enableHDR !== false;
-            document.getElementById('sysEnableH265').checked = systemConfig.enableH265 !== false;
             document.getElementById('sysEnableMigu').checked = systemConfig.enableMigu !== false;
             document.getElementById('sysEnableBuiltInSources').checked = systemConfig.enableBuiltInSources !== false;
             document.getElementById('sysEnableBuiltInSubscriptions').checked = systemConfig.enableBuiltInSubscriptions !== false;
             document.getElementById('sysEnableExtractors').checked = systemConfig.enableExtractors !== false;
             document.getElementById('sysEnableDisplayNameUnify').checked = systemConfig.enableDisplayNameUnify === true;
-            document.getElementById('sysEnableClientDispatch').checked = systemConfig.enableClientDispatch === true;
             renderEnvOverrideWarning();
         }
 
@@ -4420,11 +4389,10 @@
             if (!box) return;
             const labels = {
                 userId: '咪咕账号ID', token: '咪咕Token', port: '端口', host: '公网地址',
-                rateType: '画质', pass: '访问密码', enableHDR: 'HDR', enableH265: 'H.265',
+                pass: '访问密码',
                 programInfoUpdateInterval: '更新间隔', refreshToken: 'token刷新', adminPath: '管理页面路径',
                 enableMigu: '启用咪咕源', enableBuiltInSources: '启用内置单频道源', enableBuiltInSubscriptions: '启用内置订阅源',
-                enableExtractors: '启用源模块',
-                enableClientDispatch: '客户端就近取流'
+                enableExtractors: '启用源模块'
             };
             const overrides = systemConfig.envOverrides || {};
             const names = Object.keys(overrides).filter(k => overrides[k]).map(k => labels[k] || k);
@@ -4568,18 +4536,14 @@ if(success){
                     token: document.getElementById('sysToken').value,
                     port: port,
                     host: host,
-                    rateType: parseInt(document.getElementById('sysRateType').value) || 3,
                     pass: document.getElementById('sysPass').value,
                     adminPath: adminPathInput,
                     programInfoUpdateInterval: document.getElementById('sysProgramInterval').value || '8',
-                    enableHDR: document.getElementById('sysEnableHDR').checked,
-                    enableH265: document.getElementById('sysEnableH265').checked,
                     enableMigu: document.getElementById('sysEnableMigu').checked,
                     enableBuiltInSources: document.getElementById('sysEnableBuiltInSources').checked,
                     enableBuiltInSubscriptions: document.getElementById('sysEnableBuiltInSubscriptions').checked,
                     enableExtractors: document.getElementById('sysEnableExtractors').checked,
-                    enableDisplayNameUnify: document.getElementById('sysEnableDisplayNameUnify').checked,
-                    enableClientDispatch: document.getElementById('sysEnableClientDispatch').checked
+                    enableDisplayNameUnify: document.getElementById('sysEnableDisplayNameUnify').checked
                 };
 
                 const response = await fetch(API_PREFIX + '/api/system-config', {

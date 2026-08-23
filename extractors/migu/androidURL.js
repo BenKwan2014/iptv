@@ -3,6 +3,9 @@ import { getddCalcuURL, getddCalcuURL720p } from "./ddCalcuURL.js";
 import { printDebug, printGreen, printRed, printYellow } from "../../utils/colorOut.js";
 import { fetchUrl } from "../../utils/net.js";
 import { delay } from "../../utils/fetchList.js";
+// 画质开关的默认来源。模块化之后它们由 migu 模块的 configSchema 提供、经 opts 传进来；
+// 这里保留 import 作为默认值，让根目录那个一次性脚本 fetchURLByAndroid720p.js
+// （直接调 getAndroidURL720p(pid)、不传 opts）继续可用，也便于回滚。
 import { enableH265, enableHDR } from "../../config.js";
 import fetch from 'node-fetch';
 
@@ -44,7 +47,9 @@ function miguFetchFail(respData) {
   return { url: "", rateType: 0, content: { message, raw: respData } }
 }
 
-async function getAndroidURL(userId, token, pid, rateType) {
+async function getAndroidURL(userId, token, pid, rateType, opts = {}) {
+  const useHDR = opts.enableHDR ?? enableHDR
+  const useH265 = opts.enableH265 ?? enableH265
 
   if (rateType <= 1) {
     return {
@@ -76,11 +81,11 @@ async function getAndroidURL(userId, token, pid, rateType) {
   const result = getSaltAndSign(md5)
 
   let enableHDRStr = ""
-  if (enableHDR) {
+  if (useHDR) {
     enableHDRStr = "&4kvivid=true&2Kvivid=true&vivid=2"
   }
   let enableH265Str = ""
-  if (enableH265) {
+  if (useH265) {
     enableH265Str = "&h265N=true"
   }
   // 请求
@@ -155,7 +160,9 @@ async function getAndroidURL(userId, token, pid, rateType) {
  * @param {string} pid - 节目ID
  * @returns {} - 
  */
-async function getAndroidURL720p(pid) {
+async function getAndroidURL720p(pid, opts = {}) {
+  const useHDR = opts.enableHDR ?? enableHDR
+  const useH265 = opts.enableH265 ?? enableH265
   // 获取url
   const timestramp = Math.round(Date.now()).toString()
   const appVersion = "2600034600"
@@ -179,11 +186,11 @@ async function getAndroidURL720p(pid) {
 
   let rateType = 3
   let enableHDRStr = ""
-  if (enableHDR) {
+  if (useHDR) {
     enableHDRStr = "&4kvivid=true&2Kvivid=true&vivid=2"
   }
   let enableH265Str = ""
-  if (enableH265) {
+  if (useH265) {
     enableH265Str = "&h265N=true"
   }
   // 请求

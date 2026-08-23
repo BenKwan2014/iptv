@@ -4,6 +4,7 @@ import { host, pass, token, userId, enableTvgNormalize } from "../config.js";
 import { printDebug, printGreen, printGrey, printRed, printYellow } from "./colorOut.js";
 import { readConfig, parseInterfaceTxt, applyConfig, generateM3u8, generateTxt } from "./playlistConfig.js";
 import { resolverFor, listModules } from "../extractors/registry.js";
+import { getExtractorManager } from "./extractorManager.js";
 
 /**
  * 清空各模块的解析缓存。
@@ -268,7 +269,10 @@ async function channel(url, urlUserId, urlToken) {
 
   let resolved
   try {
-    resolved = await module.resolve(pid, { account: { userId: urlUserId, token: urlToken } })
+    // ctx 带三样：账号（来自地址里的 /userId/token 段）、模块自己的生效配置
+    // （画质等，effectiveConfig 是纯内存计算，不碰磁盘）、以及回看参数由外壳处理。
+    const config = getExtractorManager().effectiveConfig(module)
+    resolved = await module.resolve(pid, { account: { userId: urlUserId, token: urlToken }, config })
   } catch (error) {
     // 模块契约要求 resolve 不抛。万一抛了也绝不能让异常冒出去——app.js 的
     // 请求 handler 没有顶层 try，未捕获异常等于请求永远不 end、客户端挂死。
