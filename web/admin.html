@@ -3012,6 +3012,9 @@
         async function setContentFlag(key, on) {
             applyExtractorResult(await extractorPost({ action: 'contentFlag', key, enabled: on }),
                 on ? '已启用' : '已关闭');
+            // 「内置订阅源」开关同时决定上方「精选频道」那张卡片的实际生效状态，
+            // 不重画的话卡片会继续显示「已启用」，而它的频道其实已经不进播放列表了。
+            if (key === 'enableBuiltInSubscriptions') renderExternalSources();
         }
 
         async function extractorPost(body) {
@@ -3774,7 +3777,15 @@
                 const navItem = document.createElement('div');
                 navItem.className = 'external-nav-item' + (selectedExternalIndex === index ? ' active' : '');
 
-                const on = source.enabled !== false;
+                // 内置订阅（精选频道）被「内置源」那段的总开关关掉时，它的频道不会进播放列表
+                // （externalSources.js 里三处 !enableBuiltInSubscriptions 守卫），但源本身还在
+                // 列表里。卡片若照旧显示「✓ 已启用 151 个频道」就是在说谎 —— 实测关掉后总频道
+                // 从 648 掉到 497，正好少了这 151 条，而卡片纹丝不动。
+                // 这是既有行为，但把「自定义源」和「内置源」放进同一页之后，矛盾就摆在眼前了。
+                const suppressedByBuiltIn = isBuiltInSubscription(source)
+                    && extractorsState && extractorsState.contentFlags
+                    && extractorsState.contentFlags.enableBuiltInSubscriptions === false;
+                const on = source.enabled !== false && !suppressedByBuiltIn;
                 const modeText = source.mode === 'fetch' ? '抓取' : source.mode === 'subscription' ? '订阅' : '直连';
                 const modeClass = source.mode === 'fetch' ? 'fetch' : source.mode === 'subscription' ? 'subscription' : 'direct';
 
@@ -3788,7 +3799,9 @@
                     <div class="external-nav-meta">
                         <span class="external-mode-badge ${modeClass}">${modeText}</span>
                         ${isBuiltInSubscription(source) ? '<span class="source-badge builtin">内置</span>' : ''}
-                        <span style="color: ${on ? '#52c41a' : '#999'};">${on ? '✓ 已启用' : '× 已停用'}</span>
+                        <span style="color: ${on ? '#52c41a' : '#999'};" ${suppressedByBuiltIn ? 'title="下方「内置源 → 内置订阅源」的开关是关的，本源不进播放列表"' : ''}>${
+                            suppressedByBuiltIn ? '⊘ 被「内置源」关闭' : (on ? '✓ 已启用' : '× 已停用')
+                        }</span>
                     </div>
                     <div class="source-card-foot">
                         <span>${escapeHtml(metaInfo)}</span>
