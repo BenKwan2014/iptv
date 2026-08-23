@@ -455,6 +455,13 @@ try {
     assert.equal(manager.config.migrated?.migu, undefined, '读失败绝不能当成「迁过了」')
   })
 
+  check('模块声明的 helper 要透传给后台，否则辅助 UI 渲染不出来', () => {
+    const manager = newManager()
+    const modules = manager.getState().modules
+    assert.equal(modules.find(m => m.id === 'migu').helper, 'migu-bookmarklet')
+    assert.equal(modules.find(m => m.id === 'bilibili-live').helper, '', '没声明的给空串，前端据此不渲染')
+  })
+
   check('代理开关的模块不受抓取子系统总开关约束', () => {
     // config.js 明写「可 mblank=true + menableMigu=true 单独留咪咕」。
     // 咪咕若被 enableExtractors / 文件级开关一起管掉，这个既有组合就废了。
@@ -683,4 +690,4 @@ try {
   rmSync(tmp, { recursive: true, force: true })
 }
 
-console.log(`\n全部通过：${passed}/59 ✅`)
+console.log(`\n全部通过：${passed}/60 ✅`)

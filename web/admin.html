@@ -2004,21 +2004,6 @@
                 </div>
                 <div id="envOverrideWarning" style="display: none; margin: 10px 0; padding: 12px 14px; background: #fff7e6; border: 1px solid #ffd591; border-left: 4px solid #fa8c16; border-radius: 6px; color: #874d00; font-size: 13px; line-height: 1.7;"></div>
 
-                <div class="bookmarklet-section">
-                    <div class="bookmarklet-title">
-                        <span>📖</span>
-                        <span>快速获取咪咕账号信息</span>
-                    </div>
-                    <div class="bookmarklet-actions">
-                        <a id="miguBookmarklet" class="bookmarklet-link" draggable="true">
-                            📖 获取咪咕账号
-                        </a>
-                        <button class="bookmarklet-help-btn" onclick="openBookmarkletGuide()" title="查看使用说明">
-                            ?
-                        </button>
-                    </div>
-                </div>
-                
                 <div class="system-config-grid">
                     <div class="system-config-item">
                         <label>服务端口</label>
@@ -2492,6 +2477,21 @@
                 ${hint}</div>`;
         }
 
+        // 模块可以声明 helper，在自己的卡片里多渲染一块辅助 UI。
+        // markup 留在这里而不是模块文件：配套的 CSS、引导弹窗、bookmarklet 代码都在本页。
+        function extractorHelperHtml(key) {
+            if (key === 'migu-bookmarklet') {
+                return `<div class="bookmarklet-section" style="margin:0 0 12px;">
+                    <div class="bookmarklet-title"><span>📖</span><span>快速获取咪咕账号信息</span></div>
+                    <div class="bookmarklet-actions">
+                        <a id="miguBookmarklet" class="bookmarklet-link" draggable="true">📖 获取咪咕账号</a>
+                        <button class="bookmarklet-help-btn" onclick="openBookmarkletGuide()" title="查看使用说明">?</button>
+                    </div>
+                </div>`;
+            }
+            return '';
+        }
+
         function renderExtractors() {
             const box = document.getElementById('extractorList');
             if (!box) return;
@@ -2533,6 +2533,7 @@
                     <div style="font-size:12px; color:#888; margin:4px 0;">${escapeHtml(m.description || '')}</div>
                     <div style="font-size:12px; margin-bottom:10px;">${extractorHealthHtml(m.health || {})}</div>
                     <div style="border-top:1px solid #f5f5f5; padding-top:10px;">
+                        ${extractorHelperHtml(m.helper)}
                         ${(m.configSchema || []).map(f => extractorFieldHtml(m.id, f, m.config || {}, m.secretsSet || {}, m.envProvided || {})).join('')}
                         <div style="margin-bottom:12px;">
                             <label style="display:block; font-size:12px; color:#888;">刷新间隔（分钟）</label>
@@ -2543,6 +2544,8 @@
                     </div>
                 </div>`).join('');
             box.innerHTML = html;
+            // 助手是随卡片一起重建的，每次渲染后重新挂一次
+            initMiguBookmarklet();
         }
 
         async function extractorPost(body) {
@@ -4443,7 +4446,13 @@ if(success){
 }
 })();`;
             
+            // 元素随「源模块」卡片动态渲染，页面初始化那次调用时还不存在——直接返回即可，
+            // renderExtractors 渲染完会再调一次。
             const bookmarklet = document.getElementById('miguBookmarklet');
+            if (!bookmarklet) {
+                window.bookmarkletCode = bookmarkletCode;
+                return;
+            }
             bookmarklet.href = bookmarkletCode;
             
             // 保存bookmarklet代码到全局变量，供复制功能使用

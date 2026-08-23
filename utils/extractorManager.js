@@ -472,6 +472,8 @@ class ExtractorManager {
         id: module.id,
         name: module.name,
         description: module.description || '',
+        // 后台据此在卡片里多渲染一块辅助 UI（具体 markup 在 admin.html）
+        helper: module.helper || '',
         enabled,
         // 开关代理到别处（如咪咕代理到 config.js 的 enableMigu）时告诉前端，
         // 否则用户会在两个地方看到同一个开关而不知道改哪个。

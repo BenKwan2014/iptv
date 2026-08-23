@@ -123,6 +123,11 @@ export default {
   // extractorManager 在加载期把它们一次性搬进 extractors.json——只搬**文件里真有的**，
   // 纯环境变量部署的用户什么都不写，env 继续 live 生效（否则 mrateType=4 会被固化，
   // 用户改 compose 就不生效了）。两边键名相同，故直接列键名。
+  // 后台在这个模块的卡片里额外渲染一个助手（「获取咪咕账号」书签工具）。
+  // 只声明 key，具体markup 留在 admin.html——那边有配套的 CSS、引导弹窗和
+  // bookmarklet 代码，拆开反而更碎。
+  helper: 'migu-bookmarklet',
+
   legacySystemConfigKeys: ['userId', 'token', 'rateType', 'enableHDR', 'enableH265', 'enableClientDispatch'],
 
   // 开关代理到 config.js：那是全项目认的那一个，不另开一份
