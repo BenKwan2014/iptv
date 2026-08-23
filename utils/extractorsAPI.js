@@ -63,18 +63,6 @@ export function getExtractorsAPI() {
 }
 
 /**
- * 抓取模块的总开关（config.js 的 enableExtractors）。
- * 只有这一个——原先 extractors.json 里还有个文件级 enabled，两个同名开关只会让人
- * 困惑，而后者没有 env 支持也不参与 mblank 空白模式，已砍掉。
- */
-export function setExtractorsEnabledAPI(enabled) {
-  const result = setSystemFlagAPI('enableExtractors', enabled)
-  if (!result.success) return result
-  regeneratePlaylist()
-  return ok(getExtractorManager())
-}
-
-/**
  * 「源模块」页下半部分那两个内容开关：内置单频道源 / 内置订阅源。
  *
  * 它们不是抓取模块（由 builtInSourceManager 与内置订阅管），但用户希望所有

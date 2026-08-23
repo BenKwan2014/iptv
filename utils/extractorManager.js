@@ -6,7 +6,11 @@
  *
  * 三层开关，任一层关掉都是「不联网、不出现在播放列表、磁盘数据原样保留、
  * 开回来即恢复」（与 EPG 聚合的三级开关同语义）：
- *   部署级 config.js:enableExtractors  >  文件级 enabled  >  单模块 enabled
+ *   单模块 enabled（extractors.json）—— 就是唯一真相。
+ *   代理开关的模块（咪咕→config.js:enableMigu）走自己的 getter。
+ *   历史上还有「部署级 enableExtractors」和「文件级 enabled」两层，都已撤：
+ *   前者对全新安装零影响、只会覆盖用户明确打开过的模块（见 #migrateMasterSwitch），
+ *   后者与前者同名同义、纯属困惑源。
  *
  * 两份文件，刻意分开：
  *   extractors.json        用户配置。小、少变、进配置备份白名单。
@@ -273,7 +277,40 @@ class ExtractorManager {
     // 导出的备份」时，包里 extractors.json 没有这些字段、system-config.json 有，
     // 那时也必须搬一次，否则导入完就是当场降档。
     this.#migrateLegacyConfig()
+    this.#migrateMasterSwitch()
     return this
+  }
+
+  /**
+   * 一次性迁移：把「抓取模块总开关」的关闭态折进各模块自己的开关，之后总开关退休。
+   *
+   * 背景：原先 isModuleEnabled 里有一道 `if (!enableExtractors) return false`。实测
+   * 它对**全新安装零影响** —— 非代理模块的默认值本来就是关（见 #entry）。它唯一的
+   * 可观察效果是：覆盖掉用户已经明确打开的模块。也就是说这个开关存在的意义仅仅是
+   * 静默否定用户的选择，而界面上它顶在模块卡片上方，任谁都以为它管全部（咪咕其实
+   * 也不受它管，因为走 enabledGetter）。所以撤掉它，让每个模块的开关都真实有效。
+   *
+   * 但撤掉之前必须照顾一种人：设了 mblank=true / menableExtractors=false，同时又在
+   * 后台点开过某个模块（当时点了不生效）。直接撤会让那个模块在升级后突然打开，
+   * 把内容推给一个明确要空白部署的人。所以升级时把关闭态固化进去一次。
+   *
+   * 幂等，靠 config.masterSwitchRetired 标记。只处理非代理模块 —— 代理开关的模块
+   * （咪咕）从来就不受总开关约束，与本次迁移无关。
+   */
+  #migrateMasterSwitch() {
+    if (this.corrupt) return
+    if (this.config.masterSwitchRetired) return
+    let changed = false
+    if (!enableExtractors) {
+      for (const module of listModules()) {
+        if (typeof module.enabledGetter === 'function') continue
+        const entry = this.#entry(module.id)
+        if (entry.enabled !== false) { entry.enabled = false; changed = true }
+      }
+      if (changed) printYellow('抓取模块总开关已退休：其关闭态已固化到各模块自己的开关上')
+    }
+    this.config.masterSwitchRetired = true
+    this.#saveConfig()
   }
 
   /**
@@ -402,7 +439,9 @@ class ExtractorManager {
       // 一起管掉的话，这个既有组合就废了，是对存量用户的破坏性变更。
       return !!module.enabledGetter()
     }
-    if (!enableExtractors) return false
+    // 这里原先还有一道 `if (!enableExtractors) return false`。已撤——它对全新安装
+    // 零影响（模块默认就是关），唯一效果是覆盖用户明确打开过的模块。详见
+    // #migrateMasterSwitch 的注释。
     return this.#entry(module.id).enabled
   }
 
@@ -492,11 +531,10 @@ class ExtractorManager {
       }
     })
     return {
-      // 总开关只有一个：config.js 的 enableExtractors（system-config.json + env
-      // menableExtractors + 参与 mblank）。原先在 extractors.json 里还有一个
-      // 文件级 enabled，两个都叫「启用源模块」，除了让人困惑没有别的作用——
-      // 后者没有 env 支持也不参与空白模式，砍掉。
-      enabled: enableExtractors,
+      // 不再有「抓取模块总开关」这一层：每个模块的开关就是唯一真相。
+      // 历史上这里回传过 enableExtractors，前端据此画一个顶在卡片上方的总开关——
+      // 而它管不到咪咕（走 enabledGetter），也管不到全新安装（模块默认就是关），
+      // 只会覆盖用户明确打开过的模块。见 #migrateMasterSwitch。
       corrupt: this.corrupt,
       modules,
     }
@@ -636,12 +674,7 @@ class ExtractorManager {
       return true
     })
 
-    if (!targets.length) {
-      const allGated = !enableExtractors
-      return allGated
-        ? { updated: false, results: [], message: '抓取模块已整体关闭' }
-        : { updated: false, results: [] }
-    }
+    if (!targets.length) return { updated: false, results: [] }
 
     const results = []
     let updated = false

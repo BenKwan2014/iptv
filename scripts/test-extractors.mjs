@@ -520,7 +520,21 @@ try {
     assert.equal(groups[0].dataList.length, 1, '全局的 0 频道守卫只看总数，护不住单个模块')
   })
 
-  check('模块级开关关掉后不出频道（总开关是 config.js 的 enableExtractors，另测）', () => {
+  // 「抓取模块总开关」已退休：它对全新安装零影响（模块默认就是关），唯一效果是
+  // 覆盖用户明确打开过的模块。这条钉住「模块开关就是唯一真相」，防将来有人
+  // 看到 config.js 里还留着 enableExtractors 就顺手把那道闸加回 isModuleEnabled。
+  check('★ 模块开关是唯一真相：打开后必须出频道，不受任何外层开关否决', () => {
+    const manager = newManager()
+    manager.setModuleEnabled('bilibili-live', true)
+    seed(manager, oneGroup)
+    assert.equal(manager.getValidChannels().length, 1,
+      '模块开关打开却没出频道 —— 是不是又加了一道外层总开关？')
+    // getState 不该再回传总开关字段：前端据此画过一个顶在卡片上方、却管不到咪咕的开关
+    assert.equal('enabled' in manager.getState(), false,
+      'getState 不该再有 enabled（总开关）字段')
+  })
+
+  check('模块级开关关掉后不出频道', () => {
     const manager = newManager()
     manager.setModuleEnabled('bilibili-live', true)
     seed(manager, oneGroup)
@@ -691,4 +705,4 @@ try {
   rmSync(tmp, { recursive: true, force: true })
 }
 
-console.log(`\n全部通过：${passed}/59 ✅`)
+console.log(`\n全部通过：${passed} ✅`)

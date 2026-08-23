@@ -103,8 +103,16 @@ function applyConfig(systemConfig) {
   enableBuiltInSources = systemConfig.enableBuiltInSources !== undefined ? systemConfig.enableBuiltInSources : parseBool(process.env.menableBuiltInSources, defOn)
   // 内置订阅源（精选频道）
   enableBuiltInSubscriptions = systemConfig.enableBuiltInSubscriptions !== undefined ? systemConfig.enableBuiltInSubscriptions : parseBool(process.env.menableBuiltInSubscriptions, defOn)
-  // 抓取模块总开关（extractors/：哔哩哔哩直播等）。per-module 的开关与配置在
-  // data/extractors.json，不往这里堆——否则每加一个模块都要动五个文件。
+  // ⚠️ 已退休的「抓取模块总开关」。现在**只**被 extractorManager 的一次性迁移读一次
+  //（把它的关闭态固化进各模块自己的开关，见 #migrateMasterSwitch），此后不再有任何
+  // 运行时效果 —— 每个模块的开关就是唯一真相。
+  //
+  // 为什么撤：它对全新安装零影响（非代理模块的默认值本来就是关），也管不到咪咕
+  //（走 enabledGetter），唯一的可观察效果是覆盖掉用户明确打开过的模块 —— 而界面上
+  // 它顶在模块卡片上方，任谁都以为它管全部。留着只会制造「我明明开了却不生效」。
+  //
+  // 保留读取而不是删掉：老部署的 system-config.json / menableExtractors 里可能有值，
+  // 迁移那一次要用它判断用户此前的意图。mblank 仍然管 README 里写的那三项内容开关。
   enableExtractors = systemConfig.enableExtractors !== undefined ? systemConfig.enableExtractors : parseBool(process.env.menableExtractors, defOn)
 }
 

@@ -2,14 +2,14 @@ import http from "node:http"
 import { readFileSync, mkdirSync, existsSync } from "node:fs"
 import { createRequire } from "node:module"
 import fetch from 'node-fetch'
-import { adminPath, host, pass, port, programInfoUpdateInterval, token, userId, enableMigu, enableBuiltInSubscriptions, enableUserTokens, enableExtractors } from "./config.js";
+import { adminPath, host, pass, port, programInfoUpdateInterval, token, userId, enableMigu, enableBuiltInSubscriptions, enableUserTokens } from "./config.js";
 import { getDateTimeStr } from "./utils/time.js";
 import update from "./utils/updateData.js";
 import { printBlue, printGreen, printMagenta, printRed, printYellow } from "./utils/colorOut.js";
 import { channel, interfaceStr, fetchManifestDirect } from "./utils/appUtils.js";
 import { dataPath } from "./utils/paths.js";
 import { getExtractorManager, getModuleConfig } from "./utils/extractorManager.js";
-import { getExtractorsAPI, setExtractorsEnabledAPI, setExtractorEnabledAPI,
+import { getExtractorsAPI, setExtractorEnabledAPI,
   updateExtractorConfigAPI, runExtractorNowAPI, setContentFlagAPI } from "./utils/extractorsAPI.js";
 import { getChannelsAPI, getExternalSourcesAPI, saveExternalSourcesAPI,
          addExternalSourceAPI, removeExternalSourceAPI, updateExternalSourceAPI,
@@ -452,9 +452,6 @@ async function handleRequest(req, res) {
         const data = JSON.parse(await readBody(req))
         let result
         switch (data.action) {
-          case 'toggle':
-            result = setExtractorsEnabledAPI(data.enabled !== false)
-            break
           case 'toggleModule':
             result = setExtractorEnabledAPI(data.id, data.enabled !== false)
             break
@@ -492,10 +489,11 @@ async function handleRequest(req, res) {
         for (const s of (externalSourceManager.sources?.sources || [])) {
           if (s && s.id) sources.push({ id: `ext:${s.id}`, name: s.name || '未命名源', type: 'external', sourceEnabled: s.enabled !== false })
         }
-        if (enableExtractors) {
-          for (const s of getExtractorManager().listSourceIds()) {
-            sources.push({ id: s.id, name: s.name, type: 'extractor', sourceEnabled: true })
-          }
+        // 抓取模块的源一律列出：总开关已退休，每个模块的启用状态由它自己的开关决定，
+        // 而这份清单是「配置档 ↔ 源」的绑定用的，与模块此刻开没开无关
+        //（关掉的模块不出频道，但绑定关系要留着，开回来才不用重设）。
+        for (const s of getExtractorManager().listSourceIds()) {
+          sources.push({ id: s.id, name: s.name, type: 'extractor', sourceEnabled: true })
         }
         const profiles = listProfiles()
         const disabled = {}

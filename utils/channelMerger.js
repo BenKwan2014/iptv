@@ -1,7 +1,6 @@
 import externalSourceManager from "./externalSources.js"
 import builtInSourceManager from "./builtInSources.js"
 import { getExtractorManager } from "./extractorManager.js"
-import { enableExtractors } from "../config.js"
 import { printBlue, printGreen, printYellow, printRed } from "./colorOut.js"
 
 // 频道的「主来源」标识（issue #29/#68 按档过滤源）：
@@ -209,7 +208,7 @@ async function updateBuiltInSources(options = {}) {
  * @param {Object} options - { autoOnly, forceAll, onlyId }
  */
 async function updateExtractors(options = {}) {
-  // 这里刻意不判 enableExtractors：判定在 extractorManager.isModuleEnabled 里，
+  // 这里刻意不判模块是否启用：判定在 extractorManager.isModuleEnabled 里，
   // 因为代理开关的模块（咪咕听 enableMigu）要绕过子系统总开关。
   const { updated, results, message } = await getExtractorManager().updateAll(options)
   if (message) return { success: true, message }
