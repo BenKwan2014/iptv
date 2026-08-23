@@ -706,22 +706,23 @@
             border-top: none;
         }
 
-        /* B 站登录态徽标：登录与否必须一眼看见，不能只靠密码框里的灰色占位 */
-        .bili-login-state {
-            margin-left: auto;
+        /* 登录态徽标（B 站 / 咪咕通用）：登录与否必须一眼看见，不能只靠输入框里的灰色占位 */
+        .login-state-badge {
+            /* 紧跟在标题后面，不推到行尾——徽标和它描述的东西离得远了就失去关联 */
+            margin-left: 8px;
             font-size: 12px;
             font-weight: 600;
             padding: 1px 8px;
             border-radius: 10px;
         }
 
-        .bili-login-state.on {
+        .login-state-badge.on {
             color: #52c41a;
             background: #f6ffed;
             border: 1px solid #b7eb8f;
         }
 
-        .bili-login-state.off {
+        .login-state-badge.off {
             color: #888;
             background: #f5f5f5;
             border: 1px solid #d9d9d9;
@@ -3029,7 +3030,7 @@
                 // 助手挂在它自己那一段的开头（B 站的扫码登录属于「登录态」那段，
                 // 顶在整个表单最上面会莫名其妙）。没声明 helperSection 的照旧渲染在最外层。
                 if (helper && helper.section && helper.section === section) {
-                    html += extractorHelperHtml(helper.key, secretsSet);
+                    html += extractorHelperHtml(helper.key, secretsSet, config);
                 }
 
                 if (chunk.some(f => f.group)) {
@@ -3052,10 +3053,17 @@
 
         // 模块可以声明 helper，在自己的卡片里多渲染一块辅助 UI。
         // markup 留在这里而不是模块文件：配套的 CSS、引导弹窗、bookmarklet 代码都在本页。
-        function extractorHelperHtml(key, secretsSet) {
+        function extractorHelperHtml(key, secretsSet, config) {
             if (key === 'migu-bookmarklet') {
+                // 与 B 站同款的登录态徽标。咪咕的「已登录」= 账号 ID（明文，在 config 里）
+                // 和 Token（secret，只回传有没有值）都填了；画质后果直接写在徽标上——
+                // 那才是用户填账号的理由。
+                const miguLoggedIn = !!(config && config.userId) && !!(secretsSet && secretsSet.token);
                 return `<div class="bookmarklet-section" style="margin:0 0 12px;">
-                    <div class="bookmarklet-title"><span>📖</span><span>快速获取咪咕账号信息</span></div>
+                    <div class="bookmarklet-title">
+                        <span>📖</span><span>咪咕账号</span>
+                        <span class="login-state-badge ${miguLoggedIn ? 'on' : 'off'}">${miguLoggedIn ? '✅ 已登录（按账号档位解锁画质）' : '未登录（游客最高 540p）'}</span>
+                    </div>
                     <div class="bookmarklet-actions">
                         <a id="miguBookmarklet" class="bookmarklet-link" draggable="true">📖 获取咪咕账号</a>
                         <button class="bookmarklet-help-btn" onclick="openBookmarkletGuide()" title="查看使用说明">?</button>
@@ -3073,7 +3081,7 @@
                 return `<div class="bookmarklet-section" style="margin:0 0 12px;">
                     <div class="bookmarklet-title">
                         <span>🔑</span><span>B 站登录态</span>
-                        <span id="biliLoginState" class="bili-login-state ${loggedIn ? 'on' : 'off'}">${loggedIn ? '✅ 已登录（画质可达原画）' : '未登录（画质封顶超清）'}</span>
+                        <span id="biliLoginState" class="login-state-badge ${loggedIn ? 'on' : 'off'}">${loggedIn ? '✅ 已登录（画质可达原画）' : '未登录（画质封顶超清）'}</span>
                     </div>
                     <div class="bookmarklet-actions">
                         <button class="btn btn-sm btn-primary" onclick="openBiliQrLogin()">📱 ${loggedIn ? '重新扫码登录' : '扫码登录'}</button>
@@ -3227,7 +3235,7 @@
                 </div>
                 <div style="font-size:12px; margin-bottom:12px;">${extractorHealthHtml(m.health || {})}</div>
                 <div style="border-top:1px solid #f5f5f5; padding-top:12px;">
-                    ${m.helperSection ? '' : extractorHelperHtml(m.helper, m.secretsSet || {})}
+                    ${m.helperSection ? '' : extractorHelperHtml(m.helper, m.secretsSet || {}, m.config || {})}
                     ${extractorFieldsHtml(m.id, m.configSchema || [], m.config || {}, m.secretsSet || {}, m.envProvided || {}, m.helperSection ? { key: m.helper, section: m.helperSection } : null)}
                     <div style="margin-bottom:12px;">
                         <label style="display:block; font-size:12px; color:#888;">刷新间隔（分钟）</label>
@@ -3411,7 +3419,7 @@
                 const stateEl = document.getElementById('biliLoginState');
                 if (stateEl) {
                     stateEl.textContent = '✅ 已登录（画质可达原画）';
-                    stateEl.className = 'bili-login-state on';
+                    stateEl.className = 'login-state-badge on';
                 }
                 setTimeout(closeBiliQrLogin, 1200);
                 return;
