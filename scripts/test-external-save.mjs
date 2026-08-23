@@ -1,0 +1,127 @@
+#!/usr/bin/env node
+/**
+ * 外部源整份保存不得抹掉服务端账本。
+ *
+ * 后台的每一次保存（编辑源 / 换序 / 导入订阅 / 抓取并保存…）都把前端那份
+ * externalConfig 整个 POST 回来，而前端的 normalizeExternalConfig 只保留
+ * { enabled, includeInPlaylists, updateOnStartup, sources } 四个键；
+ * saveSources 又是 writeJsonFileSync 整份覆盖。于是配置里两个**前端根本不知道
+ * 其存在**的服务端账本会被静默抹掉：
+ *
+ *   · seededBuiltInUrls —— 「哪些内置订阅已播种过」。它是 README 承诺的
+ *     「已添加的可在源管理删除，删后不再复活」的唯一凭据。
+ *   · retiredBuiltInsV1 —— 「退役迁移已跑过」的标记，而退役迁移会**删源**。
+ *
+ * 两者都是静默失败：保存成功、界面正常，坏事发生在下一次启动。所以钉在这里。
+ *
+ * 运行： node scripts/test-external-save.mjs   （或 npm test）
+ */
+import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+const TMP = mkdtempSync(join(tmpdir(), 'iptv-extsave-test-'))
+process.env.mdataDir = TMP
+
+const { ExternalSourceManager, BUILT_IN_SUBSCRIPTIONS } = await import('../utils/externalSources.js')
+
+const P = join(TMP, 'external-sources.json')
+const BUILT_IN_URL = BUILT_IN_SUBSCRIPTIONS[0].subscriptionUrl
+const RETIRED_URL = 'https://raw.githubusercontent.com/YueChan/Live/refs/heads/main/GNTV.m3u'
+
+let passed = 0
+const check = (name, fn) => { fn(); passed++; console.log(`  ✅ ${name}`) }
+
+const read = () => JSON.parse(readFileSync(P, 'utf-8'))
+const write = (o) => writeFileSync(P, JSON.stringify(o, null, 2))
+
+/** 前端 normalizeExternalConfig 的等价物：只留这四个键。 */
+const asFrontendCopy = (config) => ({
+  enabled: true,
+  includeInPlaylists: config.includeInPlaylists !== false,
+  updateOnStartup: config.updateOnStartup !== false,
+  sources: config.sources,
+})
+
+console.log('外部源整份保存测试')
+
+// ---- 场景一：用户删掉内置订阅后，后台随便保存一次，重启不得让它复活 ----
+check('删掉内置订阅 →（后台保存一次）→ 重启，不复活', () => {
+  write({
+    enabled: true, includeInPlaylists: true, updateOnStartup: true,
+    sources: [{ name: '我自己的源', mode: 'direct', enabled: true, m3u8Url: 'http://x/y.m3u8', id: 'aaaa1111' }],
+    seededBuiltInUrls: [BUILT_IN_URL],     // 已播种过 → 用户是"删掉"而不是"没装过"
+    retiredBuiltInsV1: true,
+  })
+
+  const mgr = new ExternalSourceManager()
+  // 后台保存：前端副本不含 seededBuiltInUrls
+  mgr.saveSources(asFrontendCopy(read()))
+  assert.deepEqual(read().seededBuiltInUrls, [BUILT_IN_URL], '保存把已播种账本抹掉了')
+
+  // 重启
+  const restarted = new ExternalSourceManager()
+  const names = restarted.sources.sources.map(s => s.name)
+  assert.ok(!names.includes('精选频道'), `已删除的内置订阅复活了：${names.join(', ')}`)
+  assert.deepEqual(names, ['我自己的源'])
+})
+
+// ---- 场景二：退役标记不得被抹掉，否则退役迁移重跑会删掉用户手动加回的源 ----
+check('保存不抹掉 retiredBuiltInsV1 → 用户手动加回的已退役订阅不被再删一次', () => {
+  write({
+    enabled: true, includeInPlaylists: true, updateOnStartup: true,
+    // 用户明知它已退役，仍手动加了回来
+    sources: [{ name: '我要的旧港澳源', mode: 'subscription', enabled: true, subscriptionUrl: RETIRED_URL, id: 'bbbb2222' }],
+    seededBuiltInUrls: [BUILT_IN_URL],
+    retiredBuiltInsV1: true,
+  })
+
+  const mgr = new ExternalSourceManager()
+  mgr.saveSources(asFrontendCopy(read()))
+  assert.equal(read().retiredBuiltInsV1, true, '保存把退役迁移标记抹掉了')
+
+  const restarted = new ExternalSourceManager()
+  const names = restarted.sources.sources.map(s => s.name)
+  assert.ok(names.includes('我要的旧港澳源'), `用户手动加回的源被退役迁移删掉了：${names.join(', ')}`)
+})
+
+// ---- 边界：只补账本键，不得替调用方"补回"它有意删掉的东西 ----
+check('只补服务端账本键，sources 等字段仍以调用方为准', () => {
+  write({
+    enabled: true, includeInPlaylists: true, updateOnStartup: true,
+    sources: [
+      { name: 'A', mode: 'direct', enabled: true, m3u8Url: 'http://a/', id: 'aaaa0001' },
+      { name: 'B', mode: 'direct', enabled: true, m3u8Url: 'http://b/', id: 'bbbb0002' },
+    ],
+    seededBuiltInUrls: [BUILT_IN_URL],
+    retiredBuiltInsV1: true,
+  })
+  const mgr = new ExternalSourceManager()
+  // 用户删掉了 B
+  const copy = asFrontendCopy(read())
+  copy.sources = copy.sources.filter(s => s.name !== 'B')
+  copy.updateOnStartup = false          // 顺带改一个用户可见设置
+  mgr.saveSources(copy)
+
+  const after = read()
+  assert.deepEqual(after.sources.map(s => s.name), ['A'], 'B 不该被"补"回来')
+  assert.equal(after.updateOnStartup, false, '用户改的设置不该被覆盖')
+  assert.deepEqual(after.seededBuiltInUrls, [BUILT_IN_URL], '账本键该保住')
+})
+
+check('调用方显式带了账本键时以调用方为准（导入配置等路径）', () => {
+  write({
+    enabled: true, includeInPlaylists: true, updateOnStartup: true,
+    sources: [], seededBuiltInUrls: [BUILT_IN_URL], retiredBuiltInsV1: true,
+  })
+  const mgr = new ExternalSourceManager()
+  mgr.saveSources({
+    enabled: true, includeInPlaylists: true, updateOnStartup: true,
+    sources: [], seededBuiltInUrls: [], retiredBuiltInsV1: true,
+  })
+  assert.deepEqual(read().seededBuiltInUrls, [], '显式传空数组应当被尊重，不能被旧值盖回去')
+})
+
+rmSync(TMP, { recursive: true, force: true })
+console.log(`全部通过：${passed}/${passed} ✅`)

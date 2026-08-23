@@ -441,6 +441,23 @@ function inheritExistingSourceIds(incoming, current) {
   }
 }
 
+// 这份配置里有两个键是**服务端自己的账本**，前端完全不知道它们的存在：
+//
+//   · seededBuiltInUrls —— 「哪些内置订阅已经播种过」。它是「用户删掉的内置订阅
+//     不再复活」这个承诺（README「已添加的可在源管理删除，删后不再复活」）的
+//     唯一凭据。丢了 → 下次启动 ensureBuiltInSubscriptions 认为从没播种过 → 补回来。
+//   · retiredBuiltInsV1 —— 「退役迁移已跑过」的标记。而退役迁移是会**删源**的
+//     （见下方 retireBuiltInSubscriptions 里的 filter）。丢了 → 重跑 → 用户若手动
+//     重新添加过已退役的那两个订阅，会被再删一次。
+//
+// 而前端的 normalizeExternalConfig 只保留 { enabled, includeInPlaylists,
+// updateOnStartup, sources } 四个键，后台任何一次保存（编辑源 / 换序 / 导入订阅 /
+// 抓取并保存…）都把整份对象 POST 回来，saveSources 又是整份覆盖写盘 ——
+// 于是这两个账本每次保存都被静默抹掉。
+//
+// 实测：删掉「精选频道」→ 后台随便保存一次 → 重启，它就回来了。
+const SERVER_OWNED_KEYS = ['seededBuiltInUrls', 'retiredBuiltInsV1']
+
 // 一次性退役迁移：把已退役的内置订阅源从用户配置中移除（用 retiredBuiltInsV1 标记，只跑一次，
 // 之后尊重用户的手动增删，与 seededBuiltInUrls 的「只播种一次」哲学一致）。
 function retireBuiltInSubscriptions(config) {
@@ -544,7 +561,19 @@ class ExternalSourceManager {
     try {
       // 兜底：任何写盘路径（含前端整份保存的新建源）都保证每个源有稳定 id（issue #29/#68）
       // 先按「身份」继承现有 id（防前端未回读的旧副本让 id 漂移），再给真正的新源发号
-      if (sources !== this.sources) inheritExistingSourceIds(sources, this.sources)
+      if (sources !== this.sources) {
+        inheritExistingSourceIds(sources, this.sources)
+        // 调用方没带的服务端账本键，从当前配置里补回来（见 SERVER_OWNED_KEYS 的注释）。
+        // **不是**「合并所有缺失键」—— 只补这两个明确属于服务端的；其余字段仍以调用方
+        // 为准，因为用户改的就是它们，替调用方"补回"会让删除操作失效。
+        if (sources && typeof sources === 'object' && !Array.isArray(sources)) {
+          for (const key of SERVER_OWNED_KEYS) {
+            if (sources[key] === undefined && this.sources?.[key] !== undefined) {
+              sources[key] = this.sources[key]
+            }
+          }
+        }
+      }
       ensureSourceIds(sources)
       writeJsonFileSync(EXTERNAL_SOURCES_PATH, sources)
       this.sources = sources
