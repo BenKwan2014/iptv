@@ -664,6 +664,32 @@
            而说明文字里那句「点卡片展开配置」基本没人读。用蓝色 + 箭头把它说出来：
            蓝色是全站的可交互色，扫一眼就知道这里能点。
            展开后文案换成「收起 ⌃」，兼作当前状态的指示。 */
+        /* 段内并列的两条路：各自成盒、并排放，布局本身就说明「它们是并列的」。
+           minmax(260px, 1fr) + auto-fit：窄屏自动堆成一列；min-width:0 是必须的，
+           里面的 textarea 是 width:100%，不加会把网格轨道顶穿（同 .source-grid 那个坑）。 */
+        .xt-cols {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 14px;
+            align-items: start;
+            margin-bottom: 12px;
+        }
+
+        .xt-col {
+            min-width: 0;
+            padding: 12px 14px 4px;
+            background: #fafafa;
+            border: 1px solid #eee;
+            border-radius: 6px;
+        }
+
+        .xt-col-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
         /* 模块配置表单里的分段标题 */
         .xt-section {
             margin: 16px 0 10px;
@@ -2877,29 +2903,48 @@
         }
 
         /**
-         * 把 configSchema 渲染成表单，按 field.section 分段。
+         * 把 configSchema 渲染成表单：按 field.section 分段，段内再按 field.group 分列。
          *
-         * 加分段是因为字段平铺会让人懵：哔哩哔哩模块里「分区」和「直播间清单」都能加频道，
-         * 摆成兄弟项时没有任何东西说明它们是什么关系、该用哪个。分段之后一眼能看出
-         * 「这三个是同一件事的两种方式」，后面那些是不相干的播放选项。
+         * 为什么要分列而不只是分段：哔哩哔哩模块里「按分区自动加」和「手动指定直播间」
+         * 是**并列的两条路**（可以只用一条，也可以同时用）。上下堆叠读起来像
+         * 「先做这个，再做那个」——用户会以为必须两个都填。并排成两个盒子才是
+         * 「二选一或都用」的意思，关系直接由布局表达，不用靠文案解释。
          *
          * 只有出现**可见**字段时才画标题：hidden 字段返回空串（如咪咕的 enableHDR），
-         * 整段都隐藏的话画个光秃秃的标题很怪。
+         * 整段/整列都隐藏的话留个光秃秃的标题很怪。
          */
         function extractorFieldsHtml(moduleId, schema, config, secretsSet, envProvided) {
-            let html = '';
-            let currentSection = null;
+            // 先渲染出每个字段的 html，顺手滤掉 hidden 的
+            const rendered = [];
             for (const field of schema) {
                 const body = extractorFieldHtml(moduleId, field, config, secretsSet, envProvided);
-                if (!body) continue;   // hidden
-                const section = field.section || '';
-                if (section !== currentSection) {
-                    currentSection = section;
-                    if (section) {
-                        html += `<div class="xt-section">${escapeHtml(section)}</div>`;
+                if (!body) continue;
+                rendered.push({ section: field.section || '', group: field.group || '', body });
+            }
+
+            let html = '';
+            let i = 0;
+            while (i < rendered.length) {
+                const section = rendered[i].section;
+                const chunk = [];
+                while (i < rendered.length && rendered[i].section === section) chunk.push(rendered[i++]);
+
+                if (section) html += `<div class="xt-section">${escapeHtml(section)}</div>`;
+
+                if (chunk.some(f => f.group)) {
+                    // 段内分列：同 group 的进同一列，顺序即出现顺序
+                    const cols = [];
+                    for (const f of chunk) {
+                        const last = cols[cols.length - 1];
+                        if (last && last.name === f.group) last.items.push(f.body);
+                        else cols.push({ name: f.group, items: [f.body] });
                     }
+                    html += '<div class="xt-cols">' + cols.map(c =>
+                        `<div class="xt-col">${c.name ? `<div class="xt-col-title">${escapeHtml(c.name)}</div>` : ''}${c.items.join('')}</div>`
+                    ).join('') + '</div>';
+                } else {
+                    html += chunk.map(f => f.body).join('');
                 }
-                html += body;
             }
             return html;
         }
