@@ -108,6 +108,25 @@ async function apiGet(path, params, { cookie, timeoutMs = 10000 } = {}) {
  * 2. 短链跟随显式限制跳数并把最终地址写进错误信息，避免跳转环。
  */
 /**
+ * 热门榜的人气下限。低于这个数的房间一律不进播放列表。
+ *
+ * 刻意**不做成配置项**：用户不该为「垃圾从第几名开始」操心，那是我们该替他判断的。
+ * 而且光有「取前 N 名」调不好——比赛多的时候 N 不够，没比赛的时候 N 个全是垃圾；
+ * 加了下限之后是自适应的：有 TI 决赛就给满，平常日子可能只给两三个。
+ *
+ * 1 万这个值来自实测的分布断层（赛事区当前 40 个在播）：
+ *   1~6   名 300万~3700万   真·大型赛事
+ *   7~9   名  15万~ 55万    守望先锋世界杯、PGS 吃鸡赛事这类
+ *   10~12 名   1万~  9万    羽毛球世锦赛、K甲，还算真赛事
+ *   13+   名      <1万      噪音，且有一堆「王者荣耀赛事第一视角7/9/3…」——
+ *                            同一场比赛的不同机位，拉进来就是同一内容重复七八条
+ *
+ * 注意：B 站的「人气」不是真实观看人数，历史上做过量级调整。哪天这个门槛显得
+ * 不合理了（大量真赛事被挡掉、或垃圾又漏进来），照上面的方法重新量一次分布再定。
+ */
+const MIN_ONLINE = 10000
+
+/**
  * B 站的直播大区清单（网游 / 手游 / 单机游戏 / 娱乐 / 电台 / 虚拟主播 / 聊天室 / 生活）。
  *
  * 动态拉而不是把 8 个 id 写死：B 站增删过大区，写死的话表现是「用户填的分区名突然
@@ -134,6 +153,8 @@ export async function areaList(options) {
  * 大型赛事天然排在最前：实测网游大区前 5 里 4 个是赛事直播（TI 决赛、CS2、无畏契约
  * 总决赛），因为百万级人气碾压普通主播。所以不需要专门的赛事接口。
  *
+ * 人气低于 MIN_ONLINE 的一律不要，见那个常量的注释。
+ *
  * @returns {Promise<number[]>} 房间号，按人气从高到低
  */
 export async function topRoomsOfArea(parentAreaId, count, options) {
@@ -147,10 +168,25 @@ export async function topRoomsOfArea(parentAreaId, count, options) {
     // 只要正好 count 个的话，跳掉几个就不够数了
     page_size: Math.min(count * 2, 50),
   }, options)
-  const list = Array.isArray(data) ? data : []
+  return selectTopRooms(data, count)
+}
+
+/**
+ * 热门榜原始条目 → 房间号数组。滤掉人气低于 MIN_ONLINE 的，再截到 count 个。
+ *
+ * 抽成纯函数是为了能被测试直接打：过滤那一行删掉之后**不会有任何东西变红**，
+ * 只是播放列表里悄悄多出一堆「王者荣耀赛事第一视角7」这种同场比赛的小号机位。
+ *
+ * @param {Array} rawList 接口返回的 data
+ * @param {number} count  上限（不是保证——够格的不足这么多就给这么多）
+ */
+export function selectTopRooms(rawList, count) {
+  const list = Array.isArray(rawList) ? rawList : []
   return list
+    .filter(room => Number(room?.online) >= MIN_ONLINE)
     .map(room => Number(room?.roomid))
     .filter(id => Number.isInteger(id) && id > 0)
+    .slice(0, Math.max(0, Number(count) || 0))
 }
 
 export async function normalizeRoom(rawToken, { timeoutMs = 10000 } = {}) {

@@ -95,10 +95,8 @@ async function collectTopRooms(config, ctx) {
       continue
     }
     try {
-      const found = await topRoomsOfArea(id, perArea, options)
-      // topRoomsOfArea 会多取一些备用（未开播的后面会被跳过），这里只取前 perArea 个：
-      // 多出来的会让实际频道数超出用户设定，且白白多打几次取流请求。
-      rooms.push(...found.slice(0, perArea))
+      // topRoomsOfArea 内部已经滤过人气下限并截到 perArea 个（见 selectTopRooms）
+      rooms.push(...await topRoomsOfArea(id, perArea, options))
     } catch (error) {
       // 风控要往上抛：让 health() 报「被风控」而不是一条不起眼的 warning
       if (error instanceof RiskControlError) throw error
@@ -149,8 +147,10 @@ export default {
       type: 'int',
       min: 0,
       max: 20,
-      default: 5,
-      hint: '按人气从高到低。填 0 等于关掉这个功能。未开播/取流失败的会自动跳过，所以实际条数可能少于这个值。',
+      // 8 而不是 5：实测赛事区人气在第 6~7 名之间有 82% 的断崖，取 5 会漏掉
+      // 「第五人格 IVL 夏季赛总决赛」这种 300 万人在看的比赛。8 正好覆盖到断崖处。
+      default: 8,
+      hint: '按人气从高到低，是上限不是保证。人气过低的直播间会被自动滤掉（避免把同一场比赛的多机位小号也拉进来），所以清闲时段实际条数会少于这个值。填 0 关掉本功能。',
     },
     {
       key: 'sessdata',

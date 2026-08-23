@@ -22,7 +22,7 @@ import { join } from 'node:path'
 
 import { listModules, getModule, sourceIdOf, resolverFor, validateModule, MODULE_ID_RE } from '../extractors/registry.js'
 import { clearUrlCache } from '../utils/appUtils.js'
-import { selectFromPlayurl, parseRoomList, normalizeRoom, mapLimit, RoomError } from '../extractors/bilibili-live/api.js'
+import { selectFromPlayurl, parseRoomList, normalizeRoom, mapLimit, selectTopRooms, RoomError } from '../extractors/bilibili-live/api.js'
 import { shouldFailRound, parseAreaNames, mergeRoomRefs } from '../extractors/bilibili-live/index.js'
 import {
   ExtractorManager, validateConfig, redactConfig, resolveConfig, normalizeGroups, emptyHealth,
@@ -741,6 +741,36 @@ check('空输入不炸', () => {
   assert.deepEqual(mergeRoomRefs(null, undefined), [])
 })
 
+check('★ 热门榜滤掉人气过低的房间（否则同一场比赛的多机位小号会灌进播放列表）', () => {
+  // 实测赛事区 13 名往后全是「王者荣耀赛事第一视角7/9/3…」这种同场比赛的不同机位，
+  // 人气普遍在 1000 上下。删掉过滤那行不会有任何报错，只是播放列表悄悄变脏。
+  const raw = [
+    { roomid: 1, online: 3_000_000 },   // 真赛事
+    { roomid: 2, online: 150_000 },     // 真赛事
+    { roomid: 3, online: 11_000 },      // 小众但真实（羽毛球世锦赛量级）
+    { roomid: 4, online: 1_836 },       // 「第一视角7」这类
+    { roomid: 5, online: 163 },
+  ]
+  assert.deepEqual(selectTopRooms(raw, 10), [1, 2, 3], '1 万以下的必须滤掉')
+})
+
+check('数量是上限不是保证：够格的不足就给不足', () => {
+  const raw = [{ roomid: 1, online: 3_000_000 }, { roomid: 2, online: 500 }]
+  assert.deepEqual(selectTopRooms(raw, 8), [1], '只有 1 个够格就只给 1 个，不凑数')
+})
+
+check('截断按数量生效，且保持人气从高到低的原序', () => {
+  const raw = [1, 2, 3, 4].map((id, i) => ({ roomid: id, online: 1_000_000 - i * 1000 }))
+  assert.deepEqual(selectTopRooms(raw, 2), [1, 2])
+})
+
+check('脏数据不炸：非数组 / 缺字段 / 房间号非法', () => {
+  assert.deepEqual(selectTopRooms(null, 5), [])
+  assert.deepEqual(selectTopRooms(undefined, 5), [])
+  assert.deepEqual(selectTopRooms([{}, { online: 999999 }, { roomid: 0, online: 999999 }], 5), [])
+  assert.deepEqual(selectTopRooms([{ roomid: 7, online: 999999 }], 0), [], 'count=0 等于关掉')
+})
+
 check('topAreas / topPerArea 已进 configSchema 且默认值符合「开箱即用」', () => {
   const schema = bili.configSchema
   const areas = schema.find(f => f.key === 'topAreas')
@@ -748,7 +778,7 @@ check('topAreas / topPerArea 已进 configSchema 且默认值符合「开箱即�
   assert.ok(areas, 'topAreas 字段丢了')
   assert.ok(per, 'topPerArea 字段丢了')
   assert.equal(areas.default, '赛事', '默认分区应是「赛事」——开箱即得当前正在打的比赛')
-  assert.equal(per.default, 5)
+  assert.equal(per.default, 8, "实测赛事区人气在第 6~7 名有 82% 断崖，5 会漏掉 300 万人在看的比赛")
   assert.equal(per.min, 0, '填 0 必须能关掉这个功能')
 })
 
