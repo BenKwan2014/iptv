@@ -516,6 +516,8 @@ class ExtractorManager {
         description: module.description || '',
         // 后台据此在卡片里多渲染一块辅助 UI（具体 markup 在 admin.html）
         helper: module.helper || '',
+        // 助手挂在哪一段（不声明就渲染在表单最上面，咪咕就是这样）
+        helperSection: module.helperSection || '',
         enabled,
         // 开关代理到别处（如咪咕代理到 config.js 的 enableMigu）时告诉前端。
         // 现在两边都能改，所以不再是「只读」，只是多一条「也可用环境变量控制」的说明。

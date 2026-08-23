@@ -455,11 +455,26 @@ try {
     assert.equal(manager.config.migrated?.migu, undefined, '读失败绝不能当成「迁过了」')
   })
 
-  check('模块声明的 helper 要透传给后台，否则辅助 UI 渲染不出来', () => {
+  check('★ 只有声明了 loginFlow 的模块支持扫码登录', () => {
+    // API 层是通用的、不认识任何平台：靠模块声明 loginFlow 决定支不支持。
+    // 咪咕的 SESSDATA 等价物是 cookie 里读得到的，不需要扫码；将来要加，
+    // 声明同样的 start/poll/configKey 即可，不用动 extractorsAPI。
+    const bili = getModule('bilibili-live')
+    assert.equal(typeof bili.loginFlow?.start, 'function')
+    assert.equal(typeof bili.loginFlow?.poll, 'function')
+    assert.equal(bili.loginFlow?.configKey, 'sessdata', '登录成功后凭据写进哪个字段')
+    assert.equal(getModule('migu').loginFlow, undefined, '没声明就是不支持，API 层据此拒绝')
+  })
+
+  check('模块声明的 helper / helperSection 要透传给后台，否则辅助 UI 渲染不出来', () => {
     const manager = newManager()
     const modules = manager.getState().modules
-    assert.equal(modules.find(m => m.id === 'migu').helper, 'migu-bookmarklet')
-    assert.equal(modules.find(m => m.id === 'bilibili-live').helper, '', '没声明的给空串，前端据此不渲染')
+    const migu = modules.find(m => m.id === 'migu')
+    const bili = modules.find(m => m.id === 'bilibili-live')
+    assert.equal(migu.helper, 'migu-bookmarklet')
+    assert.equal(migu.helperSection, '', '没声明 helperSection 的渲染在表单最上面（咪咕就是）')
+    assert.equal(bili.helper, 'bilibili-login', 'B 站的扫码登录助手')
+    assert.equal(bili.helperSection, '登录态（选填）', '助手要挂在它自己那一段，不是表单最上面')
   })
 
   check('代理开关的模块不受抓取子系统总开关约束', () => {

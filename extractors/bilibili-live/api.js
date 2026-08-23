@@ -127,6 +127,77 @@ async function apiGet(path, params, { cookie, timeoutMs = 10000 } = {}) {
 const MIN_ONLINE = 10000
 
 /**
+ * 扫码登录：生成二维码。
+ *
+ * 为什么要有它：SESSDATA 是 **HttpOnly** cookie，咪咕那种「书签读 document.cookie」
+ * 的招在这里读不到。剩下的路只有让用户去 F12 → Application → Cookies 里翻，
+ * 对家用 IPTV 的普通用户是道硬门槛。扫码登录把它变成「用 B 站 App 扫一下」。
+ *
+ * 用 passport 域名，不是 api.live —— 所以不能复用 apiGet（那个写死了 API 常量）。
+ *
+ * @returns {Promise<{url: string, key: string}>} url 是要编成二维码的内容
+ */
+export async function qrLoginStart({ timeoutMs = 10000 } = {}) {
+  const payload = await passportGet('/x/passport-login/web/qrcode/generate', {}, timeoutMs)
+  const url = payload?.url
+  const key = payload?.qrcode_key
+  if (!url || !key) throw new RoomError('二维码生成失败：B 站返回的数据里没有 url/qrcode_key')
+  return { url, key }
+}
+
+/**
+ * 扫码登录：轮询扫码状态。
+ *
+ * 成功时 SESSDATA **直接在返回的 url 查询参数里**（形如
+ * https://passport.biligame.com/crossDomain?DedeUserID=…&SESSDATA=…&bili_jct=…），
+ * 不用去解 Set-Cookie —— 省掉一整套 cookie jar 的处理。
+ *
+ * B 站的状态码：0=成功 / 86101=未扫码 / 86090=已扫码待确认 / 86038=二维码已失效。
+ *
+ * @returns {Promise<{status:'pending'|'scanned'|'expired'|'ok', message:string, sessdata?:string}>}
+ */
+export async function qrLoginPoll(key, { timeoutMs = 10000 } = {}) {
+  const payload = await passportGet('/x/passport-login/web/qrcode/poll', { qrcode_key: key }, timeoutMs)
+  const code = Number(payload?.code)
+  const message = String(payload?.message || '')
+
+  if (code === 86101) return { status: 'pending', message: message || '未扫码' }
+  if (code === 86090) return { status: 'scanned', message: message || '已扫码，请在手机上确认' }
+  if (code === 86038) return { status: 'expired', message: message || '二维码已失效，请重新获取' }
+  if (code !== 0) return { status: 'expired', message: message || `未知状态 ${code}` }
+
+  let sessdata = ''
+  try {
+    sessdata = new URL(String(payload?.url || '')).searchParams.get('SESSDATA') || ''
+  } catch { /* url 形状变了就当没拿到，下面统一报错 */ }
+  if (!sessdata) throw new RoomError('登录成功但没能从返回地址里取到 SESSDATA —— B 站可能改了返回格式')
+  return { status: 'ok', message: '登录成功', sessdata }
+}
+
+/** passport 域名的取数。与 apiGet 同款错误处理，只是 base 不同。 */
+async function passportGet(path, params, timeoutMs) {
+  const url = `https://passport.bilibili.com${path}?${new URLSearchParams(params)}`
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(url, {
+      headers: { 'User-Agent': UA, Referer: 'https://www.bilibili.com/', Accept: 'application/json' },
+      signal: controller.signal,
+    })
+    if (!response.ok) throw new RoomError(`HTTP ${response.status} from ${path}`)
+    const body = await response.json()
+    if (body?.code !== 0) throw new RoomError(`${path}: ${body?.message || body?.code}`)
+    return body.data || {}
+  } catch (error) {
+    if (error instanceof RoomError) throw error
+    const reason = error.name === 'AbortError' ? `超时 ${timeoutMs}ms` : error.message
+    throw new RoomError(`${path} 请求失败: ${reason}`)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
  * B 站的直播大区清单（网游 / 手游 / 单机游戏 / 娱乐 / 电台 / 虚拟主播 / 聊天室 / 生活）。
  *
  * 动态拉而不是把 8 个 id 写死：B 站增删过大区，写死的话表现是「用户填的分区名突然

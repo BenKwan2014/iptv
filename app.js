@@ -9,7 +9,7 @@ import { printBlue, printGreen, printMagenta, printRed, printYellow } from "./ut
 import { channel, interfaceStr, fetchManifestDirect } from "./utils/appUtils.js";
 import { dataPath } from "./utils/paths.js";
 import { getExtractorManager, getModuleConfig } from "./utils/extractorManager.js";
-import { getExtractorsAPI, setExtractorEnabledAPI,
+import { getExtractorsAPI, startModuleLoginAPI, pollModuleLoginAPI, setExtractorEnabledAPI,
   updateExtractorConfigAPI, runExtractorNowAPI, setContentFlagAPI } from "./utils/extractorsAPI.js";
 import { getChannelsAPI, getExternalSourcesAPI, saveExternalSourcesAPI,
          addExternalSourceAPI, removeExternalSourceAPI, updateExternalSourceAPI,
@@ -452,6 +452,12 @@ async function handleRequest(req, res) {
         const data = JSON.parse(await readBody(req))
         let result
         switch (data.action) {
+          case 'loginStart':
+            result = await startModuleLoginAPI(data.id)
+            break
+          case 'loginPoll':
+            result = await pollModuleLoginAPI(data.id, data.key)
+            break
           case 'toggleModule':
             result = setExtractorEnabledAPI(data.id, data.enabled !== false)
             break

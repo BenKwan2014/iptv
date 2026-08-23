@@ -6,7 +6,7 @@
  * 不实现 resolve()——B 站的地址是直链（带 expires token，约 2 小时过期），
  * 靠 defaultRefreshMinutes 的短周期刷新兜住，不需要播放时二次解析。
  */
-import { resolveRoom, parseRoomList, mapLimit, areaList, topRoomsOfArea, RiskControlError, RoomOfflineError, DEFAULT_GROUP } from './api.js'
+import { resolveRoom, parseRoomList, mapLimit, areaList, topRoomsOfArea, qrLoginStart, qrLoginPoll, RiskControlError, RoomOfflineError, DEFAULT_GROUP } from './api.js'
 
 // 并发上限。B 站对短时间内的大量请求会回 -352，实测 3 路是安全且够快的折中；
 // 外部源那边「串行 + 每个之间硬睡 2 秒」的做法在房间数上去之后是分钟级，不抄。
@@ -118,6 +118,23 @@ export default {
   // 注意别照抄外部源的 240 分钟默认值（utils/externalSources.js 的 refreshInterval），
   // 那对 2 小时过期的源是致命的。
   defaultRefreshMinutes: 45,
+
+  // 后台在这个模块的卡片里额外渲染一块助手 UI（markup 在 admin.html，与咪咕的
+  // migu-bookmarklet 同款约定：具体长相属于前端，模块只声明「我要哪一块」）。
+  helper: 'bilibili-login',
+  // 挂在「登录态」那一段的开头，而不是整个表单最上面
+  helperSection: '登录态（选填）',
+
+  // 扫码登录。声明成通用的 loginFlow 而不是在 API 层写死 B 站：将来别的模块
+  // （比如咪咕）想加扫码/授权流程，声明同样的两个函数即可，不用动框架。
+  //   start()      → { url, key }   url 是要编成二维码的内容
+  //   poll(key)    → { status, message, sessdata? }   status: pending|scanned|expired|ok
+  //   configKey    → 登录成功后把凭据写进哪个配置字段
+  loginFlow: {
+    configKey: 'sessdata',
+    start: qrLoginStart,
+    poll: qrLoginPoll,
+  },
 
   configSchema: [
     // 「频道从哪来」有两条路，而且可以同时用。原先它们平铺成兄弟项、手填的还排在

@@ -9,6 +9,7 @@
  * 后台是无鉴权的，别把新增的凭据也做成明文可读。
  */
 import { getExtractorManager } from "./extractorManager.js"
+import { getModule } from "../extractors/registry.js"
 import { setSystemFlagAPI } from "./systemConfigAPI.js"
 import { enableBuiltInSources, enableBuiltInSubscriptions } from "../config.js"
 import { updateExtractors } from "./channelMerger.js"
@@ -93,6 +94,48 @@ export function setContentFlagAPI(key, enabled) {
   }
   regeneratePlaylist()
   return ok(getExtractorManager())
+}
+
+/**
+ * 模块登录流程：生成二维码。
+ *
+ * 通用实现：模块声明 loginFlow.start 就有，本层不认识任何平台。二维码在**服务端**
+ * 生成成 data URI —— 前端因此不用 vendor 任何第三方二维码代码进 admin.html
+ *（那是个 7000 行的无构建单文件，往里塞第三方实现既难审也难验）。
+ */
+export async function startModuleLoginAPI(id) {
+  const module = getModule(id)
+  if (!module?.loginFlow?.start) return { success: false, message: `${id} 不支持扫码登录` }
+  try {
+    const { url, key } = await module.loginFlow.start()
+    const { default: QRCode } = await import('qrcode')
+    const image = await QRCode.toDataURL(url, { margin: 1, width: 240, errorCorrectionLevel: 'M' })
+    return { success: true, data: { key, image } }
+  } catch (error) {
+    return { success: false, message: error?.message || String(error) }
+  }
+}
+
+/**
+ * 模块登录流程：轮询扫码状态。成功时把凭据直接写进模块配置。
+ *
+ * 凭据**不回传给前端**：它等同登录态，而未设访问密码的部署后台是无鉴权的。
+ * 服务端拿到就直接存，前端只需要知道「成了」。
+ */
+export async function pollModuleLoginAPI(id, key) {
+  const module = getModule(id)
+  if (!module?.loginFlow?.poll) return { success: false, message: `${id} 不支持扫码登录` }
+  try {
+    const result = await module.loginFlow.poll(String(key || ''))
+    if (result.status !== 'ok') {
+      return { success: true, data: { status: result.status, message: result.message } }
+    }
+    const manager = getExtractorManager()
+    manager.updateModuleConfig(id, { [module.loginFlow.configKey]: result.sessdata })
+    return { ...ok(manager), data: { ...ok(manager).data, status: 'ok', message: '登录成功，凭据已保存' } }
+  } catch (error) {
+    return { success: false, message: error?.message || String(error) }
+  }
 }
 
 /** 单模块开关。 */

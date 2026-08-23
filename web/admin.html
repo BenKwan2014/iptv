@@ -2224,6 +2224,51 @@
     </div>
 
     <!-- Bookmarklet 添加引导弹窗 -->
+    <!-- B 站扫码登录（issue：SESSDATA 是 HttpOnly，咪咕那种书签读 cookie 的招在这里行不通） -->
+    <div class="modal" id="biliQrModal">
+        <div class="modal-content" style="width: 380px; max-width: 92%; text-align: center;">
+            <h3 style="margin-bottom: 8px;">📱 扫码登录 B 站</h3>
+            <div style="font-size:13px; color:#666; margin-bottom:14px;">用 <strong>哔哩哔哩手机 App</strong> 扫描下方二维码</div>
+            <div id="biliQrBox" style="min-height:240px; display:flex; align-items:center; justify-content:center;">
+                <span style="color:#999;">正在获取二维码…</span>
+            </div>
+            <div id="biliQrStatus" style="margin-top:12px; font-size:14px; color:#666; min-height:22px;"></div>
+            <div style="font-size:12px; color:#999; margin-top:10px; line-height:1.7;">
+                登录凭据由服务端直接保存，不经过这个页面。<br>二维码约 3 分钟失效，过期点「重新获取」即可。
+            </div>
+            <div class="modal-actions" style="margin-top:16px;">
+                <button class="btn btn-sm" onclick="startBiliQrLogin()">🔄 重新获取</button>
+                <button class="btn btn-secondary btn-sm" onclick="closeBiliQrLogin()">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 手动获取 SESSDATA 的图文步骤：不想扫码、或手机不在身边时的备用方案 -->
+    <div class="modal" id="biliSessdataGuideModal">
+        <div class="modal-content" style="width: 560px; max-width: 92%;">
+            <h3 style="margin-bottom: 14px;">🔑 手动获取 SESSDATA</h3>
+            <div style="background:#e6f7ff; border:1px solid #91d5ff; padding:12px 14px; border-radius:6px; margin-bottom:14px; font-size:13px; color:#003a8c; line-height:1.8;">
+                推荐直接用「📱 扫码登录」，这一页是给<strong>不想扫码、或手机不在身边</strong>的情况准备的。
+            </div>
+            <ol style="margin:0; padding-left:22px; font-size:14px; color:#333; line-height:2;">
+                <li>用电脑浏览器打开 <code>bilibili.com</code> 并<strong>登录</strong></li>
+                <li>按 <code>F12</code> 打开开发者工具（Mac 上是 <code>⌥⌘I</code>）</li>
+                <li>切到 <strong>Application</strong> 标签（Firefox 里叫「存储」）</li>
+                <li>左侧展开 <strong>Cookies</strong> → 点 <code>https://www.bilibili.com</code></li>
+                <li>在列表里找到名为 <code>SESSDATA</code> 的那一行</li>
+                <li>双击它的 <strong>Value</strong> 列，全选复制，粘贴到左边的输入框</li>
+            </ol>
+            <div style="background:#fff7e6; border:1px solid #ffd591; padding:10px 14px; border-radius:6px; margin-top:14px; font-size:13px; color:#874d00; line-height:1.8;">
+                ⚠️ SESSDATA <strong>等同登录态</strong>，拿到它就能以你的身份操作账号，别外传、别截图发人。<br>
+                不填也能用，只是画质封顶在「超清」；填了才有「原画」。
+            </div>
+            <div class="modal-actions" style="margin-top:16px;">
+                <button class="btn btn-primary btn-sm" onclick="closeBiliSessdataGuide(); openBiliQrLogin();">📱 还是扫码吧</button>
+                <button class="btn btn-secondary btn-sm" onclick="closeBiliSessdataGuide()">关闭</button>
+            </div>
+        </div>
+    </div>
+
     <div class="modal" id="bookmarkletGuideModal">
         <div class="modal-content" style="width: 700px; max-width: 90%;">
             <h3 style="margin-bottom: 20px;">📖 如何添加咪咕账号获取工具</h3>
@@ -2913,7 +2958,7 @@
          * 只有出现**可见**字段时才画标题：hidden 字段返回空串（如咪咕的 enableHDR），
          * 整段/整列都隐藏的话留个光秃秃的标题很怪。
          */
-        function extractorFieldsHtml(moduleId, schema, config, secretsSet, envProvided) {
+        function extractorFieldsHtml(moduleId, schema, config, secretsSet, envProvided, helper) {
             // 先渲染出每个字段的 html，顺手滤掉 hidden 的
             const rendered = [];
             for (const field of schema) {
@@ -2930,6 +2975,11 @@
                 while (i < rendered.length && rendered[i].section === section) chunk.push(rendered[i++]);
 
                 if (section) html += `<div class="xt-section">${escapeHtml(section)}</div>`;
+                // 助手挂在它自己那一段的开头（B 站的扫码登录属于「登录态」那段，
+                // 顶在整个表单最上面会莫名其妙）。没声明 helperSection 的照旧渲染在最外层。
+                if (helper && helper.section && helper.section === section) {
+                    html += extractorHelperHtml(helper.key);
+                }
 
                 if (chunk.some(f => f.group)) {
                     // 段内分列：同 group 的进同一列，顺序即出现顺序
@@ -2959,6 +3009,19 @@
                         <a id="miguBookmarklet" class="bookmarklet-link" draggable="true">📖 获取咪咕账号</a>
                         <button class="bookmarklet-help-btn" onclick="openBookmarkletGuide()" title="查看使用说明">?</button>
                     </div>
+                </div>`;
+            }
+            if (key === 'bilibili-login') {
+                // 两个入口并排，与咪咕的形态对齐：主按钮做常规操作，「?」给说明。
+                // 这里的「?」不是说明而是备用方案——B 站的 SESSDATA 是 HttpOnly，
+                // 咪咕那种「书签读 document.cookie」的招读不到，只能扫码或手动翻 DevTools。
+                return `<div class="bookmarklet-section" style="margin:0 0 12px;">
+                    <div class="bookmarklet-title"><span>🔑</span><span>获取 SESSDATA（登录 B 站账号）</span></div>
+                    <div class="bookmarklet-actions">
+                        <button class="btn btn-sm btn-primary" onclick="openBiliQrLogin()">📱 扫码登录</button>
+                        <button class="bookmarklet-help-btn" onclick="openBiliSessdataGuide()" title="不想扫码？手动获取的步骤">?</button>
+                    </div>
+                    <div style="font-size:12px; color:#888; margin-top:6px;">用 B 站手机 App 扫一下即可，凭据直接存到服务端、不经过这个页面。</div>
                 </div>`;
             }
             return '';
@@ -3106,8 +3169,8 @@
                 </div>
                 <div style="font-size:12px; margin-bottom:12px;">${extractorHealthHtml(m.health || {})}</div>
                 <div style="border-top:1px solid #f5f5f5; padding-top:12px;">
-                    ${extractorHelperHtml(m.helper)}
-                    ${extractorFieldsHtml(m.id, m.configSchema || [], m.config || {}, m.secretsSet || {}, m.envProvided || {})}
+                    ${m.helperSection ? '' : extractorHelperHtml(m.helper)}
+                    ${extractorFieldsHtml(m.id, m.configSchema || [], m.config || {}, m.secretsSet || {}, m.envProvided || {}, m.helperSection ? { key: m.helper, section: m.helperSection } : null)}
                     <div style="margin-bottom:12px;">
                         <label style="display:block; font-size:12px; color:#888;">刷新间隔（分钟）</label>
                         <input type="number" id="xf-${escapeHtml(m.id)}-__refresh" oninput="setSaveDirty('xt:${escapeHtml(m.id)}')" value="${m.refreshMinutes}" style="width:140px;">
@@ -3182,6 +3245,89 @@
             const r = await extractorPost(body);
             if (r && r.success) setSaveDirty(`xt:${id}`, false);
             applyExtractorResult(r, '配置已保存。改动需要重新抓取才生效——点「立即刷新」，或等下一轮自动刷新');
+        }
+
+        // ===== B 站扫码登录 =====
+        //
+        // SESSDATA 是 HttpOnly cookie，咪咕那种「书签读 document.cookie」的招读不到，
+        // 剩下的路只有让用户去 F12 里翻——对家用 IPTV 的普通用户是道硬门槛。
+        // 扫码把它变成「用 App 扫一下」，凭据在服务端落地、不经过这个页面。
+        let biliQrTimer = null;
+
+        function openBiliQrLogin() {
+            document.getElementById('biliQrModal').style.display = 'block';
+            startBiliQrLogin();
+        }
+
+        function closeBiliQrLogin() {
+            document.getElementById('biliQrModal').style.display = 'none';
+            stopBiliQrPolling();
+        }
+
+        function stopBiliQrPolling() {
+            if (biliQrTimer) { clearTimeout(biliQrTimer); biliQrTimer = null; }
+        }
+
+        async function startBiliQrLogin() {
+            stopBiliQrPolling();   // 「重新获取」时必须先停掉上一轮，否则两个轮询会并行
+            const box = document.getElementById('biliQrBox');
+            const status = document.getElementById('biliQrStatus');
+            box.innerHTML = '<span style="color:#999;">正在获取二维码…</span>';
+            status.textContent = '';
+            status.style.color = '#666';
+
+            const r = await extractorPost({ action: 'loginStart', id: 'bilibili-live' });
+            if (!r || !r.success) {
+                box.innerHTML = '<span style="color:#ff4d4f;">二维码获取失败</span>';
+                status.textContent = (r && r.message) || '请稍后重试';
+                status.style.color = '#ff4d4f';
+                return;
+            }
+            box.innerHTML = `<img src="${r.data.image}" alt="B 站登录二维码" style="width:240px; height:240px;">`;
+            status.textContent = '等待扫码…';
+            pollBiliQr(r.data.key);
+        }
+
+        async function pollBiliQr(key) {
+            const status = document.getElementById('biliQrStatus');
+            // 弹窗被关掉就别再轮询了（关闭时已 clearTimeout，这里是二次保险：
+            // 上一次请求可能还在路上，回来时弹窗已经关了）
+            if (document.getElementById('biliQrModal').style.display !== 'block') return;
+
+            const r = await extractorPost({ action: 'loginPoll', id: 'bilibili-live', key });
+            if (!r || !r.success) {
+                status.textContent = (r && r.message) || '轮询失败';
+                status.style.color = '#ff4d4f';
+                return;
+            }
+            const st = r.data.status;
+            if (st === 'ok') {
+                stopBiliQrPolling();
+                status.textContent = '✅ ' + (r.data.message || '登录成功');
+                status.style.color = '#52c41a';
+                // 整份状态已随响应回来，重渲染让 SESSDATA 的「已设置」立刻反映出来
+                extractorsState = r.data;
+                renderExtractors();
+                setTimeout(closeBiliQrLogin, 1200);
+                return;
+            }
+            if (st === 'expired') {
+                stopBiliQrPolling();
+                status.textContent = '⏰ ' + (r.data.message || '二维码已失效') + '，点「重新获取」';
+                status.style.color = '#faad14';
+                return;
+            }
+            status.textContent = st === 'scanned' ? '📱 已扫码，请在手机上确认' : '等待扫码…';
+            status.style.color = st === 'scanned' ? '#1890ff' : '#666';
+            biliQrTimer = setTimeout(() => pollBiliQr(key), 2000);
+        }
+
+        function openBiliSessdataGuide() {
+            document.getElementById('biliSessdataGuideModal').style.display = 'block';
+        }
+
+        function closeBiliSessdataGuide() {
+            document.getElementById('biliSessdataGuideModal').style.display = 'none';
         }
 
         async function refreshExtractorNow(id) {
