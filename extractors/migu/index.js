@@ -34,6 +34,61 @@ import { resolve, clearCache } from "./resolve.js"
 import { enableMigu } from "../../config.js"
 import { setSystemFlagAPI } from "../../utils/systemConfigAPI.js"
 
+/**
+ * 分组优先级。既是**去重时谁胜出**，也是分组的输出顺序；不在表里的按名字排在后面。
+ *
+ * 咪咕按自己的分类给同一个频道打多个标签：CCTV1 同时出现在 央视 / 影视 / 新闻 / 纪实，
+ * 四份**完全一样**（同名、同 tvg-id、同地址），只有 group-title 不同。代价都是实的：
+ *
+ *   · 播放器按名把同名频道聚合成「源1 / 源2…」，于是 CCTV1 显示成「有 4 个源」，
+ *     而那 4 个源指向同一个地址 —— 挂了一起挂，是噪音不是冗余；
+ *   · 「我的频道」的配置键是 `原始分组::频道ID`（playlistConfig），隐藏 CCTV1 要操作
+ *     4 次，而界面上没有任何地方提示还有另外 3 份；
+ *   · 频道数虚高：实测 645 个条目对应 593 个真实频道，47 个频道跨分组重复。
+ *
+ * 所以按这张表归一：一个 pID 只出现在一个分组里。
+ *
+ * **已知且接受的后果**：央视排第一意味着所有 CCTV 都判给央视，新闻 / 纪实 / 少儿 这些
+ * 分组会只剩地方台（实测 新闻 26→5、纪实 18→7、少儿 9→4）。这是产品选择——
+ * 用户按「央视 / 卫视 / 地方」找台，不按题材找台，宁可分组小也不要同一个频道到处都是。
+ *
+ * 去重只在**咪咕模块内部**按 pID 做，绝不跨源：「咪咕的 CCTV1 + 精选频道的 CCTV1」
+ * 是两个不同的源，正是播放器「源1 / 源2」要的那种冗余，删掉就没了备用地址。
+ */
+const GROUP_ORDER = ['央视', '卫视', '体育', '地方']
+
+function groupRank(name) {
+  const i = GROUP_ORDER.indexOf(name)
+  return i === -1 ? GROUP_ORDER.length : i
+}
+
+/**
+ * 按 GROUP_ORDER 排序分组，并让每个 pID 只留在最靠前的那个分组里。
+ * 导出是为了能被测试直接打 —— 这是条纯数据整形规则，改错了不报错，
+ * 只是频道悄悄跑到别的分组、或者又开始到处重复。
+ */
+export function orderAndDedupe(groups) {
+  const ordered = [...groups].sort((a, b) => {
+    const ra = groupRank(a.name)
+    const rb = groupRank(b.name)
+    if (ra !== rb) return ra - rb
+    // 表外的按名字排（中文按拼音），给个稳定且可预期的顺序
+    return String(a.name).localeCompare(String(b.name), 'zh-Hans-CN')
+  })
+
+  const seen = new Set()
+  for (const group of ordered) {
+    group.dataList = group.dataList.filter(item => {
+      const key = String(item.pID)
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  }
+  // 整组被去空的（真出现过就说明该组全是别处的重复）不再输出，免得播放列表里挂空分组
+  return ordered.filter(group => group.dataList.length > 0)
+}
+
 export default {
   id: 'migu',
   name: '咪咕视频',
@@ -176,9 +231,10 @@ export default {
           })),
       }))
 
-    const count = groups.reduce((sum, g) => sum + g.dataList.length, 0)
+    const deduped = orderAndDedupe(groups)
+    const count = deduped.reduce((sum, g) => sum + g.dataList.length, 0)
     return {
-      groups,
+      groups: deduped,
       meta: { skipped: [], warnings: [], requested: count },
     }
   },
