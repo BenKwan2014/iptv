@@ -7,6 +7,7 @@
  * 移植自 bili-live-m3u（Python），几处刻意不照抄，理由都写在各自函数上。
  */
 import fetch from 'node-fetch'
+import { printYellow } from '../../utils/colorOut.js'
 
 const API = 'https://api.live.bilibili.com'
 export const REFERER = 'https://live.bilibili.com/'
@@ -138,11 +139,45 @@ const MIN_ONLINE = 10000
  * @returns {Promise<{url: string, key: string}>} url 是要编成二维码的内容
  */
 export async function qrLoginStart({ timeoutMs = 10000 } = {}) {
-  const payload = await passportGet('/x/passport-login/web/qrcode/generate', {}, timeoutMs)
+  // 先拿一个设备标识（buvid3）。真实浏览器打开 bilibili.com 就会被种上它，
+  // generate / poll 全程都带着；而我们原本是两次**裸请求**。
+  // 症状正是这么来的：没扫码时轮询一切正常（86101），手机一确认就变 86038
+  // 「二维码已失效」—— B 站把这次登录绑在设备标识上，找不到该把会话交给谁。
+  const cookie = await fetchBuvidCookie(timeoutMs)
+  const payload = await passportGet('/x/passport-login/web/qrcode/generate', {}, timeoutMs, cookie)
   const url = payload?.url
   const key = payload?.qrcode_key
   if (!url || !key) throw new RoomError('二维码生成失败：B 站返回的数据里没有 url/qrcode_key')
-  return { url, key }
+  // 把 cookie 跟 key 绑在一起交出去：poll 必须用**同一个**设备标识，
+  // 换一个等于换了台设备，B 站照样不认。
+  return { url, key, cookie }
+}
+
+/**
+ * 取一个 buvid3 设备标识。
+ * 用官方的指纹接口而不是解 bilibili.com 首页的 Set-Cookie —— 后者是网页副作用，
+ * 随时可能变；前者是专门干这个的（返回 b_3 / b_4）。
+ * 拿不到就返回空串，让流程继续：至少还能维持改动前的行为，不至于连二维码都出不来。
+ */
+async function fetchBuvidCookie(timeoutMs) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch('https://api.bilibili.com/x/frontend/finger/spi', {
+      headers: { 'User-Agent': UA, Referer: REFERER, Accept: 'application/json' },
+      signal: controller.signal,
+    })
+    const body = await response.json()
+    const b3 = body?.data?.b_3
+    const b4 = body?.data?.b_4
+    if (!b3) return ''
+    return `buvid3=${b3}` + (b4 ? `; buvid4=${b4}` : '')
+  } catch {
+    printYellow('B 站设备标识获取失败，扫码登录仍会尝试，但成功率可能下降')
+    return ''
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 /**
@@ -156,32 +191,107 @@ export async function qrLoginStart({ timeoutMs = 10000 } = {}) {
  *
  * @returns {Promise<{status:'pending'|'scanned'|'expired'|'ok', message:string, sessdata?:string}>}
  */
-export async function qrLoginPoll(key, { timeoutMs = 10000 } = {}) {
-  const payload = await passportGet('/x/passport-login/web/qrcode/poll', { qrcode_key: key }, timeoutMs)
+export async function qrLoginPoll(key, { timeoutMs = 10000, cookie = '' } = {}) {
+  const payload = await passportGet('/x/passport-login/web/qrcode/poll', { qrcode_key: key }, timeoutMs, cookie)
   const code = Number(payload?.code)
   const message = String(payload?.message || '')
 
   if (code === 86101) return { status: 'pending', message: message || '未扫码' }
-  if (code === 86090) return { status: 'scanned', message: message || '已扫码，请在手机上确认' }
-  if (code === 86038) return { status: 'expired', message: message || '二维码已失效，请重新获取' }
-  if (code !== 0) return { status: 'expired', message: message || `未知状态 ${code}` }
+  if (code === 86090) {
+    printYellow('B 站扫码登录：已扫码，等待手机端确认')
+    return { status: 'scanned', message: message || '已扫码，请在手机上确认' }
+  }
+  if (code === 86038) {
+    // 排查用：这一条太容易被当成「用户手慢了」，但它也可能是别的原因——
+    // 二维码只活 180 秒；生成与轮询之间若换过出口 IP（比如中途开关代理），
+    // B 站也会作废这个 key。日志里留一行，配合前端的倒计时就能分清是哪种。
+    printYellow('B 站扫码登录：二维码已失效（有效期 180 秒；若期间切换过网络/代理也会失效）')
+    return { status: 'expired', message: message || '二维码已失效，请重新获取' }
+  }
+  if (code !== 0) {
+    // 别把没见过的状态一律说成「已失效」—— 那会掩盖真正的原因（风控、跨地域拒绝、
+    // 接口改版…），用户只看到「二维码已失效」，重试多少次都一样，而日志里什么都没有。
+    // 原样把 code 和 message 交出去，并落一行日志，让问题可查。
+    printYellow(`B 站扫码登录返回未知状态 code=${code} message=${message || '(空)'}`)
+    return { status: 'failed', message: `${message || '登录失败'}（B 站状态码 ${code}）` }
+  }
 
+  const crossDomainUrl = String(payload?.url || '')
   let sessdata = ''
+
+  // 旧格式：凭据直接在查询参数里（?DedeUserID=…&SESSDATA=…）。
+  // 线上实测已经不是这个了，但留着——B 站两种格式都出现过，先试免得多打一次请求。
   try {
-    sessdata = new URL(String(payload?.url || '')).searchParams.get('SESSDATA') || ''
-  } catch { /* url 形状变了就当没拿到，下面统一报错 */ }
-  if (!sessdata) throw new RoomError('登录成功但没能从返回地址里取到 SESSDATA —— B 站可能改了返回格式')
+    sessdata = new URL(crossDomainUrl).searchParams.get('SESSDATA') || ''
+  } catch { /* url 形状不对就走下面的换票 */ }
+
+  // 新格式：给的是一张一次性 ticket，得拿它去 crossDomain 换，SESSDATA 在响应的
+  // Set-Cookie 里。实测返回形如
+  //   https://passport.biligame.com/x/passport-login/web/crossDomain
+  //     ?ticket=…&gourl=https%3A%2F%2Fwww.bilibili.com&first_domain=.bilibili.com
+  if (!sessdata && crossDomainUrl) {
+    sessdata = await exchangeTicketForSessdata(crossDomainUrl, timeoutMs, cookie)
+  }
+
+  if (!sessdata) {
+    printYellow(`B 站扫码登录成功但取不到 SESSDATA，返回地址：${crossDomainUrl.slice(0, 200) || '(空)'}`)
+    throw new RoomError('登录成功但没能取到 SESSDATA —— B 站可能又改了返回格式，详见服务端日志')
+  }
   return { status: 'ok', message: '登录成功', sessdata }
 }
 
+/**
+ * 拿 ticket 换 SESSDATA。
+ *
+ * **不跟随重定向**：那个 crossDomain 地址会 302 回 bilibili.com，跟过去就白跑一趟，
+ * 而我们要的东西就在这一跳的 Set-Cookie 里。
+ * 带上同一个设备标识 —— 整条登录链路 B 站都在按设备核对。
+ */
+async function exchangeTicketForSessdata(url, timeoutMs, cookie) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(url, {
+      redirect: 'manual',
+      headers: {
+        'User-Agent': UA,
+        Referer: REFERER,
+        ...(cookie ? { Cookie: cookie } : {}),
+      },
+      signal: controller.signal,
+    })
+    // node-fetch 用 headers.raw()，标准 fetch 用 getSetCookie()——两边都兼容一下，
+    // 免得将来换掉 node-fetch 时这里静默拿不到 cookie。
+    const raw = typeof response.headers.getSetCookie === 'function'
+      ? response.headers.getSetCookie()
+      : (response.headers.raw?.()['set-cookie'] || [])
+    for (const line of raw) {
+      const m = /(?:^|;\s*)SESSDATA=([^;]+)/.exec(line)
+      if (m) return decodeURIComponent(m[1])
+    }
+    printYellow(`B 站 ticket 换取没返回 SESSDATA，HTTP ${response.status}，Set-Cookie 条数 ${raw.length}`)
+    return ''
+  } catch (error) {
+    printYellow(`B 站 ticket 换取失败：${error.message}`)
+    return ''
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 /** passport 域名的取数。与 apiGet 同款错误处理，只是 base 不同。 */
-async function passportGet(path, params, timeoutMs) {
+async function passportGet(path, params, timeoutMs, cookie = '') {
   const url = `https://passport.bilibili.com${path}?${new URLSearchParams(params)}`
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const response = await fetch(url, {
-      headers: { 'User-Agent': UA, Referer: 'https://www.bilibili.com/', Accept: 'application/json' },
+      headers: {
+        'User-Agent': UA,
+        Referer: 'https://www.bilibili.com/',
+        Accept: 'application/json',
+        ...(cookie ? { Cookie: cookie } : {}),
+      },
       signal: controller.signal,
     })
     if (!response.ok) throw new RoomError(`HTTP ${response.status} from ${path}`)

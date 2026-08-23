@@ -103,11 +103,28 @@ export function setContentFlagAPI(key, enabled) {
  * 生成成 data URI —— 前端因此不用 vendor 任何第三方二维码代码进 admin.html
  *（那是个 7000 行的无构建单文件，往里塞第三方实现既难审也难验）。
  */
+/**
+ * 扫码会话：qrcode_key → 该次登录用的设备标识（cookie）。
+ *
+ * 必须服务端自己记：B 站把这次登录绑在设备标识上，generate 与 poll 得用同一个，
+ * 换一个等于换了台设备。**不经过前端**——它是会话凭据的一部分，没理由在浏览器里绕一圈。
+ * 只留最近若干条，避免长期运行的实例里无限堆积（每条也就百来字节，但没有上限就是泄漏）。
+ */
+const loginSessions = new Map()
+const MAX_LOGIN_SESSIONS = 20
+
 export async function startModuleLoginAPI(id) {
   const module = getModule(id)
   if (!module?.loginFlow?.start) return { success: false, message: `${id} 不支持扫码登录` }
   try {
-    const { url, key } = await module.loginFlow.start()
+    const { url, key, cookie } = await module.loginFlow.start()
+    if (cookie) {
+      // 先进先出地裁剪：Map 保持插入顺序，最早的那条就是最没用的
+      while (loginSessions.size >= MAX_LOGIN_SESSIONS) {
+        loginSessions.delete(loginSessions.keys().next().value)
+      }
+      loginSessions.set(key, cookie)
+    }
     const { default: QRCode } = await import('qrcode')
     const image = await QRCode.toDataURL(url, { margin: 1, width: 240, errorCorrectionLevel: 'M' })
     return { success: true, data: { key, image } }
@@ -126,10 +143,14 @@ export async function pollModuleLoginAPI(id, key) {
   const module = getModule(id)
   if (!module?.loginFlow?.poll) return { success: false, message: `${id} 不支持扫码登录` }
   try {
-    const result = await module.loginFlow.poll(String(key || ''))
+    const k = String(key || '')
+    const result = await module.loginFlow.poll(k, { cookie: loginSessions.get(k) || '' })
     if (result.status !== 'ok') {
+      // 终态就把会话丢掉，别让失败的 key 一直占着
+      if (result.status === 'expired' || result.status === 'failed') loginSessions.delete(k)
       return { success: true, data: { status: result.status, message: result.message } }
     }
+    loginSessions.delete(k)
     const manager = getExtractorManager()
     manager.updateModuleConfig(id, { [module.loginFlow.configKey]: result.sessdata })
     return { ...ok(manager), data: { ...ok(manager).data, status: 'ok', message: '登录成功，凭据已保存' } }

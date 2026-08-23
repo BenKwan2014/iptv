@@ -139,7 +139,8 @@ export default {
   // 扫码登录。声明成通用的 loginFlow 而不是在 API 层写死 B 站：将来别的模块
   // （比如咪咕）想加扫码/授权流程，声明同样的两个函数即可，不用动框架。
   //   start()      → { url, key }   url 是要编成二维码的内容
-  //   poll(key)    → { status, message, sessdata? }   status: pending|scanned|expired|ok
+  //   poll(key, {cookie}) → { status, message, sessdata? }  status: pending|scanned|expired|failed|ok
+  //   start() 返回的 cookie 是这次登录的设备标识，由 API 层与 key 绑定后在 poll 时回传
   //   configKey    → 登录成功后把凭据写进哪个配置字段
   loginFlow: {
     configKey: 'sessdata',
