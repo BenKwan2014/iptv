@@ -51,7 +51,11 @@ async function updateTV(hours, options = {}) {
   if (skipMigu) {
     printYellow("启动模式：跳过咪咕频道更新，保留现有播放列表文件")
     printYellow("提示：定时更新仍会正常执行完整更新")
-    return
+    // 必须 return false 而不是裸 return：runUpdate 只在 `generated === false` 时中止，
+    // undefined 拦不住它 → updatePE 照跑 → 它是 copyFileSync(interface.txt → .bak)
+    // 再 append，而此时文件里已经有上一轮的体育段 → 每次以「启动时不更新」方式重启，
+    // 体育-昨天/今天/明天 就再追加一份（实测每次 +308 条）。
+    return false
   }
   
   // regenerateOnly: 仅重新生成播放列表，跳过playback更新
