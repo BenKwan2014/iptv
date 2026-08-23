@@ -87,6 +87,32 @@ check('保存不抹掉 retiredBuiltInsV1 → 用户手动加回的已退役订�
 })
 
 // ---- 边界：只补账本键，不得替调用方"补回"它有意删掉的东西 ----
+// 这条才是真正守住「只补账本键、不做全量合并」的那道闸。
+// 上一版把这个意思写在了下面那条用例的名字里，但那条其实**零分辨力**：
+// asFrontendCopy 每次都把四个用户可见键全部显式写出，`sources[key] === undefined`
+// 永远不成立，于是把实现换成「合并所有缺失键」也照样全绿（已实测）。
+// 要有分辨力，调用方桩必须**省略**一个用户可见键。
+check('★ 调用方省略了用户可见键时，不得用旧值补回去（否则等于全量合并）', () => {
+  write({
+    enabled: true, includeInPlaylists: true, updateOnStartup: true,
+    sources: [{ name: 'A', mode: 'direct', enabled: true, m3u8Url: 'http://a/', id: 'aaaa0001' }],
+    seededBuiltInUrls: [BUILT_IN_URL],
+    retiredBuiltInsV1: true,
+  })
+  const mgr = new ExternalSourceManager()
+  // 只带 sources，其余用户可见键一个不给
+  mgr.saveSources({ sources: [{ name: 'A', mode: 'direct', enabled: true, m3u8Url: 'http://a/', id: 'aaaa0001' }] })
+
+  const after = read()
+  assert.equal(after.updateOnStartup, undefined,
+    'updateOnStartup 被旧值补回来了 —— 说明补键逻辑退化成了全量合并')
+  assert.equal(after.includeInPlaylists, undefined,
+    'includeInPlaylists 被旧值补回来了 —— 说明补键逻辑退化成了全量合并')
+  // 账本键仍必须补回
+  assert.deepEqual(after.seededBuiltInUrls, [BUILT_IN_URL])
+  assert.equal(after.retiredBuiltInsV1, true)
+})
+
 check('只补服务端账本键，sources 等字段仍以调用方为准', () => {
   write({
     enabled: true, includeInPlaylists: true, updateOnStartup: true,

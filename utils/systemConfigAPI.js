@@ -189,7 +189,18 @@ export function saveSystemConfigAPI(config) {
     update(0, { regenerateOnly: true }).catch(err => console.error('重新生成播放列表失败:', err))
     return {
       success: true,
-      message: '配置保存成功（端口与更新间隔需重启生效；内容开关等已即时生效，播放列表正在后台刷新）'
+      message: '配置保存成功（端口与更新间隔需重启生效；内容开关等已即时生效，播放列表正在后台刷新）',
+      // 保存后**生效的**访问入口，由服务端算并回传。
+      //
+      // 前端算不出来：config.js 里 `pass = systemConfig.pass || process.env.mpass || ""`
+      // 带环境变量兜底。用户把密码框清空时，生效密码可能是 mpass 的值 —— 而前端只拿得到
+      // envOverrides.pass 这个布尔、拿不到值本身，按空串拼会拼出一个必然 403 的地址，
+      // 把用户从一个本来正常的页面上踢出去。adminPath 同理（这边还多一层 sanitizeSegment）。
+      //
+      // pass / adminPath 是 config.js 的 live binding，上面 reloadConfig() 之后就是新值。
+      // 拼法与 app.js 的 `/<pass>/<adminPath>` 判定同一口径。
+      entry: '/' + [pass, adminPath].filter(Boolean).join('/'),
+      apiPrefix: pass ? '/' + pass : ''
     }
   } catch (error) {
     return {

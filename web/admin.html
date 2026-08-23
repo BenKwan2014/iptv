@@ -2975,7 +2975,15 @@
 
             // 助手随展开区一起重建，每次渲染后重新挂一次
             initMiguBookmarklet();
-            // 按钮是模板字符串重建出来的，class 会丢——把脏标记贴回去
+
+            // 表单刚刚按**服务端状态**整个重建过，用户之前敲进去还没保存的值已经没了。
+            // 此时若脏标记还亮着就是在说谎（点保存也只会把服务端原值再存一遍）。
+            // 所以清掉标记，并明确告诉用户输入被丢弃了 —— 静默丢弃才是最坏的。
+            // 正常保存路径不会走到这里报警：saveExtractorConfig 成功后先清标记再重渲染。
+            if (dirtySaveScopes.has(`xt:${m.id}`)) {
+                setSaveDirty(`xt:${m.id}`, false);
+                showStatus(`${m.name} 有未保存的配置改动，已被本次刷新丢弃，请重新填写`, 'error');
+            }
             applySaveDirtyMarks();
         }
 
@@ -3130,7 +3138,16 @@
 
         async function updateEpgSource(i, fields) {
             const r = await epgPost({ action: 'update', index: i, fields });
-            if (r.success) { epgConfig = r.data; toastSaved(); } else { showStatus(r.message || '操作失败', 'error'); loadEpgSources(); }
+            if (r.success) {
+                epgConfig = r.data;
+                // 必须重渲染：服务端会 clamp（epgSourcesAPI.js 的 clampInt —— 间隔夹到
+                // [10, 100000]、优先级夹到 [0, 9999]）。不重渲染的话输入框还显示用户敲的
+                // 那个越界值，而落盘的是夹过的值，两边对不上；再叠上「已保存」的绿色提示，
+                // 等于替一个界面上根本不存在的值背书。这两个字段是 onchange（失焦才触发），
+                // 重渲染不会打断输入。
+                renderEpgSources();
+                toastSaved();
+            } else { showStatus(r.message || '操作失败', 'error'); loadEpgSources(); }
         }
 
         async function deleteEpgSource(i) {
@@ -3758,7 +3775,6 @@
             if (selectedExternalIndex !== null && sources[selectedExternalIndex]) {
                 wrap.classList.remove('hidden');
                 renderExternalDetail(selectedExternalIndex);
-                applySaveDirtyMarks();   // 按钮是重建出来的，class 会丢
             } else {
                 selectedExternalIndex = null;
                 wrap.classList.add('hidden');
@@ -4075,7 +4091,6 @@
             const wrap = document.getElementById('externalDetailWrap');
             if (wrap) wrap.classList.remove('hidden');
             renderExternalDetail(index);
-            applySaveDirtyMarks();
 
             // 详情渲染在整个卡片网格**下方**，源一多或窄屏单列时它就在视口外：
             // 不滚过去的话点卡片「屏幕上什么都没变」，用户会再点一下——正好收起，
@@ -4322,6 +4337,11 @@
 
             // 源 ↔ 配置档（issue #68）：已保存(有稳定 id)的源，异步填充「在哪些配置档显示」勾选行
             fillSourceProfilesRow(index);
+
+            // 保存类按钮是模板字符串重建出来的，class 会丢 —— 把脏标记贴回去。
+            // 放在这里而不是各调用点：本函数有 7 个调用方（切模式、切导入方式、选本地文件、
+            // 列表重渲染…），逐个补必漏，漏了的表现是「明明有未保存改动、橙点却没了」。
+            applySaveDirtyMarks();
         }
 
         // v2 入口（issue #68）：外部源表单里按档勾选。数据惰性加载，与 v1 档弹窗共用 sourceProfileData
@@ -4905,9 +4925,12 @@
             document.querySelectorAll('[data-save-scope]').forEach(btn => {
                 const on = dirtySaveScopes.has(btn.getAttribute('data-save-scope'));
                 btn.classList.toggle('save-dirty', on);
-                // title 里补一句，鼠标悬停也能看到；不覆盖按钮本来的 title
+                // title 里补一句，鼠标悬停也能看到；不覆盖按钮本来的 title。
+                // 判 === undefined 而不是 falsy：没有 title 的按钮存下来的原值是空串，
+                // 空串是 falsy —— 用 !titleOrig 判的话第二次调用会把**已经改过的** title
+                // 当成原值再存一遍，于是叠成「有未保存的改动　有未保存的改动」。
                 if (on) {
-                    if (!btn.dataset.titleOrig) btn.dataset.titleOrig = btn.title || '';
+                    if (btn.dataset.titleOrig === undefined) btn.dataset.titleOrig = btn.title || '';
                     btn.title = (btn.dataset.titleOrig ? btn.dataset.titleOrig + '　' : '') + '有未保存的改动';
                 } else if (btn.dataset.titleOrig !== undefined) {
                     btn.title = btn.dataset.titleOrig;
@@ -4920,11 +4943,22 @@
         // 「没按钮 = 已经存好了」这条规则要成立，用户得**看得见**它存好了；否则界面毫无
         // 变化，只能怀疑没生效然后再点一次——那正是本次归类要消除的困惑。
         // 防抖 800ms：连续调间隔/优先级、拖拽排序这类高频操作合并成一次提示，不刷屏。
-        // 失败提示不走这里（各调用点自己 showStatus('...', 'error')），不会被防抖吞掉。
+        //
+        // ⚠️ 挂起期间若出现过任何错误提示，本次「已保存」必须放弃。
+        // 原实现无条件弹出，于是「改了两个值，第二个失败了」时，失败提示会在 800ms 后
+        // 被绿色的「已保存」盖掉——用户看到的是成功，实际没存上。这比不加提示更糟：
+        // 它主动给错误的结果背书。用错误计数器判定，而不是判「当前显示的是不是错误」，
+        // 因为错误提示可能已经自己淡出了。
         let savedToastTimer = null;
+        let statusErrorSeq = 0;
         function toastSaved(msg = '已保存') {
+            const seqAtSchedule = statusErrorSeq;
             if (savedToastTimer) clearTimeout(savedToastTimer);
-            savedToastTimer = setTimeout(() => { savedToastTimer = null; showStatus(msg, 'success'); }, 800);
+            savedToastTimer = setTimeout(() => {
+                savedToastTimer = null;
+                if (statusErrorSeq !== seqAtSchedule) return;   // 期间出过错，别用「已保存」盖掉
+                showStatus(msg, 'success');
+            }, 800);
         }
 
         // 上一条提示的隐藏定时器。必须记下来并在下一条到来时清掉：
@@ -4940,6 +4974,7 @@
          *                         提示比跳转先消失的话，这句话等于没说。
          */
         function showStatus(message, type, ms = 3000) {
+            if (type === 'error') statusErrorSeq++;   // 供 toastSaved 判定「期间出过错」
             const status = document.getElementById('status');
             status.textContent = message;
             status.className = 'status ' + type;
@@ -5162,13 +5197,16 @@ if(success){
                     //   · 同时改密码和路径     → 跳到旧密码的前缀下，照样 403
                     // 入口拼法与 app.js:116/123 及导入配置那条路径（见 importConfigBackup）
                     // 保持同一口径：'/' + [pass, adminPath].filter(Boolean).join('/')。
-                    const newAdminPath = sanitizeAdminPath(adminPathInput);
-                    const curPass = (systemConfig && systemConfig.pass) || '';
-                    const curAdminPath = sanitizeAdminPath((systemConfig && systemConfig.adminPath) || 'admin');
-                    if (passInput !== curPass || newAdminPath !== curAdminPath) {
-                        const entry = '/' + [passInput, newAdminPath].filter(Boolean).join('/');
-                        // API 前缀只含密码那一段（app.js:116 的判定就是 /<pass>/…）；密码清空时为空串
-                        const apiPrefix = passInput ? '/' + passInput : '';
+                    // 入口由**服务端**算好回传（result.entry / result.apiPrefix）。
+                    // 前端自己拼过一版，但算不对：config.js 里 pass 有 `|| process.env.mpass`
+                    // 兜底，用户把密码清空、而 compose 里还设着 mpass 时，生效密码其实是环境
+                    // 变量的值，前端按空串拼出 '/admin' 跳过去必然 403 —— 把人从一个本来正常的
+                    // 页面踢出去，「保存并重启」那条还会因为前缀错而拿到 403、重启根本不发生。
+                    // 当前入口就是 location.pathname（/admin 或 /密码/admin），直接比对。
+                    const entry = result.entry || window.location.pathname;
+                    const apiPrefix = result.apiPrefix !== undefined ? result.apiPrefix : API_PREFIX;
+                    const portChanged = String(port) !== String((systemConfig && systemConfig.port) || '');
+                    if (entry !== window.location.pathname) {
                         setSaveDirty('sysconfig', false);
                         if (!deferRedirect) {
                             // 地址明文写进提示并停 5 秒（比原来的 3 秒长）：密码里若有需要 URL 编码的
@@ -5179,11 +5217,11 @@ if(success){
                             showStatus(`访问入口已变更，5 秒后跳转到：${entry}　（若跳转后打不开，请手动访问该地址）`, 'success', 6000);
                             setTimeout(() => { window.location.href = window.location.origin + entry; }, 5000);
                         }
-                        return { entry, apiPrefix };
+                        return { entry, apiPrefix, portChanged };
                     }
                     setSaveDirty('sysconfig', false);
                     showStatus(result.message, 'success');
-                    return true;
+                    return portChanged ? { entry, apiPrefix, portChanged } : true;
                 } else {
                     showStatus(result.message || '保存失败', 'error');
                     return false;
@@ -5214,7 +5252,8 @@ if(success){
             const moved = (saved && typeof saved === 'object') ? saved : null;
             await restartService(true, {   // 已确认过，跳过二次确认
                 apiPrefix: moved ? moved.apiPrefix : API_PREFIX,
-                redirectTo: moved ? moved.entry : null,
+                redirectTo: moved && moved.entry !== window.location.pathname ? moved.entry : null,
+                portChanged: !!(moved && moved.portChanged),
             });
         }
 
@@ -5282,9 +5321,10 @@ if(success){
                 const sc = payload.files['system-config.json'];
                 if (sc && typeof sc === 'object') {
                     const newPass = typeof sc.pass === 'string' ? sc.pass : '';
-                    const rawPath = typeof sc.adminPath === 'string' ? sc.adminPath.trim().replace(/^\/+|\/+$/g, '') : '';
-                    // 与 config.js sanitizeSegment 同口径：空/含斜杠空白/保留字回退 admin
-                    const newAdmin = (!rawPath || /[\/\s]/.test(rawPath) || ['api', 'player', 'favicon.ico'].includes(rawPath.toLowerCase())) ? 'admin' : rawPath;
+                    // 与 config.js sanitizeSegment 同口径：空/含斜杠空白/保留字回退 admin。
+                    // 复用 sanitizeAdminPath —— 这里原本内联了一份逐字相同的实现，
+                    // 两份口径将来必然走偏（改一处漏一处 = 导入后跳到打不开的地址）。
+                    const newAdmin = sanitizeAdminPath(typeof sc.adminPath === 'string' ? sc.adminPath : '');
                     const curPass = (systemConfig && systemConfig.pass) || '';
                     const curAdmin = (systemConfig && systemConfig.adminPath) || 'admin';
                     if (newPass !== curPass || newAdmin !== curAdmin) {
@@ -5348,8 +5388,13 @@ if(success){
          *                               旧前缀会被服务端拒成 403（重启静默失败）。
          * @param {string|null} redirectTo 重启完成后要落到的入口。入口变了就不能 reload
          *                               当前地址 —— 那是个已经失效的 URL。
+         * @param {boolean} portChanged 端口也改了。此时**不能自动跳转**：浏览器地址栏里的
+         *                               端口未必等于服务监听的端口（Docker 端口映射时，
+         *                               容器内换端口根本不改访问地址；反向代理同理），
+         *                               按 origin 跳会落到已关闭的旧端口，按新端口拼又会
+         *                               坑到 Docker 用户 —— 我们算不出正确地址，就别猜。
          */
-        async function restartService(skipConfirm = false, { apiPrefix = API_PREFIX, redirectTo = null } = {}) {
+        async function restartService(skipConfirm = false, { apiPrefix = API_PREFIX, redirectTo = null, portChanged = false } = {}) {
             if (!skipConfirm) {
                 const confirmed = await showConfirm(
                     '确定要重启服务吗？\n\n注意：\n1. 重启期间服务将暂时不可用（约5-10秒）\n2. 请确保已保存所有配置\n3. Docker/PM2 会自动重启，直接运行 node 需要手动重启',
@@ -5370,6 +5415,17 @@ if(success){
                 const result = await response.json();
 
                 if (result.success) {
+                    if (portChanged) {
+                        // 端口改了：地址栏里的端口未必等于服务监听的端口，我们算不出正确地址。
+                        // 与其跳到一个死地址（旧端口已关）或坑到 Docker 用户（宿主端口没变），
+                        // 不如把已知的部分说清楚、让用户自己敲。提示留 60 秒，够看清也够复制。
+                        showStatus(
+                            `服务重启中...服务端口已改为 ${document.getElementById('sysPort').value}，`
+                            + `请手动访问新地址（路径部分为 ${redirectTo || window.location.pathname}）。`
+                            + `Docker 部署还需同步修改端口映射，否则会连不上。`,
+                            'success', 60000);
+                        return;   // 不自动跳转
+                    }
                     showStatus(redirectTo
                         ? `服务重启中...访问入口已变更为 ${redirectTo}，约 15 秒后自动跳转（若打不开请手动访问该地址）`
                         : '服务重启中...请等待约 5-10 秒后刷新页面', 'success', redirectTo ? 16000 : 3000);
