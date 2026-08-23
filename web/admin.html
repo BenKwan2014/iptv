@@ -541,7 +541,8 @@
         /* 自定义源卡片。类名沿用 .external-nav-item —— selectExternalSource() 靠
            「这个类名 + 在 #externalSourceList 里的 DOM 顺序下标」定位选中项，而下标
            又直接索引 externalConfig.sources[]（全文 20 余处）。改名就得同步改那一整
-           套下标契约，风险远大于收益。这里只换外观：竖排列表项 → 网格卡片。 */
+           套下标契约，风险远大于收益。这里只换外观：竖排列表项 → 网格卡片。
+           同一网格里的 ＋ 卡片用 .source-card-add，不进这个下标序列，位置任意。 */
         .external-nav-item {
             padding: 12px 14px;
             background: #fafafa;
@@ -2733,13 +2734,15 @@
             const box = document.getElementById('extractorNotice');
             if (!box) return;
             let html = '';
-            if (systemConfig && systemConfig.enableExtractors === false) {
-                // 部署级开关 enableExtractors。注意：写它的控件就是本段右上角那个
-                // 「启用抓取模块」（getState().enabled 读的就是同一个值），
-                // 「系统配置」页里并没有对应的勾选框——原文案指向了一个不存在的控件。
+            // 判据用 extractorsState.enabled 而**不是** systemConfig.enableExtractors：
+            // 两者是同一个值（extractorManager.getState() 里 `enabled: enableExtractors`），
+            // 但 systemConfig 只在页面初始化时拉一次、之后再不更新。用它的话，勾上
+            // 右上角的开关后黄条会一字不改地留在原地继续说「被整体关闭了」——而黄条
+            // 文案指的正是那个开关，同一段里自相矛盾。extractorsState 每次操作都整份刷新。
+            if (extractorsState.enabled === false) {
                 html += `<div style="border:1px solid #faad14; background:#fffbe6; border-radius:6px; padding:10px; margin-bottom:12px; color:#874d00;">
-                    抓取模块被整体关闭了（空白模式 <code>mblank=true</code> 会默认关掉它）。
-                    勾选右上角的「启用抓取模块」即可打开，也可用环境变量 <code>menableExtractors=true</code>。
+                    抓取模块的总开关当前是关闭的，下面各模块都不会联网抓取、也不会出现在播放列表里。
+                    勾选右上角的「启用抓取模块」即可打开；空白模式 <code>mblank=true</code> 会默认关掉它，也可用环境变量 <code>menableExtractors=true</code> 控制。
                 </div>`;
             }
             if (extractorsState.corrupt) {
@@ -3556,15 +3559,20 @@
             };
         }
 
-        // 内置订阅（精选频道）的 URL，镜像 utils/externalSources.js 的 BUILT_IN_SUBSCRIPTIONS。
-        // 纯展示用：认出来就在卡片上打「内置」标，认不出来只是少个标，不影响任何功能。
-        // 之所以要标：它和用户自己加的源长得一模一样，但删除语义不同（删了不再复活），
-        // 而且本页「内置源」那一段还有个总开关管着它 —— 不标会被当成重复项。
-        const BUILT_IN_SUBSCRIPTION_URLS = [
-            'https://raw.githubusercontent.com/akiralereal/iptv/refs/heads/main/IPTV.m3u'
-        ];
+        // 这个源是不是「内置订阅源」（当前是精选频道）。
+        //
+        // 清单**取自服务端**：/api/built-in-sources 的响应里带 builtInSubscriptionUrls，
+        // 由 adminAPI.getBuiltInSourcesAPI 从 externalSources.js 的 BUILT_IN_SUBSCRIPTIONS
+        // 直接映射而来（6822 行判断频道来源徽标时用的也是它）。**不要在这里另抄一份 URL**
+        // ——那份常量改过（README 有记录，还有 RETIRED_SUBSCRIPTION_URLS 这种退役机制），
+        // 抄一份就等着某天静默对不上：内置订阅的卡片看起来和用户自建源一模一样，
+        // 但「内置源」那段的总开关仍在管着它、删了也不复活。
+        //
+        // 之所以要标出来：它和用户自己加的源长得一样，但删除语义不同，而且本页下面那段
+        // 还有个总开关管着它 —— 不标会被当成重复项。清单没加载到就只是少个徽标，不影响功能。
         function isBuiltInSubscription(source) {
-            return !!(source && source.subscriptionUrl && BUILT_IN_SUBSCRIPTION_URLS.includes(source.subscriptionUrl));
+            if (!source || !source.subscriptionUrl) return false;
+            return (builtInConfig.builtInSubscriptionUrls || []).includes(source.subscriptionUrl);
         }
 
         function renderExternalSources() {
@@ -3612,18 +3620,19 @@
                         </span>
                     </div>
                 `;
-                navItem.onclick = () => selectExternalSource(index);
+                navItem.onclick = () => toggleExternalSource(index);
                 externalSourceList.appendChild(navItem);
             });
 
-            // ＋ 卡片常驻网格末尾。0 个源时它就是唯一的卡片，兼作空状态。
-            // 它必须排在所有 .external-nav-item 之后 —— selectExternalSource() 用
-            // 「.external-nav-item 的 DOM 顺序下标」定位选中项，插在中间会错位。
+            // ＋ 卡片排在网格**最前**：订阅源多的部署有几十张卡片，排末尾就得先滚过
+            // 全部卡片才看得到入口，窄屏单列时更远。放最前还顺带兼作 0 源时的空状态。
+            // 位置随便放没关系 —— 全文三处 .external-nav-item 查询都是按类名过滤的
+            // （3919 / 4389 / 7459），这张卡是 .source-card-add，不进那个下标序列。
             const addCard = document.createElement('div');
             addCard.className = 'source-card-add';
             addCard.onclick = () => addExternalSource();
             addCard.innerHTML = '<span class="plus">＋</span><span>添加自定义源</span>';
-            externalSourceList.appendChild(addCard);
+            externalSourceList.insertBefore(addCard, externalSourceList.firstChild);
 
             // 详情只在有选中项时展开。**不再「默认选中第一个」**：本页下面还有
             // 「抓取模块」「内置源」两段，详情一进页面就撑开会把它们顶出第一屏，
@@ -3907,29 +3916,51 @@
             return `<select onchange="updateExternalField(${index}, 'group', this.value)">${options}</select>`;
         }
 
+        /**
+         * 卡片点击：已展开的再点一次 = 收起。**只给卡片自己用。**
+         *
+         * 收起这个语义不能做进 selectExternalSource —— 那个函数还有别的调用方
+         * （editChannelFromDetail 的「频道详情 → 编辑」跳转），它要的是「无论如何
+         * 展开这个源」。混在一起的话，对一个已展开的源点「编辑」会把它关掉，
+         * 还照常提示「已定位到源」，看起来就是编辑按钮坏了。
+         */
+        function toggleExternalSource(index) {
+            if (selectedExternalIndex === index) {
+                collapseExternalDetail();
+                return;
+            }
+            selectExternalSource(index);
+        }
+
+        function collapseExternalDetail() {
+            selectedExternalIndex = null;
+            const list = document.getElementById('externalSourceList');
+            if (list) list.querySelectorAll('.external-nav-item').forEach(item => item.classList.remove('active'));
+            const wrap = document.getElementById('externalDetailWrap');
+            if (wrap) wrap.classList.add('hidden');
+            const detail = document.getElementById('externalDetail');
+            if (detail) detail.innerHTML = '';
+        }
+
+        /** 展开某个源的详情。语义是「一律展开」，不做 toggle（见 toggleExternalSource）。 */
         function selectExternalSource(index) {
-            // 再点一次已展开的卡片 = 收起。详情区很高，收得起来才够得着下面的
-            // 「抓取模块」「内置源」两段。
-            const collapse = (selectedExternalIndex === index);
-            selectedExternalIndex = collapse ? null : index;
+            selectedExternalIndex = index;
 
             // 更新卡片高亮。查询限定在 #externalSourceList 内，且只数 .external-nav-item
-            // ——网格末尾那张 ＋ 卡片是 .source-card-add，不会挤掉下标。
+            // ——那张 ＋ 卡片是 .source-card-add，无论排在网格哪个位置都不影响下标。
             const externalSourceList = document.getElementById('externalSourceList');
             externalSourceList.querySelectorAll('.external-nav-item').forEach((item, i) => {
-                item.classList.toggle('active', i === selectedExternalIndex);
+                item.classList.toggle('active', i === index);
             });
 
             const wrap = document.getElementById('externalDetailWrap');
-            if (collapse) {
-                if (wrap) wrap.classList.add('hidden');
-                const detail = document.getElementById('externalDetail');
-                if (detail) detail.innerHTML = '';
-                return;
-            }
-
             if (wrap) wrap.classList.remove('hidden');
             renderExternalDetail(index);
+
+            // 详情渲染在整个卡片网格**下方**，源一多或窄屏单列时它就在视口外：
+            // 不滚过去的话点卡片「屏幕上什么都没变」，用户会再点一下——正好收起，
+            // 坐实「点了没反应」。改动前是定高三栏、详情恒在右栏，不需要这一步。
+            if (wrap) wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
 
         function renderExternalDetail(index) {
@@ -4344,9 +4375,12 @@
                 if (response.ok && result.success !== false) {
                     showStatus(`${sourceName} 删除成功并已从频道列表中移除`, 'success');
                     
-                    // 调整选中索引
+                    // 调整选中索引。删掉的正是当前展开的那个 → 收起，而不是改去展开
+                    // 第 0 个：详情区现在是「点卡片才展开」的，删完凭空弹出另一个源的
+                    // 编辑表单会让人以为没删掉。旧的「跳到第 0 个」是为了配合当年
+                    // 「总是显示第一个」的行为，那个前提已经没了。
                     if (selectedExternalIndex === index) {
-                        selectedExternalIndex = externalConfig.sources.length > 0 ? 0 : null;
+                        selectedExternalIndex = null;
                     } else if (selectedExternalIndex > index) {
                         selectedExternalIndex--;
                     }
@@ -7449,15 +7483,23 @@ if(success){
                 }
 
                 if (foundIndex !== -1) {
-                    // 选中该源
+                    // 展开该源（selectExternalSource 是「一律展开」语义，不会 toggle）
                     selectExternalSource(foundIndex);
-                    
-                    // 滚动到该源的卡片位置
-                    const navItems = document.querySelectorAll('.external-nav-item');
-                    if (navItems[foundIndex]) {
-                        navItems[foundIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+                    // 滚到**编辑表单**而不是卡片：详情渲染在整个卡片网格下方，
+                    // 源一多（或窄屏单列）时，把卡片滚到屏幕正中意味着表单还在屏幕外，
+                    // 用户看到的是「跳过来了但没有编辑框」。改动前是定高三栏、表单恒在
+                    // 右栏可见，滚卡片就够了；现在不够。
+                    const wrap = document.getElementById('externalDetailWrap');
+                    if (wrap) {
+                        wrap.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    } else {
+                        const navItems = document.querySelectorAll('.external-nav-item');
+                        if (navItems[foundIndex]) {
+                            navItems[foundIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }
                     }
-                    
+
                     showStatus(`已定位到源: ${externalConfig.sources[foundIndex].name}`, 'success');
                 } else {
                     showStatus(`未找到频道"${channelName}"所属的外部源`, 'error');
