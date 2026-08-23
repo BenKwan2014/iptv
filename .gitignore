@@ -18,6 +18,11 @@ my-playlist-config.json
 my-playlist-config.*.json
 my-playlist-profiles.json
 built-in-sources-cache.json
+
+# 抓取模块的配置与缓存（不设 mdataDir 时默认写在当前目录）
+extractors.json
+extractor-cache.json
+extractors.json.corrupt
 built-in-sources-remote.json
 pe-cache.json
 

@@ -1,10 +1,10 @@
 import { readFileSync } from "./fileUtil.js";
 import { dataPath } from "./paths.js";
-import { host, pass, token, userId, enableTvgNormalize } from "../config.js";
+import { host, pass, enableTvgNormalize } from "../config.js";
 import { printDebug, printGreen, printGrey, printRed, printYellow } from "./colorOut.js";
 import { readConfig, parseInterfaceTxt, applyConfig, generateM3u8, generateTxt } from "./playlistConfig.js";
 import { resolverFor, listModules } from "../extractors/registry.js";
-import { getExtractorManager } from "./extractorManager.js";
+import { getExtractorManager, getModuleConfig } from "./extractorManager.js";
 
 /**
  * 清空各模块的解析缓存。
@@ -206,7 +206,9 @@ function interfaceStr(url, headers, urlUserId, urlToken, profile, accessPrefix, 
   }
 
   // 咪咕 VIP 账号经 URL 注入（站长用 /<pass>/<userId>/<token>/m3u 的场景）；用户令牌请求已剥离成无账号段，不触发
-  if (urlUserId != userId && urlToken != token) {
+  // 「默认账号」现在来自咪咕模块的配置（原先是 config.js 的全局导出）
+  const miguAccount = getModuleConfig('migu')
+  if (urlUserId != (miguAccount.userId || "") && urlToken != (miguAccount.token || "")) {
     replaceHost = `${replaceHost}/${urlUserId}/${urlToken}`
   }
 

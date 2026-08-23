@@ -57,6 +57,25 @@ export default {
   // 文案沿用原来的——用户认得它们。
   configSchema: [
     {
+      key: 'userId',
+      label: '咪咕账号 ID',
+      type: 'text',
+      env: 'muserId',
+      default: '',
+      hint: '填咪咕账号可解锁更高画质：免费账号即到 720p；游客不填最高 540p，1080p+ 需 VIP。',
+    },
+    {
+      // 标成 secret：后台只回传「有没有值」不回传明文。原先它在 /api/system-config
+      // 里是明文返回的，而未设访问密码的部署后台是无鉴权的——凭据不该那样暴露。
+      key: 'token',
+      label: '咪咕 Token',
+      type: 'text',
+      secret: true,
+      env: 'mtoken',
+      default: '',
+      hint: '留空为游客模式。等同登录态，别外传。',
+    },
+    {
       key: 'rateType',
       label: '画质',
       type: 'select',
@@ -104,7 +123,7 @@ export default {
   // extractorManager 在加载期把它们一次性搬进 extractors.json——只搬**文件里真有的**，
   // 纯环境变量部署的用户什么都不写，env 继续 live 生效（否则 mrateType=4 会被固化，
   // 用户改 compose 就不生效了）。两边键名相同，故直接列键名。
-  legacySystemConfigKeys: ['rateType', 'enableHDR', 'enableH265', 'enableClientDispatch'],
+  legacySystemConfigKeys: ['userId', 'token', 'rateType', 'enableHDR', 'enableH265', 'enableClientDispatch'],
 
   // 开关代理到 config.js：那是全项目认的那一个，不另开一份
   enabledGetter: () => enableMigu,

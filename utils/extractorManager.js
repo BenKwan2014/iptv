@@ -307,13 +307,15 @@ class ExtractorManager {
     let changed = false
     for (const module of pending) {
       const entry = this.#entry(module.id)
+      const secretKeys = new Set((module.configSchema || []).filter(f => f.secret).map(f => f.key))
       const moved = []
       for (const key of module.legacySystemConfigKeys) {
         // 只搬「旧文件里真有」且「模块这边还没配过」的
         if (legacy[key] === undefined) continue
         if (entry.config[key] !== undefined) continue
         entry.config[key] = legacy[key]
-        moved.push(`${key}=${JSON.stringify(legacy[key])}`)
+        // 凭据只报「已迁移」不报值——docker 日志经常被贴进 issue
+        moved.push(secretKeys.has(key) ? `${key}=<已迁移>` : `${key}=${JSON.stringify(legacy[key])}`)
       }
       migrated[module.id] = true
       changed = true
@@ -786,6 +788,22 @@ function withTimeout(promise, ms, message) {
     promise.finally(() => clearTimeout(timer)),
     new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), ms) }),
   ])
+}
+
+/**
+ * 按模块 id 取生效配置。给路由层用——app.js 与 appUtils.js 需要咪咕账号做
+ * 「地址里没带账号段时的默认值」，而那时还不知道请求属于哪个模块。
+ *
+ * 纯内存计算，不碰磁盘；模块不存在时返回空对象，调用方按缺省处理即可。
+ */
+export function getModuleConfig(id) {
+  const module = getModule(id)
+  if (!module) return {}
+  try {
+    return getExtractorManager().effectiveConfig(module)
+  } catch {
+    return {}
+  }
 }
 
 // 懒初始化：import 时不碰磁盘，测试可以自己 new 一个不落盘的实例。

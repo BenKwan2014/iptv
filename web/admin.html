@@ -2021,16 +2021,6 @@
                 
                 <div class="system-config-grid">
                     <div class="system-config-item">
-                        <label>咪咕用户ID</label>
-                        <input type="text" id="sysUserId" placeholder="留空为游客模式">
-                        <div class="system-config-hint">填咪咕账号可解锁更高画质：免费账号即到 720p；游客不填最高 540p，1080p+ 需 VIP</div>
-                    </div>
-                    <div class="system-config-item">
-                        <label>咪咕Token</label>
-                        <input type="text" id="sysToken" placeholder="留空为游客模式">
-                        <div class="system-config-hint">填咪咕账号可解锁更高画质：免费账号即到 720p；游客不填最高 540p，1080p+ 需 VIP</div>
-                    </div>
-                    <div class="system-config-item">
                         <label>服务端口</label>
                         <input type="number" id="sysPort" placeholder="1905">
                     </div>
@@ -4368,8 +4358,6 @@
 
         // 渲染系统配置
         function renderSystemConfig() {
-            document.getElementById('sysUserId').value = systemConfig.userId || '';
-            document.getElementById('sysToken').value = systemConfig.token || '';
             document.getElementById('sysPort').value = systemConfig.port || 1905;
             document.getElementById('sysHost').value = systemConfig.host || '';
             document.getElementById('sysPass').value = systemConfig.pass || '';
@@ -4388,7 +4376,7 @@
             const box = document.getElementById('envOverrideWarning');
             if (!box) return;
             const labels = {
-                userId: '咪咕账号ID', token: '咪咕Token', port: '端口', host: '公网地址',
+                port: '端口', host: '公网地址',
                 pass: '访问密码',
                 programInfoUpdateInterval: '更新间隔', refreshToken: 'token刷新', adminPath: '管理页面路径',
                 enableMigu: '启用咪咕源', enableBuiltInSources: '启用内置单频道源', enableBuiltInSubscriptions: '启用内置订阅源',
@@ -4532,8 +4520,6 @@ if(success){
                 
                 const adminPathInput = document.getElementById('sysAdminPath').value;
                 const config = {
-                    userId: document.getElementById('sysUserId').value,
-                    token: document.getElementById('sysToken').value,
                     port: port,
                     host: host,
                     pass: document.getElementById('sysPass').value,

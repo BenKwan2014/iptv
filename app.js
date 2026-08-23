@@ -8,7 +8,7 @@ import update from "./utils/updateData.js";
 import { printBlue, printGreen, printMagenta, printRed, printYellow } from "./utils/colorOut.js";
 import { channel, interfaceStr, fetchManifestDirect } from "./utils/appUtils.js";
 import { dataPath } from "./utils/paths.js";
-import { getExtractorManager } from "./utils/extractorManager.js";
+import { getExtractorManager, getModuleConfig } from "./utils/extractorManager.js";
 import { getExtractorsAPI, setExtractorsEnabledAPI, setExtractorEnabledAPI,
   updateExtractorConfigAPI, runExtractorNowAPI } from "./utils/extractorsAPI.js";
 import { getChannelsAPI, getExternalSourcesAPI, saveExternalSourcesAPI,
@@ -828,8 +828,12 @@ async function handleRequest(req, res) {
       routeUrl = urlSplit.length == 3 ? "/" : "/" + urlSplit[urlSplit.length - 1]
     }
   } else {
-    urlUserId = userId
-    urlToken = token
+    // 地址里没带账号段时，用咪咕模块配置里的账号兜底。
+    // `/userId/token/` 这个 URL 约定本身仍是咪咕特有的、留在路由层——搬的是
+    // 账号的存储位置，不是这条约定；把约定也模块化是更大的一次路由重构。
+    const migu = getModuleConfig('migu')
+    urlUserId = migu.userId || ""
+    urlToken = migu.token || ""
   }
 
   // 允许HEAD、OPTIONS预检请求
@@ -1062,7 +1066,10 @@ server.listen(port, async () => {
   }
   if (!enableMigu) {
     printYellow("咪咕源已禁用（enableMigu=false），当前为纯频道管理模式，仅分发内置/外部源")
-  } else if (userId === "" || token === "") {
-    printYellow("当前为游客模式（未配置咪咕账号），咪咕频道最高画质为 720p")
+  } else {
+    const migu = getModuleConfig('migu')
+    if (!migu.userId || !migu.token) {
+      printYellow("当前为游客模式（未配置咪咕账号），咪咕频道最高画质为 720p")
+    }
   }
 })

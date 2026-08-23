@@ -1,11 +1,11 @@
 import { getAllChannels, updateExternalSources, updateBuiltInSources, updateExtractors, externalSourceManager } from "./channelMerger.js"
-import { getExtractorManager } from "./extractorManager.js"
+import { getExtractorManager, getModuleConfig } from "./extractorManager.js"
 import { appendFile, appendFileSync, copyFileSync, renameFileSync, writeFile, writeFileSync } from "./fileUtil.js"
 import { updatePlaybackData } from "./playback.js"
 import { aggregateExternalEpg } from "./epgAggregator.js"
 import { normalizeKey, logoMatchName } from "./channelNormalize.js"
 import { renderOpts, needsOpts } from "./channelOpts.js"
-import { refreshToken as enableTokenRefresh, host, pass, token, userId, enableMigu, externalLogoBase } from "../config.js"
+import { refreshToken as enableTokenRefresh, host, pass, enableMigu, externalLogoBase } from "../config.js"
 import refreshToken from "./refreshToken.js"
 import { printGreen, printRed, printYellow, printBlue } from "./colorOut.js"
 import { getDateString } from "./time.js"
@@ -130,9 +130,11 @@ async function updateTV(hours, options = {}) {
 
   if (enableMigu && !(hours % 720)) {
     // 每720小时(一个月)刷新token（咪咕禁用时无需刷新）
-    if (userId != "" && token != "") {
+    // 账号来自咪咕模块配置（原先是 config.js 的全局导出）
+    const { userId: miguUserId = "", token: miguToken = "" } = getModuleConfig('migu')
+    if (miguUserId != "" && miguToken != "") {
       if (enableTokenRefresh) {
-        await refreshToken(userId, token) ? printGreen("token刷新成功") : printRed("token刷新失败")
+        await refreshToken(miguUserId, miguToken) ? printGreen("token刷新成功") : printRed("token刷新失败")
       } else {
         printYellow("已关闭token刷新（refreshToken=false），跳过")
       }

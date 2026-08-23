@@ -416,6 +416,20 @@ try {
     assert.equal(manager.effectiveConfig(getModule('migu')).rateType, 4, '标记在就不该再搬')
   })
 
+  check('迁移：凭据不写进日志（docker 日志常被贴进 issue）', () => {
+    const lines = []
+    const orig = console.log
+    console.log = (...a) => lines.push(a.join(' '))
+    try {
+      newManager({ userId: '12345678', token: 'SECRET_TOKEN_VALUE', rateType: 4 })
+    } finally { console.log = orig }
+    const all = lines.join('\n')
+    assert.ok(all.includes('迁入模块'), '应当有迁移日志')
+    assert.equal(all.includes('SECRET_TOKEN_VALUE'), false, 'token 明文不该出现在日志里')
+    assert.ok(all.includes('token=<已迁移>'), '应当只报「已迁移」')
+    assert.ok(all.includes('12345678'), 'userId 不是 secret，照常打出来便于排查')
+  })
+
   check('迁移：系统配置里没有的键一个都不写，env 继续 live 生效', () => {
     // 这是关键——搬过来等于把 mrateType=4 固化成文件值，用户改 compose 就再也不生效。
     const manager = newManager({ port: '1905' })   // 完全没有画质字段
@@ -669,4 +683,4 @@ try {
   rmSync(tmp, { recursive: true, force: true })
 }
 
-console.log(`\n全部通过：${passed}/58 ✅`)
+console.log(`\n全部通过：${passed}/59 ✅`)
