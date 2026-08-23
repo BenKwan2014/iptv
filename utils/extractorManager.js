@@ -175,6 +175,12 @@ class ExtractorManager {
     this.config = defaultConfig()
     this.cache = defaultCache()
     this.loaded = false
+    // 本进程内已经尝试抓过的模块。ensureWarm 的判据必须是「这个进程还没抓过」，
+    // 不能是「历史上没成功过」——cache:'memory' 的模块 groups 不落盘、health 落盘，
+    // 重启后就是「groups 空 + lastSuccessAt 有值」，用后者判会把真正需要兜底的
+    // 场景整个挡掉（实测：设了 updateOnStartup=false 的用户重启后一次重生成，
+    // 175 条咪咕频道整批从播放列表消失）。
+    this.attempted = new Set()
   }
 
   // ---- 持久化 ----
@@ -192,6 +198,8 @@ class ExtractorManager {
   /** configBackupAPI 导入配置后要调它，否则运行态与磁盘分叉。 */
   reload() {
     this.corrupt = null
+    // 配置可能整套换了（配置导入），本进程的抓取记账要作废，让 ensureWarm 重新兜底
+    this.attempted.clear()
     return this.load()
   }
 
@@ -446,8 +454,11 @@ class ExtractorManager {
   async ensureWarm() {
     if (!this.loaded) this.load()
     const cold = listModules().filter(module =>
-      this.isModuleEnabled(module) && this.#cacheEntry(module.id).groups.length === 0
-        && !this.#cacheEntry(module.id).health.lastSuccessAt)
+      this.isModuleEnabled(module)
+        && this.#cacheEntry(module.id).groups.length === 0
+        // 本进程没抓过才兜底。抓过之后即便结果是 0 条（比如 B 站房间全没开播），
+        // 也不再反复重抓——那是合法的空，不是冷缓存。
+        && !this.attempted.has(module.id))
     if (!cold.length) return { updated: false, results: [] }
     printYellow(`抓取模块缓存未初始化，现抓一次：${cold.map(m => m.name).join('、')}`)
     const results = []
@@ -504,6 +515,7 @@ class ExtractorManager {
   }
 
   async #runOne(module) {
+    this.attempted.add(module.id)
     const config = this.effectiveConfig(module)
     printBlue(`抓取模块 ${module.name} 更新中...`)
     try {

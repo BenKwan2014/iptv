@@ -25,7 +25,7 @@ import { clearUrlCache } from '../utils/appUtils.js'
 import { selectFromPlayurl, parseRoomList, normalizeRoom, mapLimit, RoomError } from '../extractors/bilibili-live/api.js'
 import { shouldFailRound } from '../extractors/bilibili-live/index.js'
 import {
-  ExtractorManager, validateConfig, redactConfig, withEnvFallback, normalizeGroups,
+  ExtractorManager, validateConfig, redactConfig, withEnvFallback, normalizeGroups, emptyHealth,
 } from '../utils/extractorManager.js'
 
 let passed = 0
@@ -457,6 +457,26 @@ try {
     assert.ok(onDisk.modules['bilibili-live'].health, '健康状态要落盘')
   })
 
+  await checkAsync('冷缓存兜底看「本进程抓过没」，不看「历史上成功过没」', async () => {
+    // 回归：曾用 !health.lastSuccessAt 做判据。而 cache:'memory' 的模块 groups 不落盘、
+    // health 落盘，重启后就是「groups 空 + lastSuccessAt 有值」，那个判据会把真正需要
+    // 兜底的场景整个挡掉——实测设了 updateOnStartup=false 的用户重启后一次重生成，
+    // 175 条咪咕频道整批从播放列表消失。
+    const manager = newManager()
+    manager.setModuleEnabled('bilibili-live', true)
+    manager.updateModuleConfig('bilibili-live', { rooms: '' })   // 空清单 = 不联网
+    // 模拟「上次成功过、但本进程 groups 是空的」
+    manager.cache.modules['bilibili-live'] = {
+      groups: [], health: { ...emptyHealth(), status: 'ok', lastSuccessAt: Date.now() },
+    }
+    const first = await manager.ensureWarm()
+    assert.ok(first.results.some(r => r.id === 'bilibili-live'), '有过成功记录也要兜底抓一次')
+
+    // 抓过之后即便结果是 0 条（房间全没开播是合法的空），不该反复重抓
+    const second = await manager.ensureWarm()
+    assert.deepEqual(second.results, [], '本进程已抓过就不再重复兜底')
+  })
+
   check('刷新间隔默认取模块声明值，且远小于 B 站地址的 2 小时有效期', () => {
     const manager = newManager()
     const module = manager.getState().modules.find(m => m.id === 'bilibili-live')
@@ -479,4 +499,4 @@ try {
   rmSync(tmp, { recursive: true, force: true })
 }
 
-console.log(`\n全部通过：${passed}/45 ✅`)
+console.log(`\n全部通过：${passed}/46 ✅`)
