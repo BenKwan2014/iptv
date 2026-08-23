@@ -479,14 +479,6 @@
             margin-bottom: 4px;
         }
 
-        .external-header {
-            display: flex;
-            gap: 16px;
-            align-items: center;
-            justify-content: center;
-            margin-bottom: 12px;
-        }
-
         /* ===== 源管理页：分段 + 卡片网格 =====
            平台的全部内容来源（自定义源 / 抓取模块 / 内置源）集中在这一页，三段共用
            这套外壳。自定义源刻意排最上——「添加源」是本页最高频的入口，要第一眼看到。 */
@@ -536,6 +528,19 @@
             grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
             gap: 12px;
             align-items: stretch;
+        }
+
+        /* 卡片必须能收缩到内容以下，否则长源名会顶穿轨道。
+           grid/flex 子项默认 min-width:auto = 不小于 min-content，而卡片标题是
+           white-space:nowrap —— 于是 ellipsis 永远轮不到生效，轨道先被撑大，
+           整个网格连带页面横向溢出。实测 375px 视口下 24 字源名溢出 31px、
+           40 字溢出 255px。.source-card-title 内层的 .name 才是真正省略的那一层。 */
+        .external-nav-item,
+        .source-card,
+        .source-card-title,
+        .external-nav-meta,
+        .source-card-foot {
+            min-width: 0;
         }
 
         /* 自定义源卡片。类名沿用 .external-nav-item —— selectExternalSource() 靠
@@ -1095,8 +1100,10 @@
                 grid-template-columns: 1fr;
             }
 
+            /* minmax(0, 1fr) 而不是裸 1fr —— 后者等价于 minmax(auto, 1fr)，
+               auto 最小值让轨道不能收窄到内容以下，单列时长源名直接把页面撑宽。 */
             .source-grid {
-                grid-template-columns: 1fr;
+                grid-template-columns: minmax(0, 1fr);
             }
 
             .external-usage-side {
