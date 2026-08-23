@@ -2313,10 +2313,13 @@
                             </div>
                             <div class="source-section-hint">
                                 平台自带的抓取模块（咪咕 / 哔哩哔哩直播…）。可单独开关，关掉即不联网、不出现在播放列表，
-                                配置原样保留、开回来即恢复。改动即时保存、无需重启。点卡片展开配置。
+                                配置原样保留、开回来即恢复。改动即时保存、无需重启。点卡片展开配置。<br>
+                                右上角的「启用抓取模块」是本段总开关，但<strong>带「独立开关」标记的模块不受它约束</strong>——
+                                它们有各自的开关与环境变量（例如咪咕是 <code>menableMigu</code>），这样才能做到「空白部署但单独留咪咕」。
                             </div>
                         </div>
-                        <label style="display:flex; align-items:center; gap:6px; white-space:nowrap;">
+                        <label style="display:flex; align-items:center; gap:6px; white-space:nowrap;"
+                               title="本段总开关（环境变量 menableExtractors）。注意：带「独立开关」标记的模块不受它约束。">
                             <input type="checkbox" id="extractorsEnabled" onchange="setExtractorsEnabled(this.checked)">
                             启用抓取模块
                         </label>
@@ -2910,6 +2913,7 @@
                      onclick="selectExtractorModule('${escapeHtml(m.id)}')">
                     <div class="source-card-title">
                         <span class="name">${escapeHtml(m.name)}</span>
+                        ${m.enabledProxied ? `<span class="source-badge" title="本模块有自己独立的开关（${escapeHtml(m.enabledEnv || '专属环境变量')}），不受右上角「启用抓取模块」总开关约束——关掉总开关它照常工作。">独立开关</span>` : ''}
                         <label class="source-card-toggle" onclick="event.stopPropagation()" title="即时生效，无需保存">
                             <input type="checkbox" ${m.enabled ? 'checked' : ''}
                                    onchange="toggleExtractorModule('${escapeHtml(m.id)}', this.checked)">
