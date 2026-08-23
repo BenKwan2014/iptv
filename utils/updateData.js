@@ -11,6 +11,7 @@ import { printGreen, printRed, printYellow, printBlue } from "./colorOut.js"
 import { getDateString } from "./time.js"
 import { fetchUrl } from "./net.js"
 import { dataPath } from "./paths.js"
+import { readMiguTokenState, markMiguTokenRefreshed, MIGU_TOKEN_REFRESH_INTERVAL_MS } from "./miguTokenState.js"
 import { readFileSync, existsSync } from "node:fs"
 
 const PE_CACHE_PATH = dataPath('pe-cache.json')
@@ -40,16 +41,29 @@ export function findLocalLogo(name) {
  * 极易在后续改动里被顺手改回 `!(hours % 720)`，而改错了没有任何报错，
  * 只是悄悄开始高频请求咪咕的登录接口。判据的来龙去脉见调用处的注释。
  *
- * @param {number}  hours          进程内累计运行小时数（app.js 的 var hours）
- * @param {boolean} regenerateOnly 仅用缓存重新生成播放列表
- * @param {boolean} startupMode    启动那一次更新
- * @param {boolean} enableMigu     咪咕源总开关
+ * 判据是**墙钟时间差**，不再是 hours 计数器 —— 后者两个方向都错，
+ * 原委见 utils/miguTokenState.js 的文件头。
+ *
+ * @param {number}      now            当前时间戳（毫秒）
+ * @param {number|null} lastRefreshAt  上次刷新时间戳；null = 还没开始计时
+ * @param {boolean}     regenerateOnly 仅用缓存重新生成播放列表
+ * @param {boolean}     startupMode    启动那一次更新
+ * @param {boolean}     enableMigu     咪咕源总开关
+ * @param {number}      intervalMs     刷新周期，默认 30 天
  */
-export function shouldRefreshMiguToken({ hours, regenerateOnly, startupMode, enableMigu }) {
+export function shouldRefreshMiguToken({
+  now, lastRefreshAt, regenerateOnly, startupMode, enableMigu,
+  intervalMs = MIGU_TOKEN_REFRESH_INTERVAL_MS,
+}) {
   if (!enableMigu) return false
+  // 「用缓存重新生成播放列表」和「启动那一次」都不做联网的账号操作。
+  // 时间戳本身已经能挡住高频，这两道闸是纵深防御：数据目录只读导致时间戳
+  // 落不了盘时，崩溃重启循环不至于把咪咕的登录接口打成 DDoS。
   if (regenerateOnly || startupMode) return false
-  if (!(hours > 0)) return false
-  return hours % 720 === 0
+  // 没有记录 = 本轮只开始计时、不刷。这样升级上来的用户不会在升级后立刻
+  // 集体打一次咪咕接口，而是从现在起满 30 天再刷。
+  if (!(lastRefreshAt > 0)) return false
+  return now - lastRefreshAt >= intervalMs
 }
 
 async function updateTV(hours, options = {}) {
@@ -159,19 +173,30 @@ async function updateTV(hours, options = {}) {
   //      共 8 处 `update(0, { regenerateOnly: true })`，每点一次刷一次。
   //      （extractorsAPI 早就为此专门传 update(1, …) 绕开，注释在那边。）
   //
-  // 三道闸各自独立、都不能省：
-  //   · !regenerateOnly —— 「用缓存重新生成播放列表」本来就不该做任何联网的账号操作，
-  //     这一条同时挡住上面 2 和 3 的全部现有与未来调用方，不用逐个改 update(0,…)。
-  //   · !startupMode   —— 挡住 1。
-  //   · hours > 0      —— 兜底：将来若有人以别的方式在 hours 还是 0 时触发完整更新。
-  if (shouldRefreshMiguToken({ hours, regenerateOnly, startupMode, enableMigu })) {
+  // 判据是「距上次刷新是否真的过了 30 天」，与 hours 计数器彻底脱钩。
+  // hours 两个方向都错：0 % 720 === 0 让启动/重新生成每次都刷；而 hours 只落在
+  // updateInterval 的整数倍上，间隔设成 7/11/13/14 时永远碰不到 720 的倍数、
+  // 月度刷新从此不再发生。详见 utils/miguTokenState.js 的文件头。
+  if (enableMigu) {
     // 账号来自咪咕模块配置（原先是 config.js 的全局导出）
     const { userId: miguUserId = "", token: miguToken = "" } = getModuleConfig('migu')
     if (miguUserId != "" && miguToken != "") {
-      if (enableTokenRefresh) {
-        await refreshToken(miguUserId, miguToken) ? printGreen("token刷新成功") : printRed("token刷新失败")
-      } else {
-        printYellow("已关闭token刷新（refreshToken=false），跳过")
+      const now = Date.now()
+      const { lastRefreshAt } = readMiguTokenState()
+      if (!(lastRefreshAt > 0)) {
+        // 首次见到这个账号（新装、升级上来、或数据目录被重建）：只开始计时，不刷。
+        // 升级用户因此不会在升级后集体打一次咪咕接口。
+        markMiguTokenRefreshed(now)
+        printYellow("咪咕 token 刷新计时已开始，30 天后进行首次刷新")
+      } else if (shouldRefreshMiguToken({ now, lastRefreshAt, regenerateOnly, startupMode, enableMigu })) {
+        if (enableTokenRefresh) {
+          await refreshToken(miguUserId, miguToken) ? printGreen("token刷新成功") : printRed("token刷新失败")
+          // 成功与否都记时间：失败还立刻重试等于把频率放开，而失败多半是网络/风控，
+          // 重试帮不上忙。等下一个周期。
+          markMiguTokenRefreshed(now)
+        } else {
+          printYellow("已关闭token刷新（refreshToken=false），跳过")
+        }
       }
     }
   }
