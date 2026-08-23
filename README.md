@@ -580,7 +580,7 @@ gh workflow run push_docker --ref main
 # 查看刚触发的运行（拿到状态与运行链接）
 gh run list --workflow=push_docker --limit 1
 
-# 可选：盯着它跑到结束（多架构 + QEMU 模拟 arm，约 15~40 分钟）
+# 可选：盯着它跑到结束（多架构构建，正常约 3~4 分钟）
 gh run watch
 ```
 
