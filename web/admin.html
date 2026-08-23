@@ -4975,10 +4975,11 @@ if(success){
                 }
                 
                 const adminPathInput = document.getElementById('sysAdminPath').value;
+                const passInput = document.getElementById('sysPass').value;
                 const config = {
                     port: port,
                     host: host,
-                    pass: document.getElementById('sysPass').value,
+                    pass: passInput,
                     adminPath: adminPathInput,
                     programInfoUpdateInterval: document.getElementById('sysProgramInterval').value || '8',
                     enableDisplayNameUnify: document.getElementById('sysEnableDisplayNameUnify').checked
@@ -4995,13 +4996,26 @@ if(success){
                 const result = await response.json();
 
                 if (result.success) {
-                    // 管理页面路径变更：旧地址即时失效，跳转到新地址避免用户被卡住
+                    // 访问密码 / 管理页面路径任一变更，本页当前用的入口地址就已经失效了：
+                    // API_PREFIX 是页面加载时算死的（见 2588），而服务端 reloadConfig() 一返回
+                    // 就按新的 /<pass>/<adminPath> 认路，旧前缀下所有 /api/* 立刻 403 ——
+                    // 包括「保存并重启」紧接着要打的 /api/restart（那次重启会静默失败）。
+                    //
+                    // 原实现只比对 adminPath，且用**旧的** API_PREFIX 拼新地址，所以：
+                    //   · 只改密码            → 不跳转，用户停在一个全站 403 的页面上
+                    //   · 同时改密码和路径     → 跳到旧密码的前缀下，照样 403
+                    // 入口拼法与 app.js:116/123 及导入配置那条路径（见 importConfigBackup）
+                    // 保持同一口径：'/' + [pass, adminPath].filter(Boolean).join('/')。
                     const newAdminPath = sanitizeAdminPath(adminPathInput);
-                    const currentSeg = window.location.pathname.replace(/.*\//, '');
-                    if (newAdminPath !== currentSeg) {
-                        const newUrl = window.location.origin + API_PREFIX + '/' + newAdminPath;
-                        showStatus(`管理页面路径已改为 /${newAdminPath}，3 秒后跳转到新地址…`, 'success');
-                        setTimeout(() => { window.location.href = newUrl; }, 3000);
+                    const curPass = (systemConfig && systemConfig.pass) || '';
+                    const curAdminPath = sanitizeAdminPath((systemConfig && systemConfig.adminPath) || 'admin');
+                    if (passInput !== curPass || newAdminPath !== curAdminPath) {
+                        const entry = '/' + [passInput, newAdminPath].filter(Boolean).join('/');
+                        // 地址明文写进提示并停 5 秒（比原来的 3 秒长）：密码里若有需要 URL 编码的
+                        // 字符，浏览器编码后与服务端的原样比对对不上，跳过去会是 404 —— 那时
+                        // 用户至少看得见正确地址、能自己敲。服务端不清洗 pass，这个口子暂时堵不上。
+                        showStatus(`访问入口已变更，5 秒后跳转到：${entry}　（若跳转后打不开，请手动访问该地址）`, 'success');
+                        setTimeout(() => { window.location.href = window.location.origin + entry; }, 5000);
                         return 'redirect'; // 页面即将跳转，「保存并重启」此时不能跟着重启
                     }
                     showStatus(result.message, 'success');
