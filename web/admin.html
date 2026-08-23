@@ -413,6 +413,9 @@
         }
 
         .status {
+            /* textContent 里的换行要生效：重启失败那条提示是分行列条件的，
+               挤成一行就没法读了。pre-line 只把换行当换行，多余空白仍然折叠。 */
+            white-space: pre-line;
             position: fixed;
             top: 50%;
             left: 50%;
@@ -5033,6 +5036,7 @@
          *                         ——比如「访问入口已变更为 /xxx/admin」，它后面跟着一次跳转，
          *                         提示比跳转先消失的话，这句话等于没说。
          */
+        /** ms <= 0 表示不自动隐藏（页面已经没法用了、必须让用户看到的那种提示）。 */
         function showStatus(message, type, ms = 3000) {
             if (type === 'error') statusErrorSeq++;   // 供 toastSaved 判定「期间出过错」
             const status = document.getElementById('status');
@@ -5045,10 +5049,12 @@
             }, 10);
 
             if (statusHideTimer) clearTimeout(statusHideTimer);
-            statusHideTimer = setTimeout(() => {
-                statusHideTimer = null;
-                status.classList.remove('show');
-            }, ms);
+            if (ms > 0) {
+                statusHideTimer = setTimeout(() => {
+                    statusHideTimer = null;
+                    status.classList.remove('show');
+                }, ms);
+            }
         }
 
         // 渲染系统配置
@@ -5454,6 +5460,35 @@ if(success){
          *                               按 origin 跳会落到已关闭的旧端口，按新端口拼又会
          *                               坑到 Docker 用户 —— 我们算不出正确地址，就别猜。
          */
+        /**
+         * 等服务真的回来。
+         *
+         * 「重启」的实现是服务端 process.exit(0)，靠外部守护进程（Docker restart:always /
+         * pm2 / systemd）拉起。**直接 `node app.js` 跑的部署没有守护进程，它退出后就
+         * 不会回来了** —— 而原实现无条件在 15 秒后刷新，那些用户会被送到一个永远打不开的
+         * 页面，屏幕上没有任何线索说明发生了什么。确认弹窗里虽然写了「直接运行 node 需要
+         * 手动重启」，但点完之后的提示完全不认这回事。
+         *
+         * 先等 4 秒再探：服务端是**回完响应 2 秒后**才退出的，探早了会探到还没死的旧进程，
+         * 误判成「已经回来了」。
+         *
+         * 拿到任何 HTTP 响应就算活着 —— 403 也算（服务在，只是前缀不对，那是另一回事）。
+         *
+         * @returns {Promise<boolean>} 超时前是否回来了
+         */
+        async function waitForServerBack(apiPrefix, { timeoutMs = 40000, intervalMs = 1500 } = {}) {
+            await new Promise(r => setTimeout(r, 4000));
+            const deadline = Date.now() + timeoutMs;
+            while (Date.now() < deadline) {
+                try {
+                    await fetch(apiPrefix + '/api/system-config', { cache: 'no-store' });
+                    return true;
+                } catch (e) { /* 连不上，继续等 */ }
+                await new Promise(r => setTimeout(r, intervalMs));
+            }
+            return false;
+        }
+
         async function restartService(skipConfirm = false, { apiPrefix = API_PREFIX, redirectTo = null, portChanged = false } = {}) {
             if (!skipConfirm) {
                 const confirmed = await showConfirm(
@@ -5487,14 +5522,23 @@ if(success){
                         return;   // 不自动跳转
                     }
                     showStatus(redirectTo
-                        ? `服务重启中...访问入口已变更为 ${redirectTo}，约 15 秒后自动跳转（若打不开请手动访问该地址）`
-                        : '服务重启中...请等待约 5-10 秒后刷新页面', 'success', redirectTo ? 16000 : 3000);
+                        ? `服务重启中...回来后会自动跳到新入口 ${redirectTo}`
+                        : '服务重启中...正在等待服务恢复', 'success', 0);
 
-                    // 15秒后回到正确的地址：入口变了就跳新入口，否则原地刷新
-                    setTimeout(() => {
+                    // 探活而不是盲等：服务没被拉起来时，与其把用户送到一个打不开的页面，
+                    // 不如告诉他发生了什么、该怎么办（见 waitForServerBack 的注释）。
+                    const back = await waitForServerBack(apiPrefix);
+                    if (back) {
                         if (redirectTo) window.location.href = window.location.origin + redirectTo;
                         else location.reload();
-                    }, 15000);
+                        return;
+                    }
+                    showStatus(
+                        '服务已停止，但等了 40 秒没有自动重启。\n\n'
+                        + '· Docker / pm2 / systemd 部署：守护进程通常会拉起，可稍等片刻再刷新本页；\n'
+                        + '· 直接用 node app.js 运行：没有守护进程，需要回到终端手动重新启动。\n\n'
+                        + '（「重启服务」的实现是让进程退出、由外部守护进程拉起）',
+                        'error', 0);
                 } else {
                     showStatus(result.message || '重启失败', 'error');
                 }
