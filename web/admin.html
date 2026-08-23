@@ -1230,16 +1230,6 @@
             color: #fff;
         }
 
-        .system-config-warning {
-            background: #fff7e6;
-            border: 1px solid #ffd666;
-            border-radius: 4px;
-            padding: 12px;
-            margin-bottom: 15px;
-            color: #ad6800;
-            font-size: 13px;
-        }
-
         /* 核心内容开关：默认开启，单独成组并强调谨慎关闭 */
         .content-switches {
             border: 1px solid #ffccc7;
@@ -2337,15 +2327,13 @@
                 </div>
 
                 <div class="settings-subpanel active" id="settingsSub0">
-                <div class="system-config-warning">
-                    ⚠️ 修改系统配置后需要<strong>重启服务</strong>才能生效
-                </div>
                 <div id="envOverrideWarning" style="display: none; margin: 10px 0; padding: 12px 14px; background: #fff7e6; border: 1px solid #ffd591; border-left: 4px solid #fa8c16; border-radius: 6px; color: #874d00; font-size: 13px; line-height: 1.7;"></div>
 
                 <div class="system-config-grid">
                     <div class="system-config-item">
                         <label>服务端口</label>
                         <input type="number" id="sysPort" placeholder="1905">
+                        <div class="system-config-hint">⚠️ 本页唯二需要<strong>重启服务</strong>才生效的设置之一（另一个是下方的「节目单更新间隔」）；其余项保存即生效。Docker 部署还需同步改端口映射。</div>
                     </div>
                     <div class="system-config-item">
                         <label>公网地址</label>
@@ -2378,9 +2366,6 @@
                 <div class="system-config-actions">
                     <button class="btn btn-success" onclick="saveSystemConfig()">💾 保存系统配置</button>
                     <button class="btn btn-primary" onclick="saveAndRestartService()" title="保存成功后自动重启服务，让需重启的配置一步生效">💾🔄 保存并重启</button>
-                </div>
-                <div style="margin-top: 12px; padding: 10px; background: #f0f0f0; border-radius: 4px; font-size: 13px; color: #666; text-align: center;">
-                    💡 提示：保存配置后，需点击页面顶部的"重启服务"按钮使新配置生效
                 </div>
 
                 <!-- 配置备份 / 迁移（issue #99） -->
