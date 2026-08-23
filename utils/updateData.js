@@ -158,6 +158,9 @@ async function updateTV(hours, options = {}) {
   // 因依赖请求头而未写进 txt 的频道数。静默跳过会让用户「莫名少台」且日志里毫无线索，
   // 排查成本从「看一眼日志」变成「提 issue」。
   let txtSkipped = 0
+  // 节目单抓取失败的频道数。逐个打日志会刷屏（一轮 175 个频道），收尾统一报一次。
+  let playbackFailed = 0
+  let lastPlaybackError = ''
   for (let i = 0; i < datas.length; i++) {
 
     const data = datas[i].dataList
@@ -221,9 +224,18 @@ async function updateTV(hours, options = {}) {
 
       // regenerateOnly模式下跳过playback更新（仅更新播放列表）
       if (wantsPlayback && !regenerateOnly) {
-        // 咪咕成功写入 EPG 的频道记为「已覆盖」，外部 EPG 不再为其重复补充
-        if (await updatePlaybackData(channelItem, playbackFile)) {
-          epgCoveredKeys.add(normalizeKey(channelItem.name))
+        // 单个频道的节目单抓不到，不该让整轮更新崩掉——这条链上（getPlaybackData →
+        // updatePlaybackData → 这里）原本一个 try 都没有，节目单接口一次瞬时故障就会
+        // 在第一个频道处抛出，其余一百多个频道的节目单一个都抓不到，本轮所有源的
+        // 刷新也一起作废（实测日志：TypeError → 更新失败）。
+        try {
+          // 咪咕成功写入 EPG 的频道记为「已覆盖」，外部 EPG 不再为其重复补充
+          if (await updatePlaybackData(channelItem, playbackFile)) {
+            epgCoveredKeys.add(normalizeKey(channelItem.name))
+          }
+        } catch (error) {
+          playbackFailed++
+          lastPlaybackError = error?.message || String(error)
         }
       }
 
@@ -252,6 +264,10 @@ async function updateTV(hours, options = {}) {
       // printGreen(`    节目链接更新成功`)
     }
     printGreen(`分组:${datas[i].name} 更新完成！`)
+  }
+
+  if (playbackFailed > 0) {
+    printYellow(`节目单抓取失败 ${playbackFailed} 个频道（播放列表不受影响，这些频道本轮没有节目单）：${lastPlaybackError}`)
   }
 
   if (txtSkipped > 0) {
