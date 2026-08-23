@@ -120,18 +120,13 @@ export default {
   defaultRefreshMinutes: 45,
 
   configSchema: [
-    {
-      key: 'rooms',
-      label: '直播间清单',
-      type: 'text',
-      multiline: true,
-      placeholder: '一行一个：房间号 / 直播间地址 / b23.tv 短链\n13\nhttps://live.bilibili.com/1022\n# 井号开头是注释',
-      hint: '房间号是地址路径里的数字，不是 live_from= 那种参数。直接粘完整地址最稳。未开播的房间会自动跳过。',
-      default: '',
-    },
+    // 「频道从哪来」有两条路，而且可以同时用。原先它们平铺成兄弟项、手填的还排在
+    // 前面，用户第一眼看不出该用哪个。现在自动的排前面（那是默认路径、开箱即用），
+    // 手填的排后面并写明「可留空」，再靠 section 归到同一段里。
     {
       key: 'topAreas',
-      label: '自动加入热门直播间的分区',
+      section: '频道从哪来（两种可以同时用）',
+      label: '① 自动：按分区加入热门直播间',
       type: 'text',
       multiline: true,
       placeholder: '一行一个分区名\n赛事\n网游\n# 井号开头是注释',
@@ -139,21 +134,33 @@ export default {
       //（实测 3921 万 vs 254 万），内容全是正在打的比赛、不会混进普通主播，
       // 是「不用自己找房间号也能开箱即用」这件事最合适的默认值。
       default: '赛事',
-      hint: '省去自己找房间号。当前可填：赛事 / 网游 / 手游 / 单机游戏 / 娱乐 / 电台 / 虚拟主播 / 聊天室 / 生活 / 知识 / 互动玩法 / 购物。分区名以 B 站为准（写错会在下面的健康状态里提示）。留空则只用上面手填的清单。',
+      hint: '推荐用这个，不用自己找房间号。默认「赛事」＝当前正在打的比赛（英雄联盟 / 王者 / DOTA2 等官方赛事转播）。可填：赛事 / 网游 / 手游 / 单机游戏 / 娱乐 / 电台 / 虚拟主播 / 聊天室 / 生活 / 知识 / 互动玩法 / 购物，一行一个；写错会在上面的健康状态里提示。',
     },
     {
       key: 'topPerArea',
-      label: '每个分区取前几名',
+      section: '频道从哪来（两种可以同时用）',
+      label: '　　每个分区取前几名',
       type: 'int',
       min: 0,
       max: 20,
       // 8 而不是 5：实测赛事区人气在第 6~7 名之间有 82% 的断崖，取 5 会漏掉
       // 「第五人格 IVL 夏季赛总决赛」这种 300 万人在看的比赛。8 正好覆盖到断崖处。
       default: 8,
-      hint: '按人气从高到低，是上限不是保证。人气过低的直播间会被自动滤掉（避免把同一场比赛的多机位小号也拉进来），所以清闲时段实际条数会少于这个值。填 0 关掉本功能。',
+      hint: '按人气从高到低，是上限不是保证。人气过低的会被自动滤掉（免得把同一场比赛的多机位小号也拉进来），所以清闲时段实际条数会少于这个值。填 0 只关掉①，不影响②。',
+    },
+    {
+      key: 'rooms',
+      section: '频道从哪来（两种可以同时用）',
+      label: '② 手动：指定直播间（可留空）',
+      type: 'text',
+      multiline: true,
+      placeholder: '一行一个：房间号 / 直播间地址 / b23.tv 短链\n13\nhttps://live.bilibili.com/1022\n# 井号开头是注释',
+      hint: '想固定看某个主播时才需要填。房间号是地址路径里的数字，不是 live_from= 那种参数，直接粘完整地址最稳。未开播的房间会自动跳过。与①重复的房间不会出现两次。',
+      default: '',
     },
     {
       key: 'sessdata',
+      section: '登录态（选填）',
       label: 'SESSDATA（登录态）',
       type: 'text',
       secret: true,
@@ -166,6 +173,7 @@ export default {
     },
     {
       key: 'preferHls',
+      section: '播放偏好',
       label: '优先 HLS',
       type: 'boolean',
       hint: '关掉则优先 FLV。HLS 是分段的，中途卡顿后播放器更容易自己恢复。',
@@ -173,6 +181,7 @@ export default {
     },
     {
       key: 'preferAvc',
+      section: '播放偏好',
       label: '优先 H.264',
       type: 'boolean',
       hint: '关掉则优先 HEVC（H.265）。老电视盒子多数解不了 HEVC，默认开着更稳。',
@@ -180,6 +189,7 @@ export default {
     },
     {
       key: 'cachingMs',
+      section: '播放偏好',
       label: '播放缓冲 (ms)',
       type: 'int',
       min: 0,

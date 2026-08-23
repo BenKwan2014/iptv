@@ -664,6 +664,22 @@
            而说明文字里那句「点卡片展开配置」基本没人读。用蓝色 + 箭头把它说出来：
            蓝色是全站的可交互色，扫一眼就知道这里能点。
            展开后文案换成「收起 ⌃」，兼作当前状态的指示。 */
+        /* 模块配置表单里的分段标题 */
+        .xt-section {
+            margin: 16px 0 10px;
+            padding-top: 12px;
+            border-top: 1px solid #f0f0f0;
+            font-size: 13px;
+            font-weight: 600;
+            color: #555;
+        }
+
+        .xt-section:first-child {
+            margin-top: 0;
+            padding-top: 0;
+            border-top: none;
+        }
+
         .card-open-hint {
             margin-left: auto;
             flex-shrink: 0;
@@ -2860,6 +2876,34 @@
                 ${hint}</div>`;
         }
 
+        /**
+         * 把 configSchema 渲染成表单，按 field.section 分段。
+         *
+         * 加分段是因为字段平铺会让人懵：哔哩哔哩模块里「分区」和「直播间清单」都能加频道，
+         * 摆成兄弟项时没有任何东西说明它们是什么关系、该用哪个。分段之后一眼能看出
+         * 「这三个是同一件事的两种方式」，后面那些是不相干的播放选项。
+         *
+         * 只有出现**可见**字段时才画标题：hidden 字段返回空串（如咪咕的 enableHDR），
+         * 整段都隐藏的话画个光秃秃的标题很怪。
+         */
+        function extractorFieldsHtml(moduleId, schema, config, secretsSet, envProvided) {
+            let html = '';
+            let currentSection = null;
+            for (const field of schema) {
+                const body = extractorFieldHtml(moduleId, field, config, secretsSet, envProvided);
+                if (!body) continue;   // hidden
+                const section = field.section || '';
+                if (section !== currentSection) {
+                    currentSection = section;
+                    if (section) {
+                        html += `<div class="xt-section">${escapeHtml(section)}</div>`;
+                    }
+                }
+                html += body;
+            }
+            return html;
+        }
+
         // 模块可以声明 helper，在自己的卡片里多渲染一块辅助 UI。
         // markup 留在这里而不是模块文件：配套的 CSS、引导弹窗、bookmarklet 代码都在本页。
         function extractorHelperHtml(key) {
@@ -3018,7 +3062,7 @@
                 <div style="font-size:12px; margin-bottom:12px;">${extractorHealthHtml(m.health || {})}</div>
                 <div style="border-top:1px solid #f5f5f5; padding-top:12px;">
                     ${extractorHelperHtml(m.helper)}
-                    ${(m.configSchema || []).map(f => extractorFieldHtml(m.id, f, m.config || {}, m.secretsSet || {}, m.envProvided || {})).join('')}
+                    ${extractorFieldsHtml(m.id, m.configSchema || [], m.config || {}, m.secretsSet || {}, m.envProvided || {})}
                     <div style="margin-bottom:12px;">
                         <label style="display:block; font-size:12px; color:#888;">刷新间隔（分钟）</label>
                         <input type="number" id="xf-${escapeHtml(m.id)}-__refresh" oninput="setSaveDirty('xt:${escapeHtml(m.id)}')" value="${m.refreshMinutes}" style="width:140px;">

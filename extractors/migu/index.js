@@ -98,6 +98,7 @@ export default {
   configSchema: [
     {
       key: 'userId',
+      section: '咪咕账号（选填，决定可用画质上限）',
       label: '咪咕账号 ID',
       type: 'text',
       env: 'muserId',
@@ -108,6 +109,7 @@ export default {
       // 标成 secret：后台只回传「有没有值」不回传明文。原先它在 /api/system-config
       // 里是明文返回的，而未设访问密码的部署后台是无鉴权的——凭据不该那样暴露。
       key: 'token',
+      section: '咪咕账号（选填，决定可用画质上限）',
       label: '咪咕 Token',
       type: 'text',
       secret: true,
@@ -117,6 +119,7 @@ export default {
     },
     {
       key: 'rateType',
+      section: '画质与兼容性',
       label: '画质',
       type: 'select',
       env: 'mrateType',
@@ -132,6 +135,7 @@ export default {
     },
     {
       key: 'enableH265',
+      section: '画质与兼容性',
       label: '启用 H.265 原画（可能存在兼容性问题）',
       type: 'boolean',
       env: 'menableH265',
@@ -140,6 +144,7 @@ export default {
     },
     {
       key: 'enableClientDispatch',
+      section: '画质与兼容性',
       label: '客户端就近取流（跨运营商观看时开启）',
       type: 'boolean',
       env: 'menableClientDispatch',
