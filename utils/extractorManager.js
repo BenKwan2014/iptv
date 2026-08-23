@@ -583,6 +583,25 @@ class ExtractorManager {
     return [...groupMap.values()]
   }
 
+  /**
+   * 声明了 critical、已启用、但本轮一条频道都没有的模块。
+   *
+   * 用于 updateData 的写盘守卫：这类模块拿不到频道时，宁可保留上一份播放列表
+   * 也不要覆盖。全局的「总频道数为 0」守卫护不住它——外部源随便几十条就能把
+   * 总数撑起来，而用户会看到咪咕频道整批消失且日志里只有一行「咪咕 0 个」。
+   */
+  criticalShortfall() {
+    if (!this.loaded) this.load()
+    const groups = this.getValidChannels()
+    return listModules()
+      .filter(module => module.capabilities?.critical && this.isModuleEnabled(module))
+      .filter(module => {
+        const sourceId = module.sourceId || sourceIdOf(module.id)
+        return !groups.some(group => group.dataList.some(ch => ch.sourceId === sourceId))
+      })
+      .map(module => module.name)
+  }
+
   /** 后台「按配置档禁用源」矩阵要枚举的源。 */
   listSourceIds() {
     return listModules()

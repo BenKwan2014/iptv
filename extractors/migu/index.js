@@ -42,7 +42,11 @@ export default {
   sourceId: 'migu',
 
   // 结果大、每轮都变、带着咪咕返回的全部原始字段，落盘纯属浪费
-  capabilities: { cache: 'memory', resolve: true, epg: true },
+  // critical: 这个模块拿不到频道时，宁可保留上一份播放列表也不要覆盖。
+  // 收编前咪咕是现抓，失败会让 getAllChannels 返回空、0 频道守卫触发、一个字节都不写；
+  // 收编后失败被吞在模块内，而外部源撑着总数不为 0，守卫就失效了——那份保护是靠
+  // 「咪咕失败 = 全局 0 条」这个巧合得来的，收编后必须显式声明才能保住。
+  capabilities: { cache: 'memory', resolve: true, epg: true, critical: true },
 
   // 与 app.js 的整点更新同频；咪咕地址是播放时才解析的，不存在过期问题
   defaultRefreshMinutes: 360,

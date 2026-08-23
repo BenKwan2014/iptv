@@ -477,6 +477,33 @@ try {
     assert.deepEqual(second.results, [], '本进程已抓过就不再重复兜底')
   })
 
+  check('critical 模块一条频道都没有时会被报出来，供写盘守卫拦截', () => {
+    // 回归：收编前咪咕现抓失败会让 getAllChannels 返回空 → 全局 0 频道守卫触发 →
+    // 一个字节都不写。收编后失败被吞在模块内，而外部源几十条就能把总数撑起来，
+    // 守卫失效 → 播放列表被重写成没有咪咕的版本（实测 484 条 → 0 条）。
+    // 那份保护本来是靠「咪咕失败 = 全局 0 条」的巧合得来的，现在改成显式声明。
+    const manager = newManager()
+    assert.deepEqual(manager.criticalShortfall(), ['咪咕视频'], '缓存为空时必须报出来')
+
+    // 有频道了就不该再报
+    manager.cache.modules['migu'] = {
+      groups: [{ name: '央视', dataList: [{ name: 'CCTV1', deferredRef: '1' }] }],
+      health: { ...emptyHealth(), status: 'ok', lastSuccessAt: Date.now() },
+    }
+    assert.deepEqual(manager.criticalShortfall(), [])
+  })
+
+  check('非 critical 模块拿不到频道不触发守卫（房间全没开播是合法的空）', () => {
+    const manager = newManager()
+    manager.setModuleEnabled('bilibili-live', true)
+    manager.cache.modules['migu'] = {
+      groups: [{ name: '央视', dataList: [{ name: 'CCTV1', deferredRef: '1' }] }],
+      health: { ...emptyHealth(), status: 'ok', lastSuccessAt: Date.now() },
+    }
+    // bilibili-live 没有 critical，0 条频道不该让整份播放列表停止生成
+    assert.deepEqual(manager.criticalShortfall(), [])
+  })
+
   check('刷新间隔默认取模块声明值，且远小于 B 站地址的 2 小时有效期', () => {
     const manager = newManager()
     const module = manager.getState().modules.find(m => m.id === 'bilibili-live')
@@ -499,4 +526,4 @@ try {
   rmSync(tmp, { recursive: true, force: true })
 }
 
-console.log(`\n全部通过：${passed}/46 ✅`)
+console.log(`\n全部通过：${passed}/48 ✅`)

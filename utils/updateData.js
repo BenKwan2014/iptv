@@ -1,4 +1,5 @@
 import { getAllChannels, updateExternalSources, updateBuiltInSources, updateExtractors, externalSourceManager } from "./channelMerger.js"
+import { getExtractorManager } from "./extractorManager.js"
 import { appendFile, appendFileSync, copyFileSync, renameFileSync, writeFile, writeFileSync } from "./fileUtil.js"
 import { updatePlaybackData } from "./playback.js"
 import { aggregateExternalEpg } from "./epgAggregator.js"
@@ -92,7 +93,20 @@ async function updateTV(hours, options = {}) {
   let datas = await getAllChannels({ skipMigu, useCachedMigu: regenerateOnly })
   printGreen("电视频道-获取成功")
 
-  // 守卫：本次获取到 0 个频道（基本只会在咪咕/网络不可达时发生）。
+  // 守卫一：声明了 critical 的抓取模块（咪咕）一条频道都没拿到。
+  //
+  // 全局的「总频道数为 0」守卫护不住这种情况——外部源随便几十条就能把总数撑起来，
+  // 于是播放列表被重写成没有咪咕的版本，而日志里只有一行「咪咕 0 个」。收编前它是
+  // 安全的：咪咕现抓失败会让总数真的变成 0；收编后失败被吞在模块内，那份保护是靠
+  // 巧合得来的。触发场景很日常：容器重启时咪咕/网络暂不可达（NAS 重启、compose
+  // 启动顺序、家宽还没拨上）。
+  const shortfall = getExtractorManager().criticalShortfall()
+  if (shortfall.length) {
+    printRed(`${shortfall.join('、')} 本次一条频道都没取到（疑似网络不可达），保留现有播放列表，不覆盖`)
+    return false
+  }
+
+  // 守卫二：本次获取到 0 个频道。
   // 此时绝不能用空结果覆盖上一次的好文件，否则「我的频道」会被清空且不自愈。
   // 返回 false 通知上层 update() 跳过后续 PE 步骤，避免把体育缓存追加到旧文件造成污染。
   const totalChannels = datas.reduce((sum, g) => sum + (g.dataList?.length || 0), 0)
