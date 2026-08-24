@@ -4,40 +4,7 @@
 [![Docker Hub](https://img.shields.io/badge/Docker%20Hub-akiralereal/iptv-2496ED?logo=docker&logoColor=white&style=for-the-badge&logoSize=auto)](https://hub.docker.com/r/akiralereal/iptv)
 [![GitHub Sponsors](https://img.shields.io/badge/Sponsor-%E2%9D%A4-EA4AAA?logo=githubsponsors&logoColor=white&style=for-the-badge)](https://github.com/sponsors/akiralereal)
 
-### ☕ 打赏支持 / Buy Me a Coffee
-
-> 如果这个项目对你有帮助，欢迎支持一下 :)
-
-<table>
-  <tr>
-    <td align="center"><b>❤️ GitHub Sponsors</b></td>
-    <td align="center"><b>☕ Ko-fi</b></td>
-    <td align="center"><b>💰 USDT (TRC20)</b></td>
-  </tr>
-  <tr>
-    <td align="center">
-      <a href="https://github.com/sponsors/akiralereal" target="_blank"><img src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-EA4AAA?logo=githubsponsors&logoColor=white&style=for-the-badge" alt="GitHub Sponsors"/></a>
-    </td>
-    <td align="center">
-      <a href="https://ko-fi.com/akirale" target="_blank"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Ko-fi"/></a>
-    </td>
-    <td align="center">
-      <img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=TArpwDgewYSFCYX6XoJ6drwpEU6UGBw5yq" width="200" alt="USDT TRC20 QR Code"/><br/>
-      <code>TArpwDgewYSFCYX6XoJ6drwpEU6UGBw5yq</code><br/><br/>
-      <sub>⚠️ 仅支持 <b>TRON (TRC20)</b> 网络，请勿使用其他网络<br/>Only via <b>TRON (TRC20)</b> network</sub>
-    </td>
-  </tr>
-</table>
-
-> [!WARNING]
-> **免责声明**
->
-> - 本项目仅供学习、研究与技术交流使用，**请勿用于任何商业用途及非法用途**。
-> - 本项目自身**不制作、不存储、不分发任何音视频内容**，仅对互联网上公开可访问的直播流做聚合、整理与转发；所有内容与其版权归各内容平台及权利人所有。
-> - 使用本项目访问各平台内容时，请遵守对应平台的用户协议与当地法律法规；会员内容请使用**你本人合法持有的账号**观看。因使用本项目产生的一切后果由使用者自行承担，与项目作者无关。
-> - 若本项目侵犯了您的合法权益，请通过 issue 联系，将及时处理删除。
-
-**当前版本：v4.0.1**
+**当前版本：v4.0.1** · <sub>本项目仅供学习与技术交流，使用前请阅读文末<a href="#免责声明">免责声明</a>；喜欢的话欢迎 Star / <a href="#-打赏支持buy-me-a-coffee">打赏支持</a> :)</sub>
 
 > 一个**自托管的模块化 IPTV 直播源管理与分发系统**：把平台**抓取模块**（内置咪咕视频、哔哩哔哩直播）、内置精选频道、你自己的直连源与 m3u/txt 订阅，聚合成一份干净的播放列表（m3u / txt + EPG 节目单），配可视化管理后台。推荐 Docker 一键部署（NAS 友好），也可 Node 直接裸跑。
 >
@@ -45,6 +12,10 @@
 > - 🧩 **模块化源管理** — 每个平台一张卡片：独立开关、配置、健康状态；高画质在卡片里配置账号即可解锁（扫码 / 书签工具，免抓包）
 > - 🔗 **自定义源 / 订阅** — m3u8 直链、网页自动抓取、m3u/txt 订阅批量导入
 > - 📡 **进阶玩法** — EPG 多源聚合、多配置档（每台电视一套频道编排）、用户令牌（一人一源、可单独吊销）
+
+<details>
+<summary><b>🆕 当前版本更新内容（点击展开）</b></summary>
+
 <!-- CURRENT_RELEASE_NOTES:START -->
 #### 🆕 v4.0.1 更新内容
 
@@ -65,6 +36,8 @@
 <sub>完整更新历史见下方 <a href="#-更新日志">更新日志</a></sub>
 <!-- CURRENT_RELEASE_NOTES:END -->
 
+</details>
+
 <div align="center">
   <img src="https://raw.githubusercontent.com/akiralereal/iptv/main/Resources/111.png" width="800"/>
   <img src="https://raw.githubusercontent.com/akiralereal/iptv/main/Resources/222.png" width="800"/>
@@ -72,15 +45,16 @@
 
 ## 📑 目录
 
-- [🚀 快速开始（Docker 部署）](#-快速开始---docker-部署推荐)
+- [🚀 快速开始（Docker 部署）](#-快速开始docker-部署)
+- [Web 管理后台](#web-管理后台)
 - [❓ 常见问题（FAQ）](#-常见问题faq)
-- [🔧 本地部署（进阶用户）](#-本地部署进阶用户)
-- [🖥️ Web 管理后台](#web-管理后台)
+- [🔧 配置与进阶](#-配置与进阶)
 - [📋 更新日志](#-更新日志)
+- [☕ 打赏支持](#-打赏支持buy-me-a-coffee)
 
 ---
 
-## 🚀 快速开始 - Docker 部署（推荐）
+## 🚀 快速开始（Docker 部署）
 
 创建 `docker-compose.yml`：
 
@@ -89,46 +63,23 @@ services:
   iptv:
     image: akiralereal/iptv:latest
     container_name: iptv
-    init: true                                  # 回收 Chromium 僵尸进程
+    init: true                    # 回收 Chromium 僵尸进程
     ports:
       - "1905:1905"
     environment:
-      - mport=1905                              # 容器监听端口，与 ports 对应
-      - mdataDir=/migu/data                     # 数据持久化目录（对应下方卷）
-      # - mhost=                                # 可选：外部访问地址（如 http://test.com:1905）
-      # - mpass=                                # 可选：访问密码，设置后访问 http://ip:port/密码/...
+      - mport=1905                # 容器监听端口，与 ports 对应
+      # - mhost=                  # 可选：外部访问地址（如 http://192.168.1.100:1905）
+      # - mpass=                  # 可选：访问密码，设置后访问 http://ip:port/密码/...
     volumes:
-      - ./data:/migu/data                       # 不挂载的话，重建容器/升级镜像会丢配置
+      - ./data:/migu/data         # 数据持久化，不挂载则重建容器 / 升级镜像会丢配置
     restart: always
 ```
 
 ```bash
-docker-compose up -d          # 启动；升级用 docker-compose pull && docker-compose up -d
+docker compose up -d              # 升级：docker compose pull && docker compose up -d
 ```
 
-也可以一条命令直接跑：
-
-```bash
-docker run -d -p 1905:1905 -v "$(pwd)/data:/migu/data" --init --name iptv akiralereal/iptv:latest
-```
-
-> 🧩 **平台账号、画质等内容配置不用写进 compose**：部署后进后台「**🌐 源管理**」，在对应模块卡片里设置（支持扫码登录 / 书签工具），保存即时生效。习惯环境变量的进阶用户见[完整配置表](#-配置说明)。
->
-> 📤 **备份 / 换机迁移**：后台「设置 → 系统配置 → 🧳 配置备份 / 迁移」一键导出全部配置为单个文件，新机器导入即恢复（`logos/` 自定义台标需单独拷贝）。也可直接备份整个 `./data` 目录。
->
-> <details><summary>旧版本容器（未挂卷）升级前把配置拷出来</summary>
->
-> ```bash
-> mkdir -p ./data
-> # 较新版本镜像（数据在 /migu/data）：整目录拷出
-> docker cp iptv:/migu/data/. ./data/ 2>/dev/null || true
-> # 旧版本镜像（数据在 /migu 根目录）：逐个拷贝
-> for f in system-config.json my-playlist-config.json my-playlist-profiles.json external-sources.json epg-sources.json users.json; do \
->   docker cp "iptv:/migu/$f" ./data/ 2>/dev/null || true; done
-> ```
-> </details>
-
-### 🎯 访问服务
+部署完即可访问：
 
 | 用途 | 地址 |
 | --- | --- |
@@ -136,6 +87,21 @@ docker run -d -p 1905:1905 -v "$(pwd)/data:/migu/data" --init --name iptv akiral
 | TXT 播放列表 | `http://your-ip:1905/txt` |
 | EPG 节目单 | `http://your-ip:1905/playback.xml` |
 | **管理后台** | `http://your-ip:1905/admin`（设了密码则 `http://your-ip:1905/密码/admin`） |
+
+> 🧩 平台账号、画质等内容配置**不用写进 compose**：部署后进后台「**🌐 源管理**」在对应模块卡片里设置（支持扫码登录 / 书签工具），保存即时生效。备份 / 换机迁移用后台「设置 → 系统配置 → 🧳 配置备份 / 迁移」一键导出导入（`logos/` 自定义台标需单独拷贝），或直接备份 `./data` 目录。更多环境变量与玩法见[配置与进阶](#-配置与进阶)。
+
+---
+
+## Web 管理后台
+
+四个页签管完全部：
+
+- **📺 我的频道** — 频道编排（分组 / 隐藏 / 排序 / 重命名）、多配置档、订阅地址复制
+- **🌐 源管理** — 全部内容来源一页聚合：每个抓取模块一张卡片（独立开关、配置、健康状态，支持扫码登录）；内置源与精选频道各自独立开关；自定义源支持**网页自动抓取**（填播放页地址自动提取 m3u8，可定时刷新）、**手动直链**、**订阅批量导入**（m3u/m3u8/txt，URL / 本地文件 / 粘贴均可）三种方式，并有 🩺 失效检测、▲▼ 排序（决定播放器里源1/源2 顺序）
+- **⚙️ 设置** — 系统配置 / 频道别名 / 自动分组 / EPG 聚合 / 用户管理
+- **ℹ️ 关于我们** — 版本信息与检查更新
+
+修改源后 1-2 秒内自动重新生成播放列表；外部源配置存于数据目录 `external-sources.json`。
 
 ---
 
@@ -149,24 +115,24 @@ A：**H.265（HEVC）兼容性**问题——部分平台的直播流默认 H.265
 
 A：这类播放器**不跟随 302 跳转**。改用**兼容版订阅**：后台「我的频道」订阅地址栏点「🩹 兼容版」复制地址（即原地址加 `?relay=1`），在播放器里重新添加订阅即可。兼容版由服务器直出播放清单，视频流仍由播放器直连 CDN、不占服务器带宽；其他播放器无需换用（issue #98）。
 
+**Q：不确定播放器该填哪个订阅地址？**
+
+| 播放器 | 用哪个订阅 |
+|------|-----------|
+| DIYP / 百川 影音 | txt 订阅（`/txt`） |
+| TiviMate / APTV / Kodi / OK 影视 | 标准 m3u 订阅（`/interface.m3u`） |
+| 飞牛影视 | 标准 m3u 订阅（需 `.m3u` 后缀，即 `/interface.m3u`） |
+| **极空间极影视、部分老电视盒**（列表正常但播放转圈） | **兼容版订阅**（`/interface.m3u?relay=1`，后台可一键复制） |
+
+> 遇到新的不兼容播放器欢迎提 issue 补充此表。
+
 ---
 
-## 🔧 本地部署（进阶用户）
+## 🔧 配置与进阶
 
-需要 Node.js 18+；部分平台的频道需要中国大陆网络环境。
+> 🎮 零配置开箱即用：平台账号 / 画质等在后台「🌐 源管理」模块卡片里设置（不配账号即可看全部免费内容；要高画质 / 会员内容再在卡片里配置账号，支持扫码登录 / 书签工具、免手动抓包），管理路径、更新间隔等在「设置」页——都不必记环境变量。账号只保存在你自己的部署里，令牌等同登录态、请勿外传。
 
-```bash
-git clone <your-repository-url> && cd iPTV
-node app.js
-```
-
-环境变量与 Docker 同名同义，例如：`mport=1905 mhost="http://localhost:1905" node app.js`（Windows PowerShell：`$Env:mport=1905; node app.js`）。
-
-**平台账号与画质**：不配账号即可看全部免费内容（画质上限由各平台决定）；要高画质 / 会员内容，进后台「🌐 源管理」在模块卡片里配置账号——支持扫码登录（哔哩哔哩）或书签工具 / 手动指引（视平台而定），免手动抓包。账号只保存在你自己的部署里，令牌等同登录态、请勿外传。
-
-### 配置说明
-
-> 🎮 零配置开箱即用。平台账号 / 画质等在后台「🌐 源管理」模块卡片里设置；管理路径、更新间隔等在「设置」页——都不必记环境变量。
+### 环境变量参考
 
 #### 🔹 常用配置（够大多数人用）
 
@@ -205,13 +171,11 @@ node app.js
 
 </details>
 
-### 高级功能
-
-#### 📺 多套配置档（给不同电视各一套）
+### 📺 多套配置档（给不同电视各一套）
 
 后台「📺 我的频道」标题行右侧可新建 / 切换配置档，每档独立维护隐藏 / 分组 / 排序 / 重命名，互不影响；每台电视填各自的地址（每档底部可复制），如 `http://你的IP:1905/interface.m3u?profile=woshi`。各档共享同一份底层频道与 EPG，新增电视不增加抓取成本；默认档地址不变、老用户零感知。
 
-#### 🧹 空白部署 / 纯频道管理
+### 🧹 空白部署 / 纯频道管理
 
 只想用自己的源时，用内容开关关掉自带内容（也避免同名分组撞车）：
 
@@ -223,35 +187,24 @@ node app.js
 
 也可在后台「🌐 源管理」直接开关各卡片，保存即时生效。关闭 `menableMigu` 后体育赛事、回看与对应 EPG 不可用，属预期表现。
 
-#### 📡 公网地址 (mhost)
+### 📡 公网地址 (mhost)
 
 反向代理 / 域名访问 / 对外分享时填写（如 `http://yourdomain.com:1905`），仅内网使用留空即可。系统自动按访问来源选择播放列表里的地址：内网访问用内网地址，反代访问（带 `X-Forwarded-For`）用配置的公网地址；填 `http(s)://` 完整地址时不会强制补端口。
 
-#### 🔐 访问密码 (mpass)
+### 🔐 访问密码 (mpass)
 
 设置后所有服务都要在 URL 带密码路径：`http://ip:port/密码/interface.m3u`、`http://ip:port/密码/admin` 等，播放列表内的频道链接自动注入密码路径，未授权访问返回 403。
 
-**📺 播放器适配一览**（不确定用哪个链接时查这里）：
+### 🔧 本地运行（不用 Docker）
 
-| 播放器 | 用哪个订阅 |
-|------|-----------|
-| DIYP / 百川 影音 | txt 订阅（`/txt`） |
-| TiviMate / APTV / Kodi / OK 影视 | 标准 m3u 订阅（`/interface.m3u`） |
-| 飞牛影视 | 标准 m3u 订阅（需 `.m3u` 后缀，即 `/interface.m3u`） |
-| **极空间极影视、部分老电视盒**（列表正常但播放转圈） | **兼容版订阅**（`/interface.m3u?relay=1`，后台可一键复制） |
+需要 Node.js 18+；部分平台的频道需要中国大陆网络环境。
 
-> 遇到新的不兼容播放器欢迎提 issue 补充此表。
+```bash
+git clone https://github.com/akiralereal/iptv.git && cd iptv
+node app.js
+```
 
-## Web 管理后台
-
-四个页签管完全部：
-
-- **📺 我的频道** — 频道编排（分组 / 隐藏 / 排序 / 重命名）、多配置档、订阅地址复制
-- **🌐 源管理** — 全部内容来源一页聚合：每个抓取模块一张卡片（独立开关、配置、健康状态，支持扫码登录）；内置源与精选频道各自独立开关；自定义源支持**网页自动抓取**（填播放页地址自动提取 m3u8，可定时刷新）、**手动直链**、**订阅批量导入**（m3u/m3u8/txt，URL / 本地文件 / 粘贴均可）三种方式，并有 🩺 失效检测、▲▼ 排序（决定播放器里源1/源2 顺序）
-- **⚙️ 设置** — 系统配置 / 频道别名 / 自动分组 / EPG 聚合 / 用户管理
-- **ℹ️ 关于我们** — 版本信息与检查更新
-
-修改源后 1-2 秒内自动重新生成播放列表；外部源配置存于数据目录 `external-sources.json`。
+环境变量与 Docker 同名同义，例如：`mport=1905 mhost="http://localhost:1905" node app.js`（Windows PowerShell：`$Env:mport=1905; node app.js`）。
 
 ---
 
@@ -525,6 +478,41 @@ node app.js
 </details>
 
 ---
+
+## ☕ 打赏支持（Buy Me a Coffee）
+
+> 如果这个项目对你有帮助，欢迎支持一下 :)
+
+<table>
+  <tr>
+    <td align="center"><b>❤️ GitHub Sponsors</b></td>
+    <td align="center"><b>☕ Ko-fi</b></td>
+    <td align="center"><b>💰 USDT (TRC20)</b></td>
+  </tr>
+  <tr>
+    <td align="center">
+      <a href="https://github.com/sponsors/akiralereal" target="_blank"><img src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-EA4AAA?logo=githubsponsors&logoColor=white&style=for-the-badge" alt="GitHub Sponsors"/></a>
+    </td>
+    <td align="center">
+      <a href="https://ko-fi.com/akirale" target="_blank"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Ko-fi"/></a>
+    </td>
+    <td align="center">
+      <img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=TArpwDgewYSFCYX6XoJ6drwpEU6UGBw5yq" width="200" alt="USDT TRC20 QR Code"/><br/>
+      <code>TArpwDgewYSFCYX6XoJ6drwpEU6UGBw5yq</code><br/><br/>
+      <sub>⚠️ 仅支持 <b>TRON (TRC20)</b> 网络，请勿使用其他网络<br/>Only via <b>TRON (TRC20)</b> network</sub>
+    </td>
+  </tr>
+</table>
+
+---
+
+## 免责声明
+
+> [!WARNING]
+> - 本项目仅供学习、研究与技术交流使用，**请勿用于任何商业用途及非法用途**。
+> - 本项目自身**不制作、不存储、不分发任何音视频内容**，仅对互联网上公开可访问的直播流做聚合、整理与转发；所有内容与其版权归各内容平台及权利人所有。
+> - 使用本项目访问各平台内容时，请遵守对应平台的用户协议与当地法律法规；会员内容请使用**你本人合法持有的账号**观看。因使用本项目产生的一切后果由使用者自行承担，与项目作者无关。
+> - 若本项目侵犯了您的合法权益，请通过 issue 联系，将及时处理删除。
 
 ## License
 
