@@ -1,10 +1,18 @@
-# iPTV-Docker
+# iPTV
 
 [![GitHub](https://img.shields.io/badge/GitHub-akiralereal/iptv-181717?logo=github&logoColor=white&style=for-the-badge&logoSize=auto)](https://github.com/akiralereal/iptv)
 [![Docker Hub](https://img.shields.io/badge/Docker%20Hub-akiralereal/iptv-2496ED?logo=docker&logoColor=white&style=for-the-badge&logoSize=auto)](https://hub.docker.com/r/akiralereal/iptv)
 [![GitHub Sponsors](https://img.shields.io/badge/Sponsor-%E2%9D%A4-EA4AAA?logo=githubsponsors&logoColor=white&style=for-the-badge)](https://github.com/sponsors/akiralereal)
 
-**当前版本：v4.0.1** · <sub>本项目仅供学习与技术交流，使用前请阅读文末<a href="#免责声明">免责声明</a>；喜欢的话欢迎 Star / <a href="#-打赏支持buy-me-a-coffee">打赏支持</a> :)</sub>
+> [!WARNING]
+> **免责声明**
+>
+> - 本项目仅供学习、研究与技术交流使用，**请勿用于任何商业用途及非法用途**。
+> - 本项目自身**不制作、不存储、不分发任何音视频内容**，仅对互联网上公开可访问的直播流做聚合、整理与转发；所有内容与其版权归各内容平台及权利人所有。
+> - 使用本项目访问各平台内容时，请遵守对应平台的用户协议与当地法律法规；会员内容请使用**你本人合法持有的账号**观看。因使用本项目产生的一切后果由使用者自行承担，与项目作者无关。
+> - 若本项目侵犯了您的合法权益，请通过 issue 联系，将及时处理删除。
+
+**当前版本：v4.0.1** · <sub>喜欢的话欢迎 Star / <a href="#-打赏支持buy-me-a-coffee">打赏支持</a> :)</sub>
 
 > 一个**自托管的模块化 IPTV 直播源管理与分发系统**：把平台**抓取模块**（内置咪咕视频、哔哩哔哩直播）、内置精选频道、你自己的直连源与 m3u/txt 订阅，聚合成一份干净的播放列表（m3u / txt + EPG 节目单），配可视化管理后台。推荐 Docker 一键部署（NAS 友好），也可 Node 直接裸跑。
 >
@@ -505,14 +513,6 @@ node app.js
 </table>
 
 ---
-
-## 免责声明
-
-> [!WARNING]
-> - 本项目仅供学习、研究与技术交流使用，**请勿用于任何商业用途及非法用途**。
-> - 本项目自身**不制作、不存储、不分发任何音视频内容**，仅对互联网上公开可访问的直播流做聚合、整理与转发；所有内容与其版权归各内容平台及权利人所有。
-> - 使用本项目访问各平台内容时，请遵守对应平台的用户协议与当地法律法规；会员内容请使用**你本人合法持有的账号**观看。因使用本项目产生的一切后果由使用者自行承担，与项目作者无关。
-> - 若本项目侵犯了您的合法权益，请通过 issue 联系，将及时处理删除。
 
 ## License
 
