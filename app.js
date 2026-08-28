@@ -5,8 +5,9 @@ import fetch from 'node-fetch'
 import { adminPath, host, pass, port, programInfoUpdateInterval, token, userId, enableMigu, enableBuiltInSubscriptions, enableUserTokens } from "./config.js";
 import { getDateTimeStr } from "./utils/time.js";
 import update from "./utils/updateData.js";
-import { printBlue, printGreen, printMagenta, printRed, printYellow } from "./utils/colorOut.js";
-import { channel, interfaceStr, fetchManifestDirect } from "./utils/appUtils.js";
+import { printBlue, printGreen, printGrey, printMagenta, printRed, printYellow } from "./utils/colorOut.js";
+import { channel, interfaceStr, fetchManifestDirect, rewriteManifest } from "./utils/appUtils.js";
+import { toProxyManifest, lookup as lookupProxyTarget, pipeUpstream, fetchNested } from "./utils/hlsProxy.js";
 import { dataPath } from "./utils/paths.js";
 import { getExtractorManager, getModuleConfig } from "./utils/extractorManager.js";
 import { getExtractorsAPI, startModuleLoginAPI, pollModuleLoginAPI, setExtractorEnabledAPI,
@@ -28,6 +29,27 @@ import { readConfig, saveConfig, parseInterfaceTxt, validateGroupConfig, applyCo
 import { updateBuiltInSources, updateExternalSources, updateExtractors, externalSourceManager, builtInSourceManager } from "./utils/channelMerger.js";
 import { GITHUB_RAW_MIRRORS, isBuiltInSubscriptionSource } from "./utils/externalSources.js";
 import { startProbe, getProbeStatus, cancelProbe } from "./utils/sourceProbe.js";
+
+// 全代理模式（issue #98）的服务端可观测性：清单下发时每频道每分钟至多打一行，
+// 带这一分钟内转发的分片数。用户报「还是播不了」时，一眼能分清三种情况：
+// 日志里没有行 = 播放器压根没来取清单；有行但分片数 0 = 取了清单却不取分片（清单解析/地址解析问题）；
+// 分片数正常 = 服务端这条链路已经跑通，问题在播放器解码或其他环节。
+const proxyStats = new Map()   // pid -> { segments, lastLog }
+
+function noteProxySegment(pid) {
+  const stat = proxyStats.get(pid) || { segments: 0, lastLog: 0 }
+  stat.segments++
+  proxyStats.set(pid, stat)
+}
+
+function logProxyManifest(pid) {
+  const now = Date.now()
+  const stat = proxyStats.get(pid) || { segments: 0, lastLog: 0 }
+  if (now - stat.lastLog < 60 * 1000) { proxyStats.set(pid, stat); return }
+  const since = stat.lastLog ? Math.round((now - stat.lastLog) / 1000) : 0
+  printGrey(`全代理：${pid} 下发清单${since ? `（近 ${since} 秒转发 ${stat.segments} 个分片）` : ''}`)
+  proxyStats.set(pid, { segments: 0, lastLog: now })
+}
 
 // 运行时长
 var hours = 0
@@ -826,6 +848,61 @@ async function handleRequest(req, res) {
     routeUrl = `${relayMatch[1]}/${relayMatch[2]}${relayMatch[3]}`
   }
 
+  // 全代理兼容模式（issue #98 续）：/proxy/<pid>.m3u8 下发的清单里只有同源同目录的相对地址，
+  // 分片走 /proxy/s<key>.<ext> 由服务器转发——给「清单里的绝对地址取不动」的播放器
+  // （极空间极影视：兼容版清单本身完全合法却仍播不了，而同一条 CDN 地址直接填就能播）。
+  // key 带 s 前缀，与纯数字的频道号天然不冲突；两条路由都必须先于下方「/userId/token」两段解析匹配，
+  // 否则会被拆成账号段。
+  const proxySegMatch = routeUrl.match(/^.*\/proxy\/(s[0-9a-f]{16})\.[a-z0-9]{1,8}(?:\?.*)?$/)
+  if (proxySegMatch) {
+    if (method === "HEAD" || method === "OPTIONS") {
+      // 探测请求不必回源：按后缀应答类型即可，否则一次 HEAD 会把整片从 CDN 拉一遍
+      res.writeHead(200, {
+        'Content-Type': /\.m3u8(?:\?|$)/i.test(routeUrl) ? 'application/vnd.apple.mpegurl' : 'video/mp2t',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, HEAD, OPTIONS',
+        'Access-Control-Allow-Headers': '*',
+      })
+      res.end()
+      return
+    }
+    const target = lookupProxyTarget(proxySegMatch[1])
+    if (!target) {
+      // 只可能是清单过期后播放器还在拿老地址重试：回 404，播放器会重新拉清单
+      res.writeHead(404, { 'Content-Type': 'text/plain;charset=UTF-8' })
+      res.end('分片地址已过期')
+      return
+    }
+    // 上游若给的是嵌套子清单（拍平失败时才会出现），同样改写成同源相对地址再下发，
+    // 直接透传会让播放器拿着 CDN 的相对路径去请求本机、必然 404
+    if (/\.m3u8(?:\?|$)/i.test(routeUrl)) {
+      const nested = await fetchNested(target.url)
+      if (nested) {
+        const body = Buffer.from(toProxyManifest(rewriteManifest(nested.text, nested.finalUrl), target.pid), 'utf-8')
+        res.writeHead(200, {
+          'Content-Type': 'application/vnd.apple.mpegurl',
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache, no-store',
+          'Content-Length': body.length,
+        })
+        res.end(body)
+        return
+      }
+    }
+    noteProxySegment(target.pid)
+    await pipeUpstream(target.url, req, res)
+    return
+  }
+
+  let proxyMode = false
+  let proxyPid = ""
+  const proxyMatch = routeUrl.match(/^(.*)\/proxy\/(\d+)(?:\.m3u8)?((?:\?.*)?)$/)
+  if (proxyMatch) {
+    proxyMode = true
+    proxyPid = proxyMatch[2]
+    routeUrl = `${proxyMatch[1]}/${proxyMatch[2]}${proxyMatch[3]}`
+  }
+
   let urlToken = ""
   let urlUserId = ""
   // 匹配是否存在用户信息 /userId/token/...
@@ -850,7 +927,7 @@ async function handleRequest(req, res) {
     res.writeHead(200, {
       // 清单直出地址按 HLS 类型应答 HEAD 探测：部分播放器播放前先 HEAD 判断类型，
       // 回 application/json 会被判定「不可播放」（issue #98）
-      'Content-Type': relayMode ? 'application/vnd.apple.mpegurl' : 'application/json;charset=UTF-8',
+      'Content-Type': (relayMode || proxyMode) ? 'application/vnd.apple.mpegurl' : 'application/json;charset=UTF-8',
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, HEAD, OPTIONS',
       'Access-Control-Allow-Headers': '*'
@@ -879,8 +956,9 @@ async function handleRequest(req, res) {
   if (interfaceList.indexOf(routeUrlPath) !== -1) {
     // 用户绑定了档则用其绑定档（一人一内容），否则用 query 的 ?profile=
     const effectiveProfile = (currentUser && currentUser.profile) ? currentUser.profile : profileParam
-    // 兼容版订阅（issue #98）：?relay=1 时频道地址输出为 /relay/<pid> 清单直出路径
-    const relayParam = /[?&]relay=1(?:&|$)/.test(routeUrl)
+    // 兼容版订阅（issue #98）：?relay=1 输出 /relay/<pid> 清单直出路径；?relay=2 输出
+    // /proxy/<pid> 全代理路径（分片也经服务器转发）。其他取值按不开启处理。
+    const relayParam = routeUrl.match(/[?&]relay=([12])(?:&|$)/)?.[1] || ''
     const interfaceObj = interfaceStr(routeUrlPath, headers, urlUserId, urlToken, effectiveProfile, accessPrefix, relayParam)
     if (interfaceObj.content == null) {
       interfaceObj.content = "获取失败"
@@ -912,9 +990,11 @@ async function handleRequest(req, res) {
     return
   }
 
-  if (relayMode) {
+  if (relayMode || proxyMode) {
     // 服务端取回清单、相对路径改写为绝对地址后直出，播放器无需跟随任何跳转
-    const manifest = await fetchManifestDirect(result.playURL)
+    let manifest = await fetchManifestDirect(result.playURL)
+    // 全代理：再把清单里的绝对地址换成本机同源相对地址，分片改由 /proxy/s<key>.ts 转发
+    if (manifest != null && proxyMode) manifest = toProxyManifest(manifest, proxyPid)
     if (manifest != null) {
       const body = Buffer.from(manifest, 'utf-8')
       res.writeHead(200, {
@@ -925,6 +1005,7 @@ async function handleRequest(req, res) {
         // 显式 Content-Length（避免 chunked 传输）：部分简易播放器的 HTTP 客户端对分块传输支持不佳
         'Content-Length': body.length,
       });
+      if (proxyMode) logProxyManifest(proxyPid)
       res.end(body)
       return
     }

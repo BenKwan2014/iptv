@@ -3642,6 +3642,7 @@
                     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
                         <button class="btn btn-sm" onclick="copyToClipboard('${m3u.replace(/'/g, "\\'")}', 'm3u 源地址')">📋 复制 m3u</button>
                         <button class="btn btn-sm" onclick="copyToClipboard('${(m3u + '?relay=1').replace(/'/g, "\\'")}', '兼容版 m3u 地址')" title="播放一直转圈/失败？极空间极影视、部分老电视盒不跟随跳转——发兼容版给对方">🩹 兼容版</button>
+                        <button class="btn btn-sm" onclick="copyToClipboard('${(m3u + '?relay=2').replace(/'/g, "\\'")}', '全代理版 m3u 地址')" title="兼容版仍播不了再用它：连视频分片也经服务器转发（占服务器带宽），给极空间极影视这类「清单里的绝对地址取不动」的播放器（issue #98）">🚚 全代理版</button>
                         <button class="btn btn-sm" onclick="copyToClipboard('${pb.replace(/'/g, "\\'")}', 'EPG 地址')">📋 复制 EPG</button>
                         <button class="btn btn-sm" onclick="copyToClipboard('${txt.replace(/'/g, "\\'")}', 'txt 地址')">📋 复制 txt</button>
                         <span style="font-size:12px;color:#888;">绑定档 <select onchange="updateUserProfile('${u.id}', this.value)" style="font-size:12px;">${profOpts}</select></span>
@@ -6102,6 +6103,7 @@ if(success){
                 // 普通播放器忽略后缀、行为不变。裸 /m3u 仍有效，老用户已配置的地址不受影响。
                 const url = base + '/interface.m3u' + (isDefault ? '' : '?profile=' + p.id);
                 const compatUrl = url + (isDefault ? '?relay=1' : '&relay=1');   // 兼容版（issue #98）
+                const proxyUrl = url + (isDefault ? '?relay=2' : '&relay=2');    // 全代理版：分片也经服务器转发（issue #98）
                 const slugHtml = isDefault ? '' : ` <span style="color:#999;font-weight:normal;font-size:12px;">(${escapeHtml(p.id)})</span>`;
                 // 改名按钮紧跟档名右侧（默认档不可改名）
                 const renameBtn = isDefault ? '' :
@@ -6130,7 +6132,7 @@ if(success){
                 return `<div class="profile-row${isActive ? ' active' : ''}">
                     <div style="flex:1; min-width:0;">
                         <div style="font-weight:600; display:flex; align-items:center; flex-wrap:wrap; gap:6px;">${escapeHtml(p.name)}${slugHtml}${renameBtn}${srcBtn}</div>
-                        <div class="profile-url"><code>${escapeHtml(url)}</code><button class="btn btn-sm" onclick="copyToClipboard('${url}', '播放地址')">复制</button><button class="btn btn-sm" onclick="copyToClipboard('${compatUrl}', '兼容版播放地址')" title="播放一直转圈/失败？极空间极影视、部分老电视盒不跟随跳转——用兼容版">🩹 兼容版</button></div>
+                        <div class="profile-url"><code>${escapeHtml(url)}</code><button class="btn btn-sm" onclick="copyToClipboard('${url}', '播放地址')">复制</button><button class="btn btn-sm" onclick="copyToClipboard('${compatUrl}', '兼容版播放地址')" title="播放一直转圈/失败？极空间极影视、部分老电视盒不跟随跳转——用兼容版">🩹 兼容版</button><button class="btn btn-sm" onclick="copyToClipboard('${proxyUrl}', '全代理版播放地址')" title="兼容版仍播不了再用它：连视频分片也经服务器转发（占服务器带宽），给极空间极影视这类「清单里的绝对地址取不动」的播放器（issue #98）">🚚 全代理版</button></div>
                         ${srcPanel}
                     </div>
                     <div class="profile-row-actions">${left}${del}</div>
@@ -6299,12 +6301,14 @@ if(success){
             const q = (activeProfile && activeProfile !== 'default') ? ('?profile=' + encodeURIComponent(activeProfile)) : '';
             const m3u = base + '/interface.m3u' + q;
             const m3uCompat = m3u + (q ? '&relay=1' : '?relay=1');   // 兼容版：清单直出，给不跟随 302 的播放器（issue #98）
+            const m3uProxy = m3u + (q ? '&relay=2' : '?relay=2');    // 全代理版：清单 + 分片都经服务器，给兼容版仍播不了的播放器（issue #98）
             const epg = base + '/playback.xml';
             let html =
                 `<span class="sb-label">📡 订阅地址</span>`
                 + `<code title="${escapeHtml(m3u)}">${escapeHtml(m3u)}</code>`
                 + `<button class="sb-copy" onclick="copyToClipboard('${m3u.replace(/'/g, "\\'")}', '订阅地址')">📋 复制</button>`
                 + `<button class="sb-copy sb-copy-muted" onclick="copyToClipboard('${m3uCompat.replace(/'/g, "\\'")}', '兼容版订阅地址')" title="播放一直转圈/失败？极空间极影视、部分老电视盒不跟随跳转——用兼容版订阅（服务器直出播放清单，仅限与服务器同网观看）">🩹 兼容版</button>`
+                + `<button class="sb-copy sb-copy-muted" onclick="copyToClipboard('${m3uProxy.replace(/'/g, "\\'")}', '全代理版订阅地址')" title="兼容版仍播不了再用它：连视频分片也经服务器转发（占服务器带宽），给极空间极影视这类「清单里的绝对地址取不动」的播放器（issue #98）">🚚 全代理版</button>`
                 + `<span class="sb-sep">节目单 EPG</span>`
                 + `<code class="sb-epg" title="${escapeHtml(epg)}">${escapeHtml(epg)}</code>`
                 + `<button class="sb-copy sb-copy-muted" onclick="copyToClipboard('${epg.replace(/'/g, "\\'")}', 'EPG 地址')">📋 复制</button>`;

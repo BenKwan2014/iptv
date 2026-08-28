@@ -213,13 +213,17 @@ function interfaceStr(url, headers, urlUserId, urlToken, profile, accessPrefix, 
   }
 
   // 兼容版订阅（?relay=1，issue #98）：频道地址改为 /relay/<pid> 清单直出路径，
-  // 供不跟随 302 跳转的播放器（极空间极影视、部分老电视盒）使用。
+  // 供不跟随 302 跳转的播放器（极空间极影视、部分老电视盒）使用；
+  // ?relay=2 为全代理版：频道地址改为 /proxy/<pid>，连分片也经服务器转发。
   // 只匹配「${replace}/纯数字」的咪咕频道地址；x-tvg-url 的 playback.xml、外部源直链不受影响。
   // 用路径前缀而非 query 参数：m3u 头的 catchup-source 以 "?" 开头直接拼在频道地址后，
   // query 方案会拼出双问号破坏回看，路径方案天然兼容。
+  // relay=2（全代理版）再进一步：清单里的分片地址也改回本机，由服务器转发——
+  // 给「兼容版清单完全合法却仍播不了、同一条 CDN 地址直接填却能播」的播放器（极影视，issue #98）
   if (relay) {
     // 带 .m3u8 后缀：极影视等播放器按 URL 后缀识别流格式，无后缀会被判定不可播（issue #98 追踪）
-    result.content = `${result.content}`.replace(/\$\{replace\}\/(\d+)/g, '${replace}/relay/$1.m3u8')
+    const seg = String(relay) === '2' ? 'proxy' : 'relay'
+    result.content = `${result.content}`.replace(/\$\{replace\}\/(\d+)/g, '${replace}/' + seg + '/$1.m3u8')
   }
 
   // 剥离内部属性 source-ids（issue #29/#68 源归属标记）后再输出给播放器：
