@@ -73,7 +73,9 @@ import bilibiliLive from './bilibili-live/index.js'
 import cztv from './cztv/index.js'
 import gdtv from './gdtv/index.js'
 import gxtv from './gxtv/index.js'
+import hntv from './hntv/index.js'
 import jstv from './jstv/index.js'
+import iqilu from './iqilu/index.js'
 import kankanews from './kankanews/index.js'
 import mgtv from './mgtv/index.js'
 import migu from './migu/index.js'
@@ -88,8 +90,10 @@ const MODULES = [
   bilibiliLive,
   gdtv,
   gxtv,
+  hntv,
   cztv,
   jstv,
+  iqilu,
   kankanews,
   mgtv,
 ]

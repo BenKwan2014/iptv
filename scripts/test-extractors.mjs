@@ -16,7 +16,7 @@
  * 运行： node scripts/test-extractors.mjs   （或 npm test）
  */
 import assert from 'node:assert/strict'
-import { constants, generateKeyPairSync, privateEncrypt } from 'node:crypto'
+import { constants, createCipheriv, createDecipheriv, createHash, generateKeyPairSync, privateEncrypt } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -45,6 +45,19 @@ import {
   resolveChannel as resolveJstvChannel,
   signStreamUrl as signJstvStreamUrl,
 } from '../extractors/jstv/api.js'
+import {
+  buildExchangeRequest as buildIqiluExchangeRequest,
+  clearCache as clearIqiluCache,
+  decryptExchangeResponse as decryptIqiluExchangeResponse,
+  parseChannelPage as parseIqiluChannelPage,
+  resolveChannel as resolveIqiluChannel,
+} from '../extractors/iqilu/api.js'
+import {
+  buildChannels as buildHntvChannels,
+  buildSignedHeaders as buildHntvSignedHeaders,
+  clearCache as clearHntvCache,
+  resolveChannel as resolveHntvChannel,
+} from '../extractors/hntv/api.js'
 import {
   buildChannels as buildKankanewsChannels,
   buildScenicChannels as buildKankanewsScenicChannels,
@@ -439,6 +452,28 @@ check('江苏网络台模块已注册，使用固定频道周期和播放时解�
   assert.equal(jstv.refreshConfigurable, false)
   assert.deepEqual(jstv.configSchema, [], '江苏不向用户暴露播放缓冲等技术参数')
   assert.equal(resolverFor('jstv-670')?.id, 'jstv')
+})
+
+check('山东齐鲁网模块已注册，使用固定频道周期且不需要全代理', () => {
+  const iqilu = getModule('iqilu')
+  assert.ok(iqilu)
+  assert.equal(iqilu.capabilities.cache, 'disk')
+  assert.equal(iqilu.capabilities.resolve, true)
+  assert.equal(iqilu.defaultRefreshMinutes, 240)
+  assert.equal(iqilu.refreshConfigurable, false)
+  assert.deepEqual(iqilu.configSchema, [])
+  assert.equal(resolverFor('iqilu-sdtv')?.id, 'iqilu')
+})
+
+check('河南大象新闻模块已注册，使用固定两小时刷新且排除购物频道', () => {
+  const hntv = getModule('hntv')
+  assert.ok(hntv)
+  assert.equal(hntv.capabilities.cache, 'disk')
+  assert.equal(hntv.capabilities.resolve, true)
+  assert.equal(hntv.defaultRefreshMinutes, 120)
+  assert.equal(hntv.refreshConfigurable, false)
+  assert.deepEqual(hntv.configSchema, [])
+  assert.equal(resolverFor('hntv-145')?.id, 'hntv')
 })
 
 check('芒果 TV 模块已注册，固定刷新策略且不暴露技术设置', () => {
@@ -1412,6 +1447,171 @@ await checkAsync('看看新闻：模块抓频道表，播放时还原短效地�
   assert.equal(scenicFirst.url, scenicUrl)
   assert.equal(scenicCached.url, scenicUrl)
   assert.equal(scenicCalls, 1, '景观线路共用详情接口，播放器轮询时必须复用缓存')
+})
+
+// ---- 河南大象新闻 ----
+
+check('河南：官网请求实际使用 SHA-256（不是 MD5）且时间戳为秒', () => {
+  const now = 1720000000123
+  const headers = buildHntvSignedHeaders(now)
+  assert.equal(headers.timestamp, '1720000000')
+  assert.equal(
+    headers.sign,
+    createHash('sha256').update('6ca114a836ac7d731720000000').digest('hex'),
+  )
+  assert.equal(headers.sign.length, 64)
+})
+
+check('河南：只输出固定正式频道、规范名称并排除购物与 ID/名称错配', () => {
+  const expiry = Math.floor(Date.now() / 1000) + 14400
+  const stream = id => `http://tvcdn.stream3.hndt.com/tv/${id}/playlist.m3u8?wsSecret=x&wsTime=${expiry}`
+  const channels = buildHntvChannels([
+    { cid: 145, name: '河南卫视', image: '/a.png', video_streams: [stream('ws')] },
+    { cid: 149, name: '新闻频道', image: '/b.png', video_streams: [stream('news')] },
+    { cid: 150, name: '欢腾购物', video_streams: [stream('shopping')] },
+    { cid: 141, name: '伪造频道', video_streams: [stream('wrong')] },
+  ])
+  assert.deepEqual(channels.map(channel => channel.name), ['河南卫视', '河南新闻'])
+  assert.deepEqual(channels.map(channel => channel.deferredRef), ['hntv-145', 'hntv-149'])
+  assert.ok(channels.every(channel => !channel.proxyHls && !channel.relayHls))
+  assert.equal(channels[0].logo, 'https://static.hntv.tv/a.png')
+})
+
+await checkAsync('河南：模块用签名频道接口取流，缓存后播放不重复联网', async () => {
+  clearHntvCache()
+  const startedAt = 1720000000000
+  const expiry = Math.floor(startedAt / 1000) + 14400
+  const rows = [
+    {
+      cid: 145, name: '河南卫视', image: '/anonymous/ws.png',
+      video_streams: [`http://tvcdn.stream3.hndt.com/tv/ws/playlist.m3u8?wsSecret=x&wsTime=${expiry}`],
+    },
+    {
+      cid: 149, name: '新闻频道', image: '/anonymous/news.png',
+      video_streams: [`http://tvcdn.stream3.hndt.com/tv/news/playlist.m3u8?wsSecret=y&wsTime=${expiry}`],
+    },
+    {
+      cid: 150, name: '欢腾购物', image: '/anonymous/shop.png',
+      video_streams: [`http://tvcdn.stream3.hndt.com/tv/shop/playlist.m3u8?wsSecret=z&wsTime=${expiry}`],
+    },
+  ]
+  let calls = 0
+  const fetchImpl = async (_url, options) => {
+    calls++
+    assert.equal(options.headers.timestamp, '1720000000')
+    assert.equal(options.headers.sign.length, 64)
+    assert.equal(options.headers.Origin, 'https://static.hntv.tv')
+    return fakeResponse(rows)
+  }
+  const module = getModule('hntv')
+  const result = await module.fetch({}, { fetchImpl, now: startedAt })
+  assert.deepEqual(result.groups[0].dataList.map(channel => channel.name), ['河南卫视', '河南新闻'])
+
+  const resolved = await resolveHntvChannel('hntv-145', {
+    now: startedAt + 1000,
+    fetchImpl: async () => { throw new Error('有效缓存内不应联网') },
+  })
+  assert.match(resolved.url, /^https:\/\/tvcdn\.stream3\.hndt\.com\//)
+  assert.equal(resolved.upstreamHeaders, undefined)
+  assert.equal(calls, 1)
+})
+
+// ---- 山东齐鲁网 ----
+
+const iqiluPage = (id, name) => `
+  <script>var _pdCid = "${id}"; var _pdName = "${name}";</script>
+  <script>
+    var dF = 'https://feiying.litenews.cn/api/';
+    var aF = 'v1/auth/exchange';
+    var mxpx = 'QZMVKTRHPLXADJNE';
+    var aly = 'BWRFYSNCOGIXUTPA';
+  </script>`
+
+check('山东：从官方频道页提取频道 ID 与鉴权参数，并拒绝伪造接口', () => {
+  const definition = { slug: 'qlpd', name: '齐鲁频道', pageName: '齐鲁频道', logo: '' }
+  const row = parseIqiluChannelPage(iqiluPage('24584', '齐鲁频道'), definition)
+  assert.equal(row.id, '24584')
+  assert.equal(row.auth.endpoint, 'https://feiying.litenews.cn/api/v1/auth/exchange')
+  assert.throws(
+    () => parseIqiluChannelPage(iqiluPage('24584', '错误频道'), definition),
+    /频道名不符合预期/,
+  )
+  assert.throws(
+    () => parseIqiluChannelPage(iqiluPage('24584', '齐鲁频道').replace('feiying.litenews.cn', 'example.com'), definition),
+    /鉴权参数不符合预期/,
+  )
+})
+
+check('山东：exchange 请求与官网 MD5 + AES-128-CBC 算法一致', () => {
+  const row = parseIqiluChannelPage(
+    iqiluPage('24584', '齐鲁频道'),
+    { slug: 'qlpd', name: '齐鲁频道', pageName: '齐鲁频道', logo: '' },
+  )
+  const now = 1720000000123
+  const request = buildIqiluExchangeRequest(row, now)
+  const url = new URL(request.url)
+  assert.equal(url.searchParams.get('t'), String(now))
+  assert.equal(
+    url.searchParams.get('s'),
+    createHash('md5').update(`24584${now}QZMVKTRHPLXADJNE`).digest('hex'),
+  )
+
+  const key = Buffer.from('BWRFYSNCOGIXUTPA')
+  const decipher = createDecipheriv('aes-128-cbc', key, Buffer.alloc(16, 0x30))
+  const plain = Buffer.concat([decipher.update(request.body, 'base64'), decipher.final()]).toString('utf8')
+  assert.equal(plain, JSON.stringify({ channelMark: '24584' }))
+})
+
+await checkAsync('山东：九个官方频道全部加入，播放鉴权结果按频道复用且不声明全代理', async () => {
+  clearIqiluCache()
+  const pages = {
+    sdtv: ['24581', '山东卫视'], qlpd: ['24584', '齐鲁频道'], ggpd: ['24602', '新闻频道'],
+    typd: ['24587', '体育休闲频道'], shpd: ['24596', '生活频道'], zypd: ['24593', '综艺频道'],
+    nkpd: ['24599', '农科频道'], yspd: ['24590', '文旅频道'], sepd: ['24605', '少儿频道'],
+  }
+  let exchangeCalls = 0
+  const streamUrl = 'https://tstreamlive302.iqilu.com/21/test/playlist.m3u8?k=x&t=1'
+  const encryptedResponse = () => {
+    const cipher = createCipheriv(
+      'aes-128-cbc',
+      Buffer.from('BWRFYSNCOGIXUTPA'),
+      Buffer.alloc(16, 0x30),
+    )
+    return Buffer.concat([
+      cipher.update(JSON.stringify({ code: 1, data: streamUrl })),
+      cipher.final(),
+    ]).toString('base64')
+  }
+  const fetchImpl = async (requestUrl, options = {}) => {
+    const url = new URL(String(requestUrl))
+    if (url.hostname === 'v.iqilu.com') {
+      const slug = url.pathname.split('/').filter(Boolean).pop()
+      const row = pages[slug]
+      assert.ok(row, `未预期频道页 ${slug}`)
+      return { ok: true, status: 200, text: async () => iqiluPage(row[0], row[1]) }
+    }
+    exchangeCalls++
+    assert.equal(options.method, 'POST')
+    assert.equal(options.headers['Content-Type'], 'text/plain')
+    assert.equal(options.headers.Origin, 'https://v.iqilu.com')
+    return { ok: true, status: 200, text: async () => encryptedResponse() }
+  }
+
+  const module = getModule('iqilu')
+  const result = await module.fetch({}, { fetchImpl })
+  assert.deepEqual(
+    result.groups[0].dataList.map(channel => channel.name),
+    ['山东卫视', '齐鲁频道', '山东新闻', '山东体育休闲', '山东生活', '山东综艺', '山东农科', '山东文旅', '山东少儿'],
+  )
+  assert.ok(result.groups[0].dataList.every(channel => !channel.proxyHls && !channel.relayHls))
+
+  const first = await resolveIqiluChannel('iqilu-qlpd', { fetchImpl, now: 1720000000123 })
+  const cached = await resolveIqiluChannel('iqilu-qlpd', { fetchImpl, now: 1720000001123 })
+  assert.equal(first.url, streamUrl)
+  assert.equal(cached.url, streamUrl)
+  assert.equal(exchangeCalls, 1)
+  assert.equal(first.upstreamHeaders, undefined)
+  assert.deepEqual(decryptIqiluExchangeResponse(encryptedResponse(), 'BWRFYSNCOGIXUTPA'), { code: 1, data: streamUrl })
 })
 
 // ---- 江苏网络台 ----
