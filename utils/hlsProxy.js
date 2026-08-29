@@ -23,7 +23,7 @@ import { printDebug, printRed } from "./colorOut.js";
 const TTL_MS = 10 * 60 * 1000     // 分片地址带时效签名，10 分钟足够覆盖播放器的重试窗口
 const MAX_ENTRIES = 5000          // 一个直播频道 10 分钟约 100 条，这个上限够几十路同放，超出按最早登记淘汰
 
-const registry = new Map()        // key -> { url, pid, transform, expires }
+const registry = new Map()        // key -> { url, pid, transform, upstreamHeaders, expires }
 
 // 已知的媒体后缀：保留原后缀，按后缀识别流格式的播放器（极影视）才认得出分片
 const KNOWN_EXT = new Set(['ts', 'm3u8', 'aac', 'mp3', 'mp4', 'm4s', 'm4a', 'vtt', 'key'])
@@ -57,9 +57,9 @@ function sweep() {
  * key 前缀固定为 s：让分片路径 /proxy/s<hex>.ts 与频道清单路径 /proxy/<纯数字频道号>.m3u8
  * 在词法上永不相交，两条路由怎么排都不会互相误吃。
  */
-function register(url, pid = '', transform) {
+function register(url, pid = '', transform, upstreamHeaders) {
   const key = 's' + createHash('md5').update(url).digest('hex').slice(0, 16)
-  registry.set(key, { url, pid, transform, expires: Date.now() + TTL_MS })
+  registry.set(key, { url, pid, transform, upstreamHeaders, expires: Date.now() + TTL_MS })
   if (registry.size > MAX_ENTRIES) sweep()
   return key
 }
@@ -72,9 +72,10 @@ function lookup(key) {
     registry.delete(key)
     return null
   }
-  return entry.transform
-    ? { url: entry.url, pid: entry.pid, transform: entry.transform }
-    : { url: entry.url, pid: entry.pid }
+  const result = { url: entry.url, pid: entry.pid }
+  if (entry.transform) result.transform = entry.transform
+  if (entry.upstreamHeaders) result.upstreamHeaders = entry.upstreamHeaders
+  return result
 }
 
 /** 仅供测试与自检：当前登记条数 */
@@ -92,10 +93,10 @@ function registrySize() {
  *
  * 纯字符串处理（除登记地址表外无副作用），便于单测。
  */
-function toProxyManifest(text, pid = '', transform) {
+function toProxyManifest(text, pid = '', transform, upstreamHeaders) {
   const toRef = (uri, fallbackExt) => {
     if (!/^https?:\/\//i.test(uri)) return null   // 非绝对地址说明上一步改写没覆盖到，保持原样别弄坏
-    return `${register(uri, pid, transform)}.${extOf(uri, fallbackExt)}`
+    return `${register(uri, pid, transform, upstreamHeaders)}.${extOf(uri, fallbackExt)}`
   }
   return text.split('\n').map(line => {
     const t = line.trim()
@@ -121,14 +122,14 @@ const PASS_THROUGH = ['content-type', 'content-length', 'accept-ranges', 'conten
  * 不缓冲整片：分片几百 KB 到几 MB，直播长跑时缓冲会顶着内存跑；直接 pipe 过去。
  * 客户端切台 / 关闭连接时中止上游请求，否则一次切台会留下一串还在下载的孤儿请求。
  */
-async function pipeUpstream(url, req, res, transform) {
+async function pipeUpstream(url, req, res, transform, upstreamHeaders = {}) {
   const ctrl = new AbortController()
   const onClose = () => ctrl.abort()
   res.on('close', onClose)
   // 只给「拿到响应头」设超时，拿到之后是流式传输，不能再掐
   const timer = setTimeout(() => ctrl.abort(), 15000)
   try {
-    const headers = { 'User-Agent': UA }
+    const headers = { ...upstreamHeaders, 'User-Agent': UA }
     // 要做整片变换时不能把 Range 片段单独交给解码器；回完整 200 对播放器仍合法。
     if (!transform && req.headers.range) headers.range = req.headers.range
     const upstream = await fetch(url, { redirect: 'follow', signal: ctrl.signal, headers })
@@ -177,11 +178,15 @@ async function pipeUpstream(url, req, res, transform) {
 }
 
 /** 取回一份嵌套子清单（全代理模式下清单里再出现 .m3u8 时用），返回 { text, finalUrl } 或 null */
-async function fetchNested(url) {
+async function fetchNested(url, upstreamHeaders = {}) {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), 10000)
   try {
-    const resp = await fetch(url, { redirect: 'follow', signal: ctrl.signal, headers: { 'User-Agent': UA } })
+    const resp = await fetch(url, {
+      redirect: 'follow',
+      signal: ctrl.signal,
+      headers: { ...upstreamHeaders, 'User-Agent': UA },
+    })
     if (!resp.ok) return null
     const text = await resp.text()
     if (!text.trimStart().startsWith('#EXTM3U')) return null

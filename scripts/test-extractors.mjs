@@ -37,6 +37,13 @@ import {
   selectStream as selectCztvStream,
   signStreamUrl as signCztvStreamUrl,
 } from '../extractors/cztv/api.js'
+import {
+  buildAuthRequest as buildJstvAuthRequest,
+  buildChannels as buildJstvChannels,
+  clearCache as clearJstvCache,
+  resolveChannel as resolveJstvChannel,
+  signStreamUrl as signJstvStreamUrl,
+} from '../extractors/jstv/api.js'
 import { shouldFailRound as miguShouldFailRound } from '../extractors/migu/index.js'
 import {
   ExtractorManager, validateConfig, redactConfig, resolveConfig, normalizeGroups, emptyHealth,
@@ -403,6 +410,16 @@ check('第一阶段两个官方直播模块已注册，缓存/解析能力声明
   assert.equal(cztv.capabilities.cache, 'disk')
   assert.equal(cztv.capabilities.resolve, true)
   assert.equal(cztv.refreshConfigurable, false, '浙江的签名和 CDN 探测不是外层刷新输入框能控制的')
+})
+
+check('江苏网络台模块已注册，使用固定频道周期和播放时解析', () => {
+  const jstv = getModule('jstv')
+  assert.ok(jstv)
+  assert.equal(jstv.capabilities.cache, 'disk')
+  assert.equal(jstv.capabilities.resolve, true)
+  assert.equal(jstv.defaultRefreshMinutes, 240)
+  assert.equal(jstv.refreshConfigurable, false)
+  assert.equal(resolverFor('jstv-670')?.id, 'jstv')
 })
 
 
@@ -1199,6 +1216,75 @@ await checkAsync('浙江：5 分钟到期刷新失败沿用旧播放信息，一
   })
   assert.match(recovered.url, /\/new\.m3u8/)
   assert.equal(calls, 3)
+})
+
+// ---- 江苏网络台 ----
+
+check('江苏：Web 鉴权签名与官网算法固定样本一致', () => {
+  const request = buildJstvAuthRequest(1720000000000, '0123456789abcdef0123456789abcdef')
+  assert.equal(request.body.platform, 41)
+  assert.equal(request.body.appId, '3b93c452b851431c8b3a076789ab1e14')
+  assert.match(request.url, /TT=-235964777/)
+  assert.match(request.url, /Sign=d66d6d8c6ab4cec57f79653449c88013/)
+})
+
+check('江苏：短效 HLS 签名切换到网页播放域名并保留路径', () => {
+  const signed = signJstvStreamUrl(
+    'https://litchi-play-encrypted.jstv.com/applive/jswspro.m3u8',
+    1720000000000,
+  )
+  assert.equal(
+    signed,
+    'https://litchi-play-encrypted-site.jstv.com/applive/jswspro.m3u8?txSecret=7f4e425e5f26c7a18c8679e376d746c5&txTime=66851eb4',
+  )
+})
+
+check('江苏：4K 与普通频道默认全部加入且走全代理', () => {
+  const rows = [
+    { id: '670', name: '江苏卫视', url: 'https://x.jstv.com/applive/jswspro.m3u8', logo: 'a.png' },
+    { id: '676', name: '江苏卫视4K', url: 'https://x.jstv.com/4klive/jsws4kpro.m3u8', logo: 'b.png' },
+  ]
+  const channels = buildJstvChannels(rows)
+  assert.deepEqual(channels.map(x => x.name), ['江苏卫视', '江苏卫视4K'])
+  assert.equal(channels[0].deferredRef, 'jstv-670')
+  assert.ok(channels.every(x => x.proxyHls === true))
+})
+
+await checkAsync('江苏：模块取 Bearer 频道表，缓存后播放时签名并声明防盗链请求头', async () => {
+  clearJstvCache()
+  const futureExp = Math.floor(Date.now() / 1000) + 600
+  const token = `x.${Buffer.from(JSON.stringify({ exp: futureExp })).toString('base64url')}.x`
+  const articles = [
+    {
+      title: '江苏卫视', extraId: '670', thumbnailsJson: ['https://images.jstv.com/jsws.png'],
+      extraJson: { url: 'https://litchi-play-encrypted.jstv.com/applive/jswspro.m3u8' },
+    },
+    {
+      title: '江苏卫视4K超高清', extraId: '676', thumbnailsJson: ['https://images.jstv.com/jsws4k.png'],
+      extraJson: { url: 'https://litchi-play-encrypted.jstv.com/4klive/jsws4kpro.m3u8' },
+    },
+  ]
+  const calls = []
+  const fetchImpl = async (url, options) => {
+    calls.push({ url: String(url), options })
+    if (String(url).includes('/JwtAuth/GetWebToken')) {
+      return fakeResponse({ code: 200, data: { accessToken: token } })
+    }
+    return fakeResponse({ code: 200, data: { articles } })
+  }
+  const module = getModule('jstv')
+  const result = await module.fetch({ cachingMs: 3000 }, { fetchImpl })
+  assert.deepEqual(result.groups[0].dataList.map(x => x.name), ['江苏卫视', '江苏卫视4K'])
+  assert.equal(calls.length, 2)
+  assert.match(calls[1].options.headers.Authorization, /^Bearer /)
+
+  const resolved = await resolveJstvChannel('jstv-670', {
+    now: 1720000000000,
+    fetchImpl: async () => { throw new Error('已有频道缓存时不该联网') },
+  })
+  assert.match(resolved.url, /txSecret=/)
+  assert.equal(resolved.upstreamHeaders.Origin, 'https://live.jstv.com')
+  assert.equal(resolved.upstreamHeaders.Referer, 'https://live.jstv.com/')
 })
 
 console.log(`\n全部通过：${passed} ✅`)

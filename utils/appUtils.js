@@ -36,11 +36,14 @@ function rewriteManifest(text, finalUrl) {
 }
 
 // 取回一份 HLS 清单文本（跟随 302），非 200 或非 HLS 内容返回 null
-async function fetchHls(url, signal) {
+async function fetchHls(url, signal, upstreamHeaders = {}) {
   const resp = await fetch(url, {
     redirect: 'follow',
     signal,
-    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36' },
+    headers: {
+      ...upstreamHeaders,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    },
   })
   if (!resp.ok) return null
   const text = await resp.text()
@@ -76,16 +79,16 @@ function firstVariantUrl(text, base) {
 // 注意：清单由服务端取回，节点由服务端网络选择，与「客户端就近取流」语义互斥——
 // 兼容模式面向 NAS 与播放设备同一网络的家庭场景，正好不需要就近取流。
 // 返回 null 表示取清单失败或内容不是 HLS，调用方应回退 302。
-async function fetchManifestDirect(playURL) {
+async function fetchManifestDirect(playURL, upstreamHeaders = {}) {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), 10000)   // 覆盖两跳
   try {
-    const master = await fetchHls(playURL, ctrl.signal)
+    const master = await fetchHls(playURL, ctrl.signal, upstreamHeaders)
     if (!master) return null
 
     const variantUrl = firstVariantUrl(master.text, master.finalUrl)
     if (variantUrl) {
-      const media = await fetchHls(variantUrl, ctrl.signal)
+      const media = await fetchHls(variantUrl, ctrl.signal, upstreamHeaders)
       // 拍平成功：直接给播放器分片列表；失败则退回改写后的 master（跟随能力正常的播放器仍可播）
       if (media) return rewriteManifest(media.text, media.finalUrl)
       printDebug(`子清单取回失败，退回 master 清单: ${variantUrl}`)
@@ -307,6 +310,8 @@ async function channel(url, urlUserId, urlToken) {
   result.playURL = playURL
   // 仅在 /proxy/ 全代理链里消费；普通 302/relay 不会执行平台分片变换。
   result.segmentTransform = resolved.segmentTransform
+  // 平台要求的上游请求头只在服务端清单/分片代理链消费，不下发给客户端。
+  result.upstreamHeaders = resolved.upstreamHeaders
   // 平台可要求旧的无后缀入口也直出动态 HLS 清单；用于兼容已收藏/已下发的旧地址。
   result.relayHls = resolved.relayHls === true
   return result

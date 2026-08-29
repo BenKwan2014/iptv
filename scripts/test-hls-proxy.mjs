@@ -80,6 +80,15 @@ check('同一上游地址登记结果稳定；非绝对地址原样保留', () =
   assert.equal(toProxyManifest('a-1.ts', '1').trim(), 'a-1.ts')   // 改写漏网的相对地址不该被弄坏
 })
 
+check('平台防盗链请求头随分片地址登记，不暴露到播放列表文本', () => {
+  const url = 'http://cdn.example.com/live/protected.ts'
+  const upstreamHeaders = { Origin: 'https://live.example.com', Referer: 'https://live.example.com/' }
+  const key = register(url, 'jstv-670', undefined, upstreamHeaders)
+  assert.deepEqual(lookup(key), { url, pid: 'jstv-670', upstreamHeaders })
+  const manifest = toProxyManifest(url, 'jstv-670', undefined, upstreamHeaders)
+  assert.ok(!manifest.includes('Origin') && !manifest.includes('Referer'))
+})
+
 // ---------- 2. 订阅输出 ----------
 check('?relay=2 订阅频道地址输出 /proxy/<pid>.m3u8（relay=1 仍是 /relay/）', () => {
   writeFileSync(join(DATA_DIR, 'interface.txt'), [
@@ -113,6 +122,21 @@ const SEG_BODY = Buffer.from('FAKE-TS-PAYLOAD-0123456789', 'utf-8')
 
 const cdn = http.createServer((req, res) => {
   const path = req.url.split('?')[0]
+  if (path.startsWith('/protected/')) {
+    if (req.headers.origin !== 'https://live.jstv.com' || req.headers.referer !== 'https://live.jstv.com/') {
+      res.writeHead(403); res.end('missing anti-hotlink headers'); return
+    }
+    if (path === '/protected/index.m3u8') {
+      res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' })
+      res.end('#EXTM3U\n#EXT-X-TARGETDURATION:3\n#EXTINF:3,\nprotected.ts\n')
+      return
+    }
+    if (path === '/protected/protected.ts') {
+      res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Content-Length': SEG_BODY.length })
+      res.end(SEG_BODY)
+      return
+    }
+  }
   if (path === '/live/index.m3u8') {
     // 咪咕真实形态：master 里一条**相对**子清单
     res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' })
@@ -139,7 +163,7 @@ const nas = http.createServer(async (req, res) => {
   if (seg) {
     const target = lookup(seg[1])
     if (!target) { res.writeHead(404); res.end('分片地址已过期'); return }
-    await pipeUpstream(target.url, req, res, target.transform)
+    await pipeUpstream(target.url, req, res, target.transform, target.upstreamHeaders)
     return
   }
   const man = req.url.match(/^\/proxy\/([a-z0-9][a-z0-9_-]{0,63})\.m3u8$/i)
@@ -179,6 +203,18 @@ await checkAsync('端到端：清单直出后播放器按相对地址取分片�
   assert.equal(segResp.status, 200)
   assert.equal(segResp.headers.get('content-type'), 'video/mp2t')
   assert.deepEqual(Buffer.from(await segResp.arrayBuffer()), SEG_BODY)
+})
+
+await checkAsync('平台防盗链请求头同时用于清单和分片回源', async () => {
+  const upstreamHeaders = { Origin: 'https://live.jstv.com', Referer: 'https://live.jstv.com/' }
+  const source = `http://127.0.0.1:${cdn.address().port}/protected/index.m3u8`
+  const manifest = await fetchManifestDirect(source, upstreamHeaders)
+  assert.match(manifest, /protected\.ts/)
+  const proxied = toProxyManifest(manifest, 'jstv-670', undefined, upstreamHeaders)
+  const segRef = proxied.split('\n').map(x => x.trim()).find(x => x && !x.startsWith('#'))
+  const response = await fetch(`${nasBase}/proxy/${segRef}`)
+  assert.equal(response.status, 200)
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), SEG_BODY)
 })
 
 await checkAsync('分片变换函数随清单地址登记，并在回给播放器前执行', async () => {

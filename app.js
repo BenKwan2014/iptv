@@ -876,9 +876,9 @@ async function handleRequest(req, res) {
     // 上游若给的是嵌套子清单（拍平失败时才会出现），同样改写成同源相对地址再下发，
     // 直接透传会让播放器拿着 CDN 的相对路径去请求本机、必然 404
     if (/\.m3u8(?:\?|$)/i.test(routeUrl)) {
-      const nested = await fetchNested(target.url)
+      const nested = await fetchNested(target.url, target.upstreamHeaders)
       if (nested) {
-        const body = Buffer.from(toProxyManifest(rewriteManifest(nested.text, nested.finalUrl), target.pid, target.transform), 'utf-8')
+        const body = Buffer.from(toProxyManifest(rewriteManifest(nested.text, nested.finalUrl), target.pid, target.transform, target.upstreamHeaders), 'utf-8')
         res.writeHead(200, {
           'Content-Type': 'application/vnd.apple.mpegurl',
           'Access-Control-Allow-Origin': '*',
@@ -890,7 +890,7 @@ async function handleRequest(req, res) {
       }
     }
     noteProxySegment(target.pid)
-    await pipeUpstream(target.url, req, res, target.transform)
+    await pipeUpstream(target.url, req, res, target.transform, target.upstreamHeaders)
     return
   }
 
@@ -994,9 +994,9 @@ async function handleRequest(req, res) {
 
   if (relayMode || proxyMode || result.relayHls) {
     // 服务端取回清单、相对路径改写为绝对地址后直出，播放器无需跟随任何跳转
-    let manifest = await fetchManifestDirect(result.playURL)
+    let manifest = await fetchManifestDirect(result.playURL, result.upstreamHeaders)
     // 全代理：再把清单里的绝对地址换成本机同源相对地址，分片改由 /proxy/s<key>.ts 转发
-    if (manifest != null && proxyMode) manifest = toProxyManifest(manifest, proxyPid, result.segmentTransform)
+    if (manifest != null && proxyMode) manifest = toProxyManifest(manifest, proxyPid, result.segmentTransform, result.upstreamHeaders)
     if (manifest != null) {
       const body = Buffer.from(manifest, 'utf-8')
       res.writeHead(200, {

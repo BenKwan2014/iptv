@@ -32,13 +32,14 @@
  *       一个模块可以返回多个分组（咪咕将来的「体育赛事」就是同一模块的第二批
  *       分组，不是另一个源）。
  *
- *   async resolve(ref, ctx) → { url, desc, segmentTransform? }
+ *   async resolve(ref, ctx) → { url, desc, segmentTransform?, upstreamHeaders? }
  *       可选，capabilities.resolve 为真时必需。用于「播放时才算地址」的模块：
  *       fetch() 里频道给 deferredRef，写盘时落成 ${replace}/<ref>，播放请求
  *       到达时才调 resolve。B 站不需要——它是直链。
  *       url 为空串表示不可用，desc 是给客户端看的原因（措辞属平台知识）。
  *       segmentTransform(buffer) 可选；仅供必须全代理、且分片需要平台特有处理的
  *       模块使用。函数可原地修改 Buffer，也可返回新的 Buffer。
+ *       upstreamHeaders 可选；仅由本机清单/分片代理向官方 CDN 发送（防盗链平台）。
  *       ctx: { account: { userId, token }, config }  config 是该模块的生效配置
  *       **绝不能抛异常**——app.js 的请求 handler 没有顶层 try，一个未捕获的
  *       异常等于请求永远不 res.end()、客户端挂死到超时。
@@ -71,6 +72,7 @@
 import bilibiliLive from './bilibili-live/index.js'
 import cztv from './cztv/index.js'
 import gxtv from './gxtv/index.js'
+import jstv from './jstv/index.js'
 import migu from './migu/index.js'
 
 // 模块 id 会进 sourceId 并写进 EXTINF 属性值，不消毒就是注入面。
@@ -83,6 +85,7 @@ const MODULES = [
   bilibiliLive,
   gxtv,
   cztv,
+  jstv,
 ]
 
 /**
