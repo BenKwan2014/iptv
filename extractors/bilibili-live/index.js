@@ -129,6 +129,8 @@ export default {
   // 注意别照抄外部源的 240 分钟默认值（utils/externalSources.js 的 refreshInterval），
   // 那对 2 小时过期的源是致命的。
   defaultRefreshMinutes: 45,
+  minRefreshMinutes: 45,
+  maxRefreshMinutes: 90,
 
   // 后台在这个模块的卡片里额外渲染一块助手 UI（markup 在 admin.html，与咪咕的
   // migu-bookmarklet 同款约定：具体长相属于前端，模块只声明「我要哪一块」）。

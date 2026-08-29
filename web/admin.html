@@ -3237,11 +3237,16 @@
                 <div style="border-top:1px solid #f5f5f5; padding-top:12px;">
                     ${m.helperSection ? '' : extractorHelperHtml(m.helper, m.secretsSet || {}, m.config || {})}
                     ${extractorFieldsHtml(m.id, m.configSchema || [], m.config || {}, m.secretsSet || {}, m.envProvided || {}, m.helperSection ? { key: m.helper, section: m.helperSection } : null)}
+                    ${m.refreshConfigurable === false ? `
+                    <div style="margin-bottom:12px; padding:10px 12px; border-radius:6px; background:#f7f9fb; color:#666; font-size:12px; line-height:1.6;">
+                        <div style="font-weight:600; color:#555; margin-bottom:2px;">自动刷新</div>
+                        ${escapeHtml(m.refreshDescription || '模块会根据播放地址有效期自动更新，无需手动设置。')}
+                    </div>` : `
                     <div style="margin-bottom:12px;">
                         <label style="display:block; font-size:12px; color:#888;">刷新间隔（分钟）</label>
-                        <input type="number" id="xf-${escapeHtml(m.id)}-__refresh" oninput="setSaveDirty('xt:${escapeHtml(m.id)}')" value="${m.refreshMinutes}" style="width:140px;">
-                        <div style="font-size:12px; color:#888; margin-top:3px;">默认 ${m.defaultRefreshMinutes} 分钟。直播地址是短效的（B 站约 2 小时过期），间隔不要设得比它长。</div>
-                    </div>
+                        <input type="number" min="${m.minRefreshMinutes || 1}" max="${m.maxRefreshMinutes || 1440}" id="xf-${escapeHtml(m.id)}-__refresh" oninput="setSaveDirty('xt:${escapeHtml(m.id)}')" value="${m.refreshMinutes}" style="width:140px;">
+                        <div style="font-size:12px; color:#888; margin-top:3px;">允许范围 ${m.minRefreshMinutes || 1}–${m.maxRefreshMinutes || 1440} 分钟，默认 ${m.defaultRefreshMinutes} 分钟。${m.id === 'bilibili-live' ? '过短容易触发风控，过长会压缩地址失效前的重试余量。' : ''}</div>
+                    </div>`}
                     <button class="btn btn-sm btn-success" data-save-scope="xt:${escapeHtml(m.id)}" onclick="saveExtractorConfig('${escapeHtml(m.id)}')">💾 保存配置</button>
                 </div>`;
 

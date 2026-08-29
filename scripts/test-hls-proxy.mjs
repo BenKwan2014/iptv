@@ -66,7 +66,7 @@ check('顶层清单与嵌套子清单的分片地址落到同一条路由（同�
                new URL(nested, 'http://nas:1905/proxy/sabcdef0123456789.m3u8').pathname)
 })
 
-check('分片 key 带 s 前缀：与纯数字频道号的清单路由永不相交', () => {
+check('分片 key 带 s 前缀：与数字/命名空间频道引用的清单路由不相交', () => {
   const key = register('http://cdn.example.com/live/x.ts')
   assert.match(key, /^s[0-9a-f]{16}$/)
   assert.ok(!/^\d+$/.test(key))
@@ -95,6 +95,17 @@ check('?relay=2 订阅频道地址输出 /proxy/<pid>.m3u8（relay=1 仍是 /rel
   assert.ok(relayed.includes('http://192.168.3.37:1905/relay/608807420.m3u8'), relayed)
   const plain = interfaceStr('/interface.m3u', headers, '', '', '', '', '').content.toString()
   assert.ok(plain.includes('http://192.168.3.37:1905/608807420') && !plain.includes('/proxy/'), plain)
+})
+
+check('模块可直接写入命名空间全代理地址，replace 后保持单段安全 ref', () => {
+  writeFileSync(join(DATA_DIR, 'interface.txt'), [
+    '#EXTM3U x-tvg-url="${replace}/playback.xml"',
+    '#EXTINF:-1 tvg-id="广西卫视" group-title="广西电视台",广西卫视',
+    '${replace}/proxy/gxtv-gxws.m3u8',
+    '',
+  ].join('\n'))
+  const out = interfaceStr('/interface.m3u', { host: '192.168.3.37:1905' }, '', '', '', '', '').content.toString()
+  assert.ok(out.includes('http://192.168.3.37:1905/proxy/gxtv-gxws.m3u8'), out)
 })
 
 // ---------- 3. 端到端：假 CDN → 本机全代理 → 播放器 ----------
@@ -128,10 +139,10 @@ const nas = http.createServer(async (req, res) => {
   if (seg) {
     const target = lookup(seg[1])
     if (!target) { res.writeHead(404); res.end('分片地址已过期'); return }
-    await pipeUpstream(target.url, req, res)
+    await pipeUpstream(target.url, req, res, target.transform)
     return
   }
-  const man = req.url.match(/^\/proxy\/(\d+)\.m3u8$/)
+  const man = req.url.match(/^\/proxy\/([a-z0-9][a-z0-9_-]{0,63})\.m3u8$/i)
   if (man) {
     const abs = await fetchManifestDirect(`http://127.0.0.1:${cdn.address().port}/live/index.m3u8?token=abc`)
     const body = Buffer.from(toProxyManifest(abs, man[1]), 'utf-8')
@@ -147,7 +158,7 @@ await new Promise(r => nas.listen(0, '127.0.0.1', r))
 const nasBase = `http://127.0.0.1:${nas.address().port}`
 
 await checkAsync('端到端：清单直出后播放器按相对地址取分片，字节与 CDN 一致', async () => {
-  const manifestUrl = `${nasBase}/proxy/608807420.m3u8`
+  const manifestUrl = `${nasBase}/proxy/gxtv-gxws.m3u8`
   const resp = await fetch(manifestUrl)
   assert.equal(resp.status, 200)
   assert.equal(resp.headers.get('content-type'), 'application/vnd.apple.mpegurl')
@@ -168,6 +179,16 @@ await checkAsync('端到端：清单直出后播放器按相对地址取分片�
   assert.equal(segResp.status, 200)
   assert.equal(segResp.headers.get('content-type'), 'video/mp2t')
   assert.deepEqual(Buffer.from(await segResp.arrayBuffer()), SEG_BODY)
+})
+
+await checkAsync('分片变换函数随清单地址登记，并在回给播放器前执行', async () => {
+  const transform = body => Buffer.from(body.toString('utf8').toUpperCase())
+  const url = `http://127.0.0.1:${cdn.address().port}/live/seg-100.ts`
+  const key = register(url, 'gxtv-test', transform)
+  assert.equal(lookup(key).transform, transform)
+  const resp = await fetch(`${nasBase}/proxy/${key}.ts`)
+  assert.equal(resp.status, 200)
+  assert.equal(await resp.text(), SEG_BODY.toString('utf8').toUpperCase())
 })
 
 await checkAsync('未登记 / 已过期的分片地址回 404，播放器会重新拉清单', async () => {

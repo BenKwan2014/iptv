@@ -505,9 +505,15 @@ class ExtractorManager {
   }
 
   refreshMinutesOf(module) {
+    // 某些延迟解析模块自己维护短效签名、CDN 健康和失败重试。外层抓取周期
+    // 允许用户覆盖不仅无助于续签，还会制造过密请求或陈旧频道表，因此这类
+    // 模块始终使用作者声明的固定周期（也让升级前存过的旧覆盖值自然失效）。
+    if (module.refreshConfigurable === false) return module.defaultRefreshMinutes || 60
     const entry = this.#entry(module.id)
     const value = parseInt(entry.refreshMinutes, 10)
-    if (Number.isNaN(value) || value < 1) return module.defaultRefreshMinutes || 60
+    const min = module.minRefreshMinutes ?? 1
+    const max = module.maxRefreshMinutes ?? 1440
+    if (Number.isNaN(value) || value < min || value > max) return module.defaultRefreshMinutes || 60
     return value
   }
 
@@ -548,6 +554,10 @@ class ExtractorManager {
         envProvided,
         refreshMinutes: this.refreshMinutesOf(module),
         defaultRefreshMinutes: module.defaultRefreshMinutes || 60,
+        minRefreshMinutes: module.minRefreshMinutes ?? 1,
+        maxRefreshMinutes: module.maxRefreshMinutes ?? 1440,
+        refreshConfigurable: module.refreshConfigurable !== false,
+        refreshDescription: module.refreshDescription || '',
         health: cacheEntry.health,
       }
     })
@@ -600,9 +610,14 @@ class ExtractorManager {
     // 一直在用，重启后又无声回滚，手填的凭据就这样丢了。
     let refreshValue
     if (refreshMinutes !== undefined) {
+      if (module.refreshConfigurable === false) {
+        throw new Error(`${module.name} 的刷新策略由模块自动管理，无需手动设置`)
+      }
       refreshValue = parseInt(refreshMinutes, 10)
-      if (Number.isNaN(refreshValue) || refreshValue < 1 || refreshValue > 1440) {
-        throw new Error('刷新间隔要在 1~1440 分钟之间')
+      const min = module.minRefreshMinutes ?? 1
+      const max = module.maxRefreshMinutes ?? 1440
+      if (Number.isNaN(refreshValue) || refreshValue < min || refreshValue > max) {
+        throw new Error(`刷新间隔要在 ${min}~${max} 分钟之间`)
       }
     }
     const prevConfig = entry.config

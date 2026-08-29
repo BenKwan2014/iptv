@@ -263,7 +263,14 @@ async function updateTV(hours, options = {}) {
         // ref 必须是单个路径段——playlistConfig.buildChannelId 用
         // /^\$\{replace\}\/([^/?#]+)/ 取频道主键，多段会失配、让老用户的
         // 「我的频道」隐藏/重命名/归类/排序全部作废。
-        playUrl = `\${replace}/${channelItem.deferredRef}`
+        // 某些官方 CDN 在服务端可访问，但会被电视/浏览器的网络层直接拦截。
+        // 模块可声明 proxyHls（清单+分片全代理）或 relayHls（只代理清单）。
+        // 后者适合需要持续换签/切 CDN、但分片可由播放器直连的平台。
+        playUrl = channelItem.proxyHls === true
+          ? `\${replace}/proxy/${channelItem.deferredRef}.m3u8`
+          : channelItem.relayHls === true
+            ? `\${replace}/relay/${channelItem.deferredRef}.m3u8`
+            : `\${replace}/${channelItem.deferredRef}`
       } else if (isExternal || isExtractor) {
         playUrl = channelItem.url      // 外部源 / 抓取模块使用url
       } else {

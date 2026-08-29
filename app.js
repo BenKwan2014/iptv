@@ -842,7 +842,7 @@ async function handleRequest(req, res) {
   let relayMode = false
   // 可选 .m3u8 后缀：极影视等播放器按 URL 后缀识别流格式，无后缀会被判定不可播（issue #98 追踪）；
   // 兼容版订阅输出 /relay/<pid>.m3u8，旧的无后缀形式继续支持
-  const relayMatch = routeUrl.match(/^(.*)\/relay\/(\d+)(?:\.m3u8)?((?:\?.*)?)$/)
+  const relayMatch = routeUrl.match(/^(.*)\/relay\/([a-z0-9][a-z0-9_-]{0,63})(?:\.m3u8)?((?:\?.*)?)$/i)
   if (relayMatch) {
     relayMode = true
     routeUrl = `${relayMatch[1]}/${relayMatch[2]}${relayMatch[3]}`
@@ -851,7 +851,7 @@ async function handleRequest(req, res) {
   // 全代理兼容模式（issue #98 续）：/proxy/<pid>.m3u8 下发的清单里只有同源同目录的相对地址，
   // 分片走 /proxy/s<key>.<ext> 由服务器转发——给「清单里的绝对地址取不动」的播放器
   // （极空间极影视：兼容版清单本身完全合法却仍播不了，而同一条 CDN 地址直接填就能播）。
-  // key 带 s 前缀，与纯数字的频道号天然不冲突；两条路由都必须先于下方「/userId/token」两段解析匹配，
+  // key 带 s 前缀，与频道 ref 天然不冲突；两条路由都必须先于下方「/userId/token」两段解析匹配，
   // 否则会被拆成账号段。
   const proxySegMatch = routeUrl.match(/^.*\/proxy\/(s[0-9a-f]{16})\.[a-z0-9]{1,8}(?:\?.*)?$/)
   if (proxySegMatch) {
@@ -878,7 +878,7 @@ async function handleRequest(req, res) {
     if (/\.m3u8(?:\?|$)/i.test(routeUrl)) {
       const nested = await fetchNested(target.url)
       if (nested) {
-        const body = Buffer.from(toProxyManifest(rewriteManifest(nested.text, nested.finalUrl), target.pid), 'utf-8')
+        const body = Buffer.from(toProxyManifest(rewriteManifest(nested.text, nested.finalUrl), target.pid, target.transform), 'utf-8')
         res.writeHead(200, {
           'Content-Type': 'application/vnd.apple.mpegurl',
           'Access-Control-Allow-Origin': '*',
@@ -890,13 +890,15 @@ async function handleRequest(req, res) {
       }
     }
     noteProxySegment(target.pid)
-    await pipeUpstream(target.url, req, res)
+    await pipeUpstream(target.url, req, res, target.transform)
     return
   }
 
   let proxyMode = false
   let proxyPid = ""
-  const proxyMatch = routeUrl.match(/^(.*)\/proxy\/(\d+)(?:\.m3u8)?((?:\?.*)?)$/)
+  // ref 同时兼容咪咕纯数字与模块命名空间（如 gxtv-gxws）。收紧到与模块 id
+  // 同级的安全字符，不能用宽泛的 [^/]+ 把路径/查询串吞进 resolver。
+  const proxyMatch = routeUrl.match(/^(.*)\/proxy\/([a-z0-9][a-z0-9_-]{0,63})(?:\.m3u8)?((?:\?.*)?)$/i)
   if (proxyMatch) {
     proxyMode = true
     proxyPid = proxyMatch[2]
@@ -990,11 +992,11 @@ async function handleRequest(req, res) {
     return
   }
 
-  if (relayMode || proxyMode) {
+  if (relayMode || proxyMode || result.relayHls) {
     // 服务端取回清单、相对路径改写为绝对地址后直出，播放器无需跟随任何跳转
     let manifest = await fetchManifestDirect(result.playURL)
     // 全代理：再把清单里的绝对地址换成本机同源相对地址，分片改由 /proxy/s<key>.ts 转发
-    if (manifest != null && proxyMode) manifest = toProxyManifest(manifest, proxyPid)
+    if (manifest != null && proxyMode) manifest = toProxyManifest(manifest, proxyPid, result.segmentTransform)
     if (manifest != null) {
       const body = Buffer.from(manifest, 'utf-8')
       res.writeHead(200, {

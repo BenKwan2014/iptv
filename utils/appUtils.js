@@ -305,6 +305,10 @@ async function channel(url, urlUserId, urlToken) {
 
   result.code = 302
   result.playURL = playURL
+  // 仅在 /proxy/ 全代理链里消费；普通 302/relay 不会执行平台分片变换。
+  result.segmentTransform = resolved.segmentTransform
+  // 平台可要求旧的无后缀入口也直出动态 HLS 清单；用于兼容已收藏/已下发的旧地址。
+  result.relayHls = resolved.relayHls === true
   return result
 }
 

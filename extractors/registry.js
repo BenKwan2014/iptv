@@ -19,6 +19,10 @@
  *   capabilities          object  { cache: 'disk'|'memory'|'none',
  *                                   resolve: boolean, epg: boolean }
  *   defaultRefreshMinutes number  默认刷新间隔
+ *   minRefreshMinutes     number  可选；用户可配置的最小刷新间隔
+ *   maxRefreshMinutes     number  可选；用户可配置的最大刷新间隔
+ *   refreshConfigurable   boolean 可选；false 表示刷新策略由模块自动管理，后台只读
+ *   refreshDescription    string  可选；自动刷新策略的后台说明
  *   configSchema          array   字段描述，后台据此渲染表单、后端据此校验
  *
  *   async fetch(config, ctx) → { groups: [{ name, dataList }], meta }
@@ -28,11 +32,13 @@
  *       一个模块可以返回多个分组（咪咕将来的「体育赛事」就是同一模块的第二批
  *       分组，不是另一个源）。
  *
- *   async resolve(ref, ctx) → { url, desc }
+ *   async resolve(ref, ctx) → { url, desc, segmentTransform? }
  *       可选，capabilities.resolve 为真时必需。用于「播放时才算地址」的模块：
  *       fetch() 里频道给 deferredRef，写盘时落成 ${replace}/<ref>，播放请求
  *       到达时才调 resolve。B 站不需要——它是直链。
  *       url 为空串表示不可用，desc 是给客户端看的原因（措辞属平台知识）。
+ *       segmentTransform(buffer) 可选；仅供必须全代理、且分片需要平台特有处理的
+ *       模块使用。函数可原地修改 Buffer，也可返回新的 Buffer。
  *       ctx: { account: { userId, token }, config }  config 是该模块的生效配置
  *       **绝不能抛异常**——app.js 的请求 handler 没有顶层 try，一个未捕获的
  *       异常等于请求永远不 res.end()、客户端挂死到超时。
@@ -55,12 +61,16 @@
  *   logo       台标，空串即可
  *   groupTitle 装饰用；真正的分组来自所在 group.name
  *   opts       string[]，#EXTVLCOPT 的 key=value，交给 utils/channelOpts.js 渲染
+ *   proxyHls   可选；清单和分片都经本机代理
+ *   relayHls   可选；只由本机刷新/改写清单，分片仍由播放器直连 CDN
  *   catchup    可选 { mode, source }，槽位先留着（咪咕的回看将来用）
  *
  * sourceId / source 由 extractorManager 统一盖章，模块不用自己填——
  * `xt:` 这个前缀格式是注册表层的事，模块不该知道。
  */
 import bilibiliLive from './bilibili-live/index.js'
+import cztv from './cztv/index.js'
+import gxtv from './gxtv/index.js'
 import migu from './migu/index.js'
 
 // 模块 id 会进 sourceId 并写进 EXTINF 属性值，不消毒就是注入面。
@@ -71,6 +81,8 @@ const MODULES = [
   // 顺序即后台展示顺序，也是 channelMerger 的合并顺序（先到的分组优先保留）
   migu,
   bilibiliLive,
+  gxtv,
+  cztv,
 ]
 
 /**

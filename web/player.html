@@ -202,7 +202,11 @@
             
             try {
                 // 判断视频类型
-                const videoType = videoUrl.toLowerCase().includes('.m3u8') ? 'hls' : 
+                // 延迟解析频道的旧地址可能没有 .m3u8 后缀，但本机服务会按 HLS
+                // Content-Type 直出动态清单；网页播放器也要显式走 hls.js。
+                let sameOriginStream = false;
+                try { sameOriginStream = new URL(videoUrl, window.location.href).origin === window.location.origin; } catch {}
+                const videoType = videoUrl.toLowerCase().includes('.m3u8') || sameOriginStream ? 'hls' :
                                  videoUrl.toLowerCase().includes('.flv') ? 'flv' : 'auto';
                 
                 const dp = new DPlayer({
@@ -228,8 +232,17 @@
                                 hls.attachMedia(video);
                                 
                                 hls.on(Hls.Events.ERROR, function (event, data) {
+                                    // 直接 console.error(data) 在内置浏览器日志里只显示 "Object"，
+                                    // 排查时完全看不到是清单、分片还是解复用失败。只打 HLS.js 的
+                                    // 诊断字段，不输出可能很长/带签名的完整响应对象。
+                                    console.error('HLS Error:', JSON.stringify({
+                                        type: data.type,
+                                        details: data.details,
+                                        reason: data.reason || '',
+                                        fatal: data.fatal,
+                                        status: data.response && data.response.code
+                                    }));
                                     if (data.fatal) {
-                                        console.error('HLS Error:', data);
                                         switch(data.type) {
                                             case Hls.ErrorTypes.NETWORK_ERROR:
                                                 showError('❌ 网络错误：无法加载视频流，请检查网络连接');

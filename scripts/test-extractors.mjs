@@ -24,6 +24,19 @@ import { listModules, getModule, sourceIdOf, resolverFor, validateModule, MODULE
 import { clearUrlCache } from '../utils/appUtils.js'
 import { selectFromPlayurl, parseRoomList, normalizeRoom, mapLimit, selectTopRooms, RoomError } from '../extractors/bilibili-live/api.js'
 import { shouldFailRound, parseAreaNames, mergeRoomRefs } from '../extractors/bilibili-live/index.js'
+import {
+  buildChannelGroups as buildGxtvGroups,
+  clearStreamCache as clearGxtvStreamCache,
+  resolveChannel as resolveGxtvChannel,
+  streamUrlOf,
+} from '../extractors/gxtv/api.js'
+import {
+  buildChannels as buildCztvChannels,
+  clearPlayInfoCache as clearCztvPlayInfoCache,
+  resolveChannel as resolveCztvChannel,
+  selectStream as selectCztvStream,
+  signStreamUrl as signCztvStreamUrl,
+} from '../extractors/cztv/api.js'
 import { shouldFailRound as miguShouldFailRound } from '../extractors/migu/index.js'
 import {
   ExtractorManager, validateConfig, redactConfig, resolveConfig, normalizeGroups, emptyHealth,
@@ -333,6 +346,12 @@ check('播放路由：裸数字归咪咕，认不出的 ref 无人认领', () =>
   assert.equal(resolverFor('abc'), null)
 })
 
+check('浙江延迟引用使用命名空间，不与咪咕裸数字路由冲突', () => {
+  assert.equal(resolverFor('cztv-108')?.id, 'cztv')
+  assert.equal(resolverFor('108')?.id, 'migu')
+  assert.equal(resolverFor('cztv-108/extra'), null, 'ref 必须保持单个路径段')
+})
+
 check('claimsRef 保持 isNaN 语义，不许收紧成 /^\\d+$/', () => {
   // 现网 isNaN("") / isNaN("1e3") / isNaN("0x10") 都是 false，都会被放行走到
   // 咪咕接口。收紧会改掉「地址格式错误」的边界——那是可观察行为变更。
@@ -370,6 +389,20 @@ check('咪咕已收编成模块，且三条 wire format 保持不变', () => {
   assert.equal(migu.sourceId, 'migu', 'source-ids 必须保持字面量，老用户「按档禁用源」存的就是它')
   assert.equal(typeof migu.enabledGetter, 'function', '开关要代理到 config.js 的 enableMigu')
   assert.equal(migu.capabilities.cache, 'memory', '175 个频道带全部原始字段，不该落盘')
+})
+
+check('第一阶段两个官方直播模块已注册，缓存/解析能力声明正确', () => {
+  const gxtv = getModule('gxtv')
+  const cztv = getModule('cztv')
+  assert.ok(gxtv)
+  assert.ok(cztv)
+  assert.equal(gxtv.capabilities.cache, 'disk')
+  assert.equal(gxtv.capabilities.resolve, true)
+  assert.equal(gxtv.defaultRefreshMinutes, 30, '广西密钥要短周期主动刷新，不能沿用频道列表的长缓存')
+  assert.equal(gxtv.refreshConfigurable, false, '广西刷新策略由模块管理，不该让用户误改')
+  assert.equal(cztv.capabilities.cache, 'disk')
+  assert.equal(cztv.capabilities.resolve, true)
+  assert.equal(cztv.refreshConfigurable, false, '浙江的签名和 CDN 探测不是外层刷新输入框能控制的')
 })
 
 
@@ -718,13 +751,37 @@ try {
     const manager = newManager()
     const module = manager.getState().modules.find(m => m.id === 'bilibili-live')
     assert.equal(module.refreshMinutes, 45)
+    assert.equal(module.minRefreshMinutes, 45)
+    assert.equal(module.maxRefreshMinutes, 90)
     assert.ok(module.refreshMinutes * 60 * 1000 < 2 * 60 * 60 * 1000)
   })
 
-  check('刷新间隔越界被拒绝', () => {
+  check('B 站刷新间隔只允许 45~90 分钟，历史越界值回落默认', () => {
     const manager = newManager()
-    assert.throws(() => manager.updateModuleConfig('bilibili-live', {}, { refreshMinutes: 0 }), /1~1440/)
-    assert.throws(() => manager.updateModuleConfig('bilibili-live', {}, { refreshMinutes: 9999 }), /1~1440/)
+    assert.throws(() => manager.updateModuleConfig('bilibili-live', {}, { refreshMinutes: 44 }), /45~90/)
+    assert.throws(() => manager.updateModuleConfig('bilibili-live', {}, { refreshMinutes: 91 }), /45~90/)
+    manager.updateModuleConfig('bilibili-live', {}, { refreshMinutes: 90 })
+    assert.equal(manager.getState().modules.find(m => m.id === 'bilibili-live').refreshMinutes, 90)
+    manager.config.modules['bilibili-live'].refreshMinutes = 10
+    assert.equal(manager.getState().modules.find(m => m.id === 'bilibili-live').refreshMinutes, 45)
+  })
+
+  check('自动刷新模块忽略历史覆盖值，且拒绝继续手动修改', () => {
+    const manager = newManager()
+    manager.getState() // 先让管理器按注册表建立各模块的稀疏配置项
+    manager.config.modules.gxtv.refreshMinutes = 999
+    manager.config.modules.cztv.refreshMinutes = 999
+    const modules = manager.getState().modules
+    const gxtv = modules.find(m => m.id === 'gxtv')
+    const cztv = modules.find(m => m.id === 'cztv')
+    assert.equal(gxtv.refreshMinutes, 30)
+    assert.equal(cztv.refreshMinutes, 240)
+    assert.equal(gxtv.refreshConfigurable, false)
+    assert.match(cztv.refreshDescription, /播放签名约 5 分钟/)
+    assert.throws(
+      () => manager.updateModuleConfig('gxtv', {}, { refreshMinutes: 60 }),
+      /自动管理/,
+    )
   })
 
   check('未知模块 id 被拒绝', () => {
@@ -898,6 +955,250 @@ await checkAsync('★ B 站：热门榜获取失败且无手填 → 整轮判失
   // 上一轮频道被覆盖成空且不退避。timeoutMs=1 模拟断网：现在必须抛。
   const config = resolveConfig(bili, {})
   await assert.rejects(() => bili.fetch(config, { timeoutMs: 1 }), /失败/)
+})
+
+// ---- 广西网络台 / 浙江新蓝网 ----
+
+const fakeResponse = payload => ({ ok: true, status: 200, json: async () => payload })
+
+check('广西：只取官网正式频道、规范命名并排除内部/专题流', () => {
+  const rows = [
+    { name: '新闻在线网络直播专用', state: 1, showChannel: 1, decodeM3u8: 'https://x/internal.m3u8' },
+    { name: '广西卫视', state: 1, showChannel: 1, encodeM3u8: 'https://x/gxws.m3u8', logo: 'https://x/gx.png' },
+    { name: '新闻频道', state: 1, showChannel: 1, encodeM3u8: 'https://x/news.m3u8' },
+    { name: '乐思购频道', state: 1, showChannel: 1, encodeM3u8: 'https://x/shop.m3u8' },
+    { name: '中国教育电视台CETV-1频道', state: 1, showChannel: 1, encodeM3u8: 'https://x/cetv1.m3u8' },
+    { name: '《广西新闻》矩阵号', state: 1, showChannel: 1, encodeM3u8: 'https://x/matrix.m3u8' },
+  ]
+  const defaultGroups = buildGxtvGroups(rows, { includeSpecialty: true, includeCetv: false })
+  assert.deepEqual(defaultGroups.map(g => g.name), ['广西电视台'])
+  assert.deepEqual(defaultGroups[0].dataList.map(ch => ch.name), ['广西卫视', '广西新闻', '乐思购'])
+
+  const withCetv = buildGxtvGroups(rows, { includeSpecialty: false, includeCetv: true })
+  assert.deepEqual(withCetv.map(g => g.name), ['广西电视台', '中国教育电视台'])
+  assert.deepEqual(withCetv[0].dataList.map(ch => ch.name), ['广西卫视', '广西新闻'])
+  assert.deepEqual(withCetv[1].dataList.map(ch => ch.name), ['CETV1'])
+})
+
+check('广西：HLS 字段按优先级回落，非 HLS/坏 URL 不进入播放列表', () => {
+  assert.equal(streamUrlOf({ encodeM3u8: '', decodeM3u8: 'https://x/live.m3u8' }), 'https://x/live.m3u8')
+  assert.equal(streamUrlOf({ encodeM3u8: 'https://x/live.flv' }), '')
+  assert.equal(streamUrlOf({ encodeM3u8: '[B@31aae2e6' }), '')
+})
+
+await checkAsync('广西：模块按官网 POST 形状取数并产出全代理引用', async () => {
+  const module = getModule('gxtv')
+  let request
+  const fetchImpl = async (url, options) => {
+    request = { url, options }
+    return fakeResponse({ code: 0, data: { rows: [
+      { name: '广西卫视', state: 1, showChannel: 1, encodeM3u8: 'https://x/gxws.m3u8' },
+    ] } })
+  }
+  const result = await module.fetch({ includeSpecialty: true, includeCetv: false }, { fetchImpl })
+  assert.equal(request.options.method, 'POST')
+  assert.match(request.options.body, /pageSize=1000/)
+  assert.equal(result.groups[0].dataList[0].deferredRef, 'gxtv-gxws')
+  assert.equal(result.groups[0].dataList[0].proxyHls, true)
+  assert.equal('url' in result.groups[0].dataList[0], false)
+})
+
+await checkAsync('广西：resolve 使用已抓到的正式 HLS，格式错误/断网均不抛', async () => {
+  clearGxtvStreamCache()
+  let calls = 0
+  const fetchImpl = async () => {
+    calls++
+    return fakeResponse({ code: 0, data: { rows: [
+      {
+        name: '广西卫视', state: 1, showChannel: 1,
+        encodeM3u8: 'https://x/gxws.m3u8', encodingId: 'id', encodingKey: 'key',
+      },
+    ] } })
+  }
+  const first = await resolveGxtvChannel('gxtv-gxws', { fetchImpl, now: 1720000000000 })
+  const second = await resolveGxtvChannel('gxtv-gxws', { fetchImpl, now: 1720000000001 })
+  assert.equal(first.url, 'https://x/gxws.m3u8')
+  assert.equal(typeof first.segmentTransform, 'function')
+  assert.equal(second.url, first.url)
+  assert.equal(calls, 1, '代理周期性拉清单时不能每次都重打频道 API')
+  assert.equal((await resolveGxtvChannel('gxtv-unknown')).url, '')
+
+  clearGxtvStreamCache()
+  const failed = await resolveGxtvChannel('gxtv-gxws', {
+    fetchImpl: async () => { throw new Error('断网') }, now: 1720000000002,
+  })
+  assert.equal(failed.url, '')
+  assert.match(failed.desc, /请求失败/)
+})
+
+await checkAsync('广西：30 分钟到期刷新失败沿用旧密钥，一分钟后再试并恢复新值', async () => {
+  clearGxtvStreamCache()
+  const startedAt = 1720000000000
+  const row = (url, key) => ({
+    name: '广西卫视', state: 1, showChannel: 1, encodeM3u8: url,
+    encodingId: 'customer', encodingKey: key,
+  })
+  let calls = 0
+  const first = await resolveGxtvChannel('gxtv-gxws', {
+    now: startedAt,
+    fetchImpl: async () => {
+      calls++
+      return fakeResponse({ code: 0, data: { rows: [row('https://x/old.m3u8', 'old-key')] } })
+    },
+  })
+  assert.equal(first.url, 'https://x/old.m3u8')
+
+  const stale = await resolveGxtvChannel('gxtv-gxws', {
+    now: startedAt + 30 * 60 * 1000 + 1,
+    fetchImpl: async () => { calls++; throw new Error('官网瞬时故障') },
+  })
+  assert.equal(stale.url, first.url)
+  assert.match(stale.desc, /沿用上一份/)
+
+  const retrySuppressed = await resolveGxtvChannel('gxtv-gxws', {
+    now: startedAt + 30 * 60 * 1000 + 30 * 1000,
+    fetchImpl: async () => { calls++; throw new Error('一分钟内不应重试') },
+  })
+  assert.equal(retrySuppressed.url, first.url)
+  assert.equal(calls, 2, '清单每几秒轮询时不能持续轰炸故障中的官网接口')
+
+  const recovered = await resolveGxtvChannel('gxtv-gxws', {
+    now: startedAt + 31 * 60 * 1000 + 2,
+    fetchImpl: async () => {
+      calls++
+      return fakeResponse({ code: 0, data: { rows: [row('https://x/new.m3u8', 'new-key')] } })
+    },
+  })
+  assert.equal(recovered.url, 'https://x/new.m3u8')
+  assert.equal(calls, 3)
+})
+
+check('浙江：频道名规范化，deferredRef 带平台前缀，购物频道可关闭', () => {
+  const rows = [
+    { name: '浙江卫视', station_code: '101', logo: 'http://oss/a.png' },
+    { name: '新闻', station_code: '107', logo: 'https://oss/n.png' },
+    { name: '好易购', station_code: '111', logo: 'https://oss/s.png' },
+    { name: '未知内部频道', station_code: '999' },
+  ]
+  const all = buildCztvChannels(rows, { includeShopping: true })
+  assert.deepEqual(all.map(ch => [ch.name, ch.deferredRef]), [
+    ['浙江卫视', 'cztv-101'],
+    ['浙江新闻', 'cztv-107'],
+    ['好易购', 'cztv-111'],
+  ])
+  assert.equal(all[0].logo, 'https://oss/a.png', '台标升级为 HTTPS')
+  assert.equal(all[0].relayHls, true, '浙江清单需经本机中继，播放中才能持续换签和切 CDN')
+  assert.deepEqual(buildCztvChannels(rows, { includeShopping: false }).map(ch => ch.name), ['浙江卫视', '浙江新闻'])
+})
+
+check('浙江：优先目标画质、缺档自动回落，绝不误选 AUDIO', () => {
+  const playInfo = { multiBitrateStreamList: [
+    { bitrateCode: 'AUDIO', urlList: ['https://x/audio.m3u8'] },
+    { bitrateCode: '720P', urlList: ['https://x/720.m3u8'] },
+    { bitrateCode: '1080P', urlList: ['https://x/1080.m3u8'] },
+  ] }
+  assert.equal(selectCztvStream(playInfo, '1080P').url, 'https://x/1080.m3u8')
+  assert.equal(selectCztvStream(playInfo, '720P').url, 'https://x/720.m3u8')
+  assert.equal(selectCztvStream({ multiBitrateStreamList: [playInfo.multiBitrateStreamList[0]] }, '1080P'), null)
+})
+
+check('浙江：auth_key 与官网当前毫秒签名算法逐字节一致', () => {
+  const signed = new URL(signCztvStreamUrl('https://zwebl04.cztv.com/live/channel011080Pnew.m3u8', 1720000000000))
+  assert.equal(
+    signed.searchParams.get('auth_key'),
+    '1720000000000-0-0-0c9ec6316a9ac89cc6f1c05c406d0833',
+  )
+})
+
+await checkAsync('浙江：resolve 获取播放信息、选码率、现签地址，失败不抛异常', async () => {
+  clearCztvPlayInfoCache()
+  let calls = 0
+  const fetchImpl = async () => {
+    calls++
+    return fakeResponse({ success: true, code: 200, data: { multiBitrateStreamList: [
+      { bitrateCode: '720P', urlList: ['https://zwebl04.cztv.com/live/channel08720Pnew.m3u8'] },
+    ] } })
+  }
+  const result = await resolveCztvChannel('cztv-108', {
+    config: { quality: '720P' }, fetchImpl, now: 1720000000000,
+  })
+  assert.equal(calls, 1)
+  assert.match(result.url, /channel08720Pnew\.m3u8\?auth_key=1720000000000-0-0-/)
+  assert.equal(result.relayHls, true, '旧的无后缀入口也必须持续直出清单，不能一次 302 后锁死 CDN')
+
+  const bad = await resolveCztvChannel('cztv-999', {
+    fetchImpl: async () => { throw new Error('断网') }, now: 1720000000001,
+  })
+  assert.equal(bad.url, '')
+  assert.match(bad.desc, /请求失败/)
+})
+
+await checkAsync('浙江：首个 CDN 节点故障时自动选择后续可用节点，并短期复用健康结果', async () => {
+  clearCztvPlayInfoCache()
+  let apiCalls = 0
+  let probeCalls = 0
+  const fetchImpl = async () => {
+    apiCalls++
+    return fakeResponse({ success: true, code: 200, data: { multiBitrateStreamList: [
+      { bitrateCode: '1080P', urlList: [
+        'https://zwebl03.cztv.com/live/channel011080Pnew.m3u8',
+        'https://zwebl06.cztv.com/live/channel011080Pnew.m3u8',
+      ] },
+    ] } })
+  }
+  const probeFetchImpl = async url => {
+    probeCalls++
+    const ok = url.includes('zwebl06.cztv.com')
+    return { ok, status: ok ? 200 : 403, text: async () => ok ? '#EXTM3U\n' : '' }
+  }
+
+  const first = await resolveCztvChannel('cztv-101', {
+    now: 1720000000000, fetchImpl, probeFetchImpl, config: { quality: '1080P' },
+  })
+  assert.match(first.url, /zwebl06\.cztv\.com/)
+  assert.equal(apiCalls, 1)
+  assert.equal(probeCalls, 2)
+
+  const cached = await resolveCztvChannel('cztv-101', {
+    now: 1720000001000, fetchImpl, probeFetchImpl, config: { quality: '1080P' },
+  })
+  assert.match(cached.url, /zwebl06\.cztv\.com/)
+  assert.equal(apiCalls, 1, '播放信息五分钟内复用')
+  assert.equal(probeCalls, 2, '健康节点十五秒内复用，避免每次清单轮询都重复探测')
+})
+
+await checkAsync('浙江：5 分钟到期刷新失败沿用旧播放信息，一分钟后自动恢复', async () => {
+  clearCztvPlayInfoCache()
+  const startedAt = 1720000000000
+  const payload = path => fakeResponse({ success: true, code: 200, data: { multiBitrateStreamList: [
+    { bitrateCode: '1080P', urlList: [`https://zwebl04.cztv.com/live/${path}.m3u8`] },
+  ] } })
+  let calls = 0
+  const first = await resolveCztvChannel('cztv-101', {
+    now: startedAt,
+    fetchImpl: async () => { calls++; return payload('old') },
+  })
+  assert.match(first.url, /\/old\.m3u8/)
+
+  const stale = await resolveCztvChannel('cztv-101', {
+    now: startedAt + 5 * 60 * 1000 + 1,
+    fetchImpl: async () => { calls++; throw new Error('官网瞬时故障') },
+  })
+  assert.match(stale.url, /\/old\.m3u8/)
+
+  const retrySuppressed = await resolveCztvChannel('cztv-101', {
+    now: startedAt + 5 * 60 * 1000 + 30 * 1000,
+    fetchImpl: async () => { calls++; throw new Error('一分钟内不应重试') },
+  })
+  assert.match(retrySuppressed.url, /\/old\.m3u8/)
+  assert.equal(calls, 2)
+
+  const recovered = await resolveCztvChannel('cztv-101', {
+    now: startedAt + 6 * 60 * 1000 + 2,
+    fetchImpl: async () => { calls++; return payload('new') },
+  })
+  assert.match(recovered.url, /\/new\.m3u8/)
+  assert.equal(calls, 3)
 })
 
 console.log(`\n全部通过：${passed} ✅`)
