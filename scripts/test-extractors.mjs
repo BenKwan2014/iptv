@@ -11,11 +11,12 @@
  *  - 选流偏好：HLS 优先、AVC 优先，以及地址必须是裸字符串拼接——一旦过
  *    new URL() 就会丢掉 extra 里那段 expires token，地址直接失效；
  *  - 抓取失败时沿用上一轮频道，不让频道静默从播放列表消失；
- *  - 两级开关都要挡住输出。
+ *  - 模块默认开启，明确关闭后必须挡住抓取与输出。
  *
  * 运行： node scripts/test-extractors.mjs   （或 npm test）
  */
 import assert from 'node:assert/strict'
+import { constants, generateKeyPairSync, privateEncrypt } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -44,6 +45,13 @@ import {
   resolveChannel as resolveJstvChannel,
   signStreamUrl as signJstvStreamUrl,
 } from '../extractors/jstv/api.js'
+import {
+  buildChannels as buildKankanewsChannels,
+  buildSignedHeaders as buildKankanewsSignedHeaders,
+  clearCache as clearKankanewsCache,
+  decryptLiveAddress as decryptKankanewsLiveAddress,
+  resolveChannel as resolveKankanewsChannel,
+} from '../extractors/kankanews/api.js'
 import {
   buildChannels as buildMgtvChannels,
   buildSourceRequest as buildMgtvSourceRequest,
@@ -450,13 +458,14 @@ const tmp = mkdtempSync(join(tmpdir(), 'iptv-extractors-test-'))
 // 每个用例一份独立的配置/缓存文件：共用一份的话，前一个用例存下的开关状态
 // 会污染后一个（比如前一个用例关掉的模块开关会被后一个读到）
 let caseSeq = 0
-const newManager = (legacy) => {
+const newManager = (legacy, extractorConfig) => {
   const seq = ++caseSeq
   const manager = new ExtractorManager()
   manager.configPath = join(tmp, `extractors-${seq}.json`)
   manager.cachePath = join(tmp, `extractor-cache-${seq}.json`)
   // 指向测试自己的旧配置，避免读到仓库根目录里用户的真实 system-config.json
   manager.legacyConfigPath = join(tmp, `system-config-${seq}.json`)
+  if (extractorConfig !== undefined) writeFileSync(manager.configPath, JSON.stringify(extractorConfig))
   if (legacy !== undefined) writeFileSync(manager.legacyConfigPath, JSON.stringify(legacy))
   return manager.load()
 }
@@ -561,6 +570,23 @@ try {
     assert.equal(bili.helperSection, '登录态（选填）', '助手要挂在它自己那一段，不是表单最上面')
   })
 
+  check('★ 所有非代理抓取模块首次出现默认开启，显式关闭后保持关闭', () => {
+    // 跳过旧总开关迁移，只验证当前版本的模块默认值；代理模块继续听自己的 getter。
+    const manager = newManager(undefined, { modules: {}, masterSwitchRetired: true })
+    const regular = listModules().filter(module => typeof module.enabledGetter !== 'function')
+    assert.ok(regular.length > 0)
+    assert.deepEqual(
+      regular.filter(module => !manager.isModuleEnabled(module)).map(module => module.id),
+      [],
+      '新注册模块和从未保存开关的模块都应开箱启用',
+    )
+
+    manager.setModuleEnabled('kankanews', false)
+    manager.load()
+    assert.equal(manager.isModuleEnabled(getModule('kankanews')), false,
+      '用户明确保存的关闭态不能被默认值覆盖')
+  })
+
   check('代理开关的模块不受抓取子系统总开关约束', () => {
     // config.js 明写「可 mblank=true + menableMigu=true 单独留咪咕」。咪咕若被
     // enableExtractors 一起管掉，这个既有组合就废了。总开关是 config.js 的 live
@@ -619,8 +645,8 @@ try {
     assert.equal(groups[0].dataList.length, 1, '全局的 0 频道守卫只看总数，护不住单个模块')
   })
 
-  // 「抓取模块总开关」已退休：它对全新安装零影响（模块默认就是关），唯一效果是
-  // 覆盖用户明确打开过的模块。这条钉住「模块开关就是唯一真相」，防将来有人
+  // 「抓取模块总开关」已退休：旧关闭态只负责升级迁移，运行时不能再覆盖卡片选择。
+  // 这条钉住「模块开关就是唯一真相」，防将来有人
   // 看到 config.js 里还留着 enableExtractors 就顺手把那道闸加回 isModuleEnabled。
   check('★ 模块开关是唯一真相：打开后必须出频道，不受任何外层开关否决', () => {
     const manager = newManager()
@@ -745,7 +771,11 @@ try {
     // 175 条咪咕频道整批从播放列表消失。
     const manager = newManager()
     manager.setModuleEnabled('bilibili-live', true)
-    manager.updateModuleConfig('bilibili-live', { rooms: '' })   // 空清单 = 不联网
+    manager.updateModuleConfig('bilibili-live', { rooms: '', topPerArea: 0 }) // 空清单 = 不联网
+    // 默认开启后其余模块也是冷缓存；本用例只测 B 站，标成已尝试以隔离真实网络。
+    for (const module of listModules()) {
+      if (module.id !== 'bilibili-live') manager.attempted.add(module.id)
+    }
     // 模拟「上次成功过、但本进程 groups 是空的」
     manager.cache.modules['bilibili-live'] = {
       groups: [], health: { ...emptyHealth(), status: 'ok', lastSuccessAt: Date.now() },
@@ -896,7 +926,8 @@ try {
   check('listSourceIds 不按模块开关过滤——「配置档 ↔ 源」的绑定行要留在矩阵里', () => {
     // 回归：按 isModuleEnabled 过滤的话，关掉模块后它的绑定行从矩阵消失，开回来
     // 得重设一遍（app.js /api/source-profiles 的注释明确要求「绑定关系要留着」）。
-    const manager = newManager()   // bilibili-live 默认是关的
+    const manager = newManager()
+    manager.setModuleEnabled('bilibili-live', false)
     const ids = manager.listSourceIds().map(s => s.id)
     assert.ok(ids.includes('xt:bilibili-live'), '关着的模块也要列出')
     assert.ok(ids.includes('migu'), '代理开关模块以字面量 id 列出，且只此一份（app.js 不再单列）')
@@ -1244,6 +1275,95 @@ await checkAsync('浙江：5 分钟到期刷新失败沿用旧播放信息，一
   })
   assert.match(recovered.url, /\/new\.m3u8/)
   assert.equal(calls, 3)
+})
+
+// ---- 看看新闻（上海电视台） ----
+
+check('看看新闻：可播放的 v1 请求验签与官网双 MD5 算法固定样本一致', () => {
+  const headers = buildKankanewsSignedHeaders({ channel_id: '2' }, {
+    now: 1720000000000,
+    nonce: 'abcd1234',
+    uuid: '0123456789ABCDEFGHIJK',
+  })
+  assert.equal(headers.timestamp, 1720000000)
+  assert.equal(headers['Api-Version'], 'v1')
+  assert.equal(headers.version, '2.42.15')
+  assert.equal(headers['m-uuid'], '0123456789ABCDEFGHIJK')
+  assert.equal(headers.sign, '91365fae251585050ea90559bea0f3ea')
+})
+
+check('看看新闻：只收录官网 8 个正式上海频道，规范命名并固定全代理', () => {
+  const rows = [
+    { id: 2, name: '新闻综合', cover: 'http://p.statickksmg.com/news.png' },
+    { id: 1, name: '东方卫视', cover: 'https://p.statickksmg.com/dfws.png' },
+    { id: 11, name: '魔都眼' },
+    { id: 5, name: '第一财经' },
+    { id: 12, name: '新纪实' },
+    { id: 10, name: '五星体育' },
+    { id: 4, name: '都市频道' },
+    { id: 9, name: '哈哈炫动' },
+    { id: 99, name: '临时测试频道' },
+  ]
+  const channels = buildKankanewsChannels(rows)
+  assert.deepEqual(channels.map(channel => channel.name), [
+    '东方卫视', '上海新闻综合', '魔都眼', '第一财经',
+    '新纪实', '五星体育', '上海都市', '哈哈炫动',
+  ])
+  assert.equal(channels[0].deferredRef, 'kankanews-1')
+  assert.equal(channels[1].logo, 'https://p.statickksmg.com/news.png')
+  assert.ok(channels.every(channel => channel.proxyHls === true))
+})
+
+check('看看新闻：分块 RSA 公钥还原能跨块拼回完整 HLS 地址，并拒绝坏密文', () => {
+  const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 1024 })
+  const plain = 'https://volc-stream.kksmg.com/live/xwzh/index.m3u8?token=' + 'x'.repeat(180)
+  const encrypted = []
+  for (let offset = 0; offset < Buffer.byteLength(plain); offset += 117) {
+    encrypted.push(privateEncrypt({ key: privateKey, padding: constants.RSA_PKCS1_PADDING }, Buffer.from(plain).subarray(offset, offset + 117)))
+  }
+  assert.equal(decryptKankanewsLiveAddress(Buffer.concat(encrypted).toString('base64'), publicKey), plain)
+  assert.throws(() => decryptKankanewsLiveAddress('not-base64!', publicKey), /密文格式/)
+})
+
+await checkAsync('看看新闻：模块抓频道表，播放时还原短效地址并复用 150 秒缓存', async () => {
+  clearKankanewsCache()
+  const module = getModule('kankanews')
+  const list = await module.fetch({}, { fetchImpl: async (url, options) => {
+    assert.equal(String(url), 'https://kapi.kankanews.com/content/pc/tv/channels')
+    assert.match(options.headers.sign, /^[a-f0-9]{32}$/)
+    return fakeResponse({ code: '1000', result: { list: [{ id: 1, name: '东方卫视' }] } })
+  } })
+  assert.equal(list.groups[0].name, '上海电视台')
+  assert.deepEqual(list.groups[0].dataList[0].opts, ['network-caching=3000'])
+
+  const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 1024 })
+  const startedAt = 1720000000000
+  const tokenPayload = Buffer.from(JSON.stringify({ exp: Math.floor(startedAt / 1000) + 3600 })).toString('base64url')
+  const url = `https://volc-stream.kksmg.com/live/dfws4k/index.m3u8?token=x.${tokenPayload}.x&volcTime=abc`
+  const encrypted = []
+  for (let offset = 0; offset < Buffer.byteLength(url); offset += 117) {
+    encrypted.push(privateEncrypt({ key: privateKey, padding: constants.RSA_PKCS1_PADDING }, Buffer.from(url).subarray(offset, offset + 117)))
+  }
+  let calls = 0
+  const fetchImpl = async requestUrl => {
+    calls++
+    assert.match(String(requestUrl), /channel\/detail\?channel_id=1$/)
+    return fakeResponse({ code: '1000', result: {
+      id: 1, name: '东方卫视', limit_time: 180,
+      live_address: Buffer.concat(encrypted).toString('base64'),
+    } })
+  }
+  const first = await resolveKankanewsChannel('kankanews-1', {
+    now: startedAt, publicKey, fetchImpl, nonce: 'abcd1234',
+  })
+  const cached = await resolveKankanewsChannel('kankanews-1', {
+    now: startedAt + 1000, publicKey, fetchImpl, nonce: 'abcd1234',
+  })
+  assert.equal(first.url, url)
+  assert.equal(cached.url, url)
+  assert.equal(calls, 1, '播放器轮询清单时不能每次都重打频道详情接口')
+  assert.equal(first.upstreamHeaders.Origin, 'https://live.kankanews.com')
+  assert.equal(first.upstreamHeaders.Referer, 'https://live.kankanews.com/huikan')
 })
 
 // ---- 江苏网络台 ----

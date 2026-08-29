@@ -4,13 +4,13 @@
  * 平台知识全在 extractors/<id>/，这里只负责「什么时候调 fetch、结果放哪、
  * 失败了怎么办、后台看到什么」。
  *
- * 三层开关，任一层关掉都是「不联网、不出现在播放列表、磁盘数据原样保留、
- * 开回来即恢复」（与 EPG 聚合的三级开关同语义）：
+ * 模块开关关掉后都是「不联网、不出现在播放列表、磁盘数据原样保留、
+ * 开回来即恢复」：
  *   单模块 enabled（extractors.json）—— 就是唯一真相。
  *   代理开关的模块（咪咕→config.js:enableMigu）走自己的 getter。
  *   历史上还有「部署级 enableExtractors」和「文件级 enabled」两层，都已撤：
- *   前者对全新安装零影响、只会覆盖用户明确打开过的模块（见 #migrateMasterSwitch），
- *   后者与前者同名同义、纯属困惑源。
+ *   前者的显式关闭态只在升级时迁移一次（见 #migrateMasterSwitch），后者与前者
+ *   同名同义、纯属困惑源。
  *
  * 两份文件，刻意分开：
  *   extractors.json        用户配置。小、少变、进配置备份白名单。
@@ -296,11 +296,9 @@ class ExtractorManager {
   /**
    * 一次性迁移：把「抓取模块总开关」的关闭态折进各模块自己的开关，之后总开关退休。
    *
-   * 背景：原先 isModuleEnabled 里有一道 `if (!enableExtractors) return false`。实测
-   * 它对**全新安装零影响** —— 非代理模块的默认值本来就是关（见 #entry）。它唯一的
-   * 可观察效果是：覆盖掉用户已经明确打开的模块。也就是说这个开关存在的意义仅仅是
-   * 静默否定用户的选择，而界面上它顶在模块卡片上方，任谁都以为它管全部（咪咕其实
-   * 也不受它管，因为走 enabledGetter）。所以撤掉它，让每个模块的开关都真实有效。
+   * 背景：原先 isModuleEnabled 里还有一道 `if (!enableExtractors) return false`，会
+   * 静默覆盖用户已经明确设置的模块开关；界面上它又管不到走 enabledGetter 的咪咕。
+   * 所以撤掉它，让每个模块的开关都真实有效。
    *
    * 但撤掉之前必须照顾一种人：设了 mblank=true / menableExtractors=false，同时又在
    * 后台点开过某个模块（当时点了不生效）。直接撤会让那个模块在升级后突然打开，
@@ -458,9 +456,8 @@ class ExtractorManager {
       // 一起管掉的话，这个既有组合就废了，是对存量用户的破坏性变更。
       return !!module.enabledGetter()
     }
-    // 这里原先还有一道 `if (!enableExtractors) return false`。已撤——它对全新安装
-    // 零影响（模块默认就是关），唯一效果是覆盖用户明确打开过的模块。详见
-    // #migrateMasterSwitch 的注释。
+    // 这里原先还有一道 `if (!enableExtractors) return false`。已撤——旧关闭态只在
+    // 升级时一次性折进各模块，运行期每张卡片的开关就是唯一真相。详见迁移注释。
     return this.#entry(module.id).enabled
   }
 
@@ -485,7 +482,8 @@ class ExtractorManager {
     // 以为模块被禁用了。
     const proxied = typeof getModule(id)?.enabledGetter === 'function'
     if (proxied) delete entry.enabled
-    else if (typeof entry.enabled !== 'boolean') entry.enabled = false
+    // 新模块和从未保存过开关的存量模块默认启用；用户已经明确保存的 false 原样保留。
+    else if (typeof entry.enabled !== 'boolean') entry.enabled = true
     if (!isPlainObject(entry.config)) entry.config = {}
     normalizeLegacyConfig(getModule(id), entry.config)
     return entry
@@ -563,9 +561,8 @@ class ExtractorManager {
     })
     return {
       // 不再有「抓取模块总开关」这一层：每个模块的开关就是唯一真相。
-      // 历史上这里回传过 enableExtractors，前端据此画一个顶在卡片上方的总开关——
-      // 而它管不到咪咕（走 enabledGetter），也管不到全新安装（模块默认就是关），
-      // 只会覆盖用户明确打开过的模块。见 #migrateMasterSwitch。
+      // 历史上这里回传过 enableExtractors，前端据此画一个顶在卡片上方的总开关；
+      // 它管不到走 enabledGetter 的咪咕，还会覆盖卡片自身的明确选择。见迁移注释。
       corrupt: this.corrupt,
       modules,
     }

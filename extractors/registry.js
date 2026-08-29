@@ -74,6 +74,7 @@ import cztv from './cztv/index.js'
 import gdtv from './gdtv/index.js'
 import gxtv from './gxtv/index.js'
 import jstv from './jstv/index.js'
+import kankanews from './kankanews/index.js'
 import mgtv from './mgtv/index.js'
 import migu from './migu/index.js'
 
@@ -89,6 +90,7 @@ const MODULES = [
   gxtv,
   cztv,
   jstv,
+  kankanews,
   mgtv,
 ]
 
