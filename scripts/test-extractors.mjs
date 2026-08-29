@@ -407,9 +407,11 @@ check('第一阶段两个官方直播模块已注册，缓存/解析能力声明
   assert.equal(gxtv.capabilities.resolve, true)
   assert.equal(gxtv.defaultRefreshMinutes, 30, '广西密钥要短周期主动刷新，不能沿用频道列表的长缓存')
   assert.equal(gxtv.refreshConfigurable, false, '广西刷新策略由模块管理，不该让用户误改')
+  assert.deepEqual(gxtv.configSchema, [], '广西频道范围使用固定策略，不向用户暴露选择项')
   assert.equal(cztv.capabilities.cache, 'disk')
   assert.equal(cztv.capabilities.resolve, true)
   assert.equal(cztv.refreshConfigurable, false, '浙江的签名和 CDN 探测不是外层刷新输入框能控制的')
+  assert.deepEqual(cztv.configSchema.map(field => field.key), ['cachingMs'], '浙江只保留播放缓冲设置')
 })
 
 check('江苏网络台模块已注册，使用固定频道周期和播放时解析', () => {
@@ -983,18 +985,14 @@ check('广西：只取官网正式频道、规范命名并排除内部/专题流
     { name: '新闻在线网络直播专用', state: 1, showChannel: 1, decodeM3u8: 'https://x/internal.m3u8' },
     { name: '广西卫视', state: 1, showChannel: 1, encodeM3u8: 'https://x/gxws.m3u8', logo: 'https://x/gx.png' },
     { name: '新闻频道', state: 1, showChannel: 1, encodeM3u8: 'https://x/news.m3u8' },
+    { name: '移动数字电视频道', state: 1, showChannel: 1, encodeM3u8: 'https://x/mobile.m3u8' },
     { name: '乐思购频道', state: 1, showChannel: 1, encodeM3u8: 'https://x/shop.m3u8' },
     { name: '中国教育电视台CETV-1频道', state: 1, showChannel: 1, encodeM3u8: 'https://x/cetv1.m3u8' },
     { name: '《广西新闻》矩阵号', state: 1, showChannel: 1, encodeM3u8: 'https://x/matrix.m3u8' },
   ]
-  const defaultGroups = buildGxtvGroups(rows, { includeSpecialty: true, includeCetv: false })
-  assert.deepEqual(defaultGroups.map(g => g.name), ['广西电视台'])
-  assert.deepEqual(defaultGroups[0].dataList.map(ch => ch.name), ['广西卫视', '广西新闻', '乐思购'])
-
-  const withCetv = buildGxtvGroups(rows, { includeSpecialty: false, includeCetv: true })
-  assert.deepEqual(withCetv.map(g => g.name), ['广西电视台', '中国教育电视台'])
-  assert.deepEqual(withCetv[0].dataList.map(ch => ch.name), ['广西卫视', '广西新闻'])
-  assert.deepEqual(withCetv[1].dataList.map(ch => ch.name), ['CETV1'])
+  const groups = buildGxtvGroups(rows, { includeSpecialty: true, includeCetv: true })
+  assert.deepEqual(groups.map(g => g.name), ['广西电视台'])
+  assert.deepEqual(groups[0].dataList.map(ch => ch.name), ['广西卫视', '广西新闻', '广西移动'])
 })
 
 check('广西：HLS 字段按优先级回落，非 HLS/坏 URL 不进入播放列表', () => {
@@ -1090,22 +1088,20 @@ await checkAsync('广西：30 分钟到期刷新失败沿用旧密钥，一分�
   assert.equal(calls, 3)
 })
 
-check('浙江：频道名规范化，deferredRef 带平台前缀，购物频道可关闭', () => {
+check('浙江：频道名规范化、deferredRef 带平台前缀并固定排除购物频道', () => {
   const rows = [
     { name: '浙江卫视', station_code: '101', logo: 'http://oss/a.png' },
     { name: '新闻', station_code: '107', logo: 'https://oss/n.png' },
     { name: '好易购', station_code: '111', logo: 'https://oss/s.png' },
     { name: '未知内部频道', station_code: '999' },
   ]
-  const all = buildCztvChannels(rows, { includeShopping: true })
-  assert.deepEqual(all.map(ch => [ch.name, ch.deferredRef]), [
+  const channels = buildCztvChannels(rows)
+  assert.deepEqual(channels.map(ch => [ch.name, ch.deferredRef]), [
     ['浙江卫视', 'cztv-101'],
     ['浙江新闻', 'cztv-107'],
-    ['好易购', 'cztv-111'],
   ])
-  assert.equal(all[0].logo, 'https://oss/a.png', '台标升级为 HTTPS')
-  assert.equal(all[0].relayHls, true, '浙江清单需经本机中继，播放中才能持续换签和切 CDN')
-  assert.deepEqual(buildCztvChannels(rows, { includeShopping: false }).map(ch => ch.name), ['浙江卫视', '浙江新闻'])
+  assert.equal(channels[0].logo, 'https://oss/a.png', '台标升级为 HTTPS')
+  assert.equal(channels[0].relayHls, true, '浙江清单需经本机中继，播放中才能持续换签和切 CDN')
 })
 
 check('浙江：优先目标画质、缺档自动回落，绝不误选 AUDIO', () => {
@@ -1134,13 +1130,15 @@ await checkAsync('浙江：resolve 获取播放信息、选码率、现签地址
     calls++
     return fakeResponse({ success: true, code: 200, data: { multiBitrateStreamList: [
       { bitrateCode: '720P', urlList: ['https://zwebl04.cztv.com/live/channel08720Pnew.m3u8'] },
+      { bitrateCode: '1080P', urlList: ['https://zwebl04.cztv.com/live/channel081080Pnew.m3u8'] },
     ] } })
   }
   const result = await resolveCztvChannel('cztv-108', {
     config: { quality: '720P' }, fetchImpl, now: 1720000000000,
   })
   assert.equal(calls, 1)
-  assert.match(result.url, /channel08720Pnew\.m3u8\?auth_key=1720000000000-0-0-/)
+  assert.match(result.url, /channel081080Pnew\.m3u8\?auth_key=1720000000000-0-0-/,
+    '旧配置即使残留 quality=720P 也必须固定选择最高档')
   assert.equal(result.relayHls, true, '旧的无后缀入口也必须持续直出清单，不能一次 302 后锁死 CDN')
 
   const bad = await resolveCztvChannel('cztv-999', {

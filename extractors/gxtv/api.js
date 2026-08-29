@@ -1,7 +1,7 @@
 /**
  * 广西网络台的平台 API 与频道筛选。
  *
- * 官网接口会把正式频道、CETV 转播、内部推流和专题矩阵号混在同一份 rows 里。
+ * 官网接口会把正式频道、CETV 转播、购物频道、内部推流和专题矩阵号混在同一份 rows 里。
  * 这里用明确白名单，而不是把所有带 m3u8 的行直接暴露给用户：测试/矩阵流没有
  * 稳定性承诺，也可能与正式频道重复。
  */
@@ -20,11 +20,7 @@ const CHANNELS = [
   { ref: 'gxtv-ys', rawName: '影视频道', name: '广西影视', kind: 'core' },
   { ref: 'gxtv-xw', rawName: '新闻频道', name: '广西新闻', kind: 'core' },
   { ref: 'gxtv-gj', rawName: '国际频道', name: '广西国际', kind: 'core' },
-  { ref: 'gxtv-lsg', rawName: '乐思购频道', name: '乐思购', kind: 'specialty' },
-  { ref: 'gxtv-yd', rawName: '移动数字电视频道', name: '广西移动', kind: 'specialty' },
-  { ref: 'gxtv-cetv1', rawName: '中国教育电视台CETV-1频道', name: 'CETV1', kind: 'cetv' },
-  { ref: 'gxtv-cetv2', rawName: '中国教育电视台CETV-2频道', name: 'CETV2', kind: 'cetv' },
-  { ref: 'gxtv-cetv4', rawName: '中国教育电视台CETV-4频道', name: 'CETV4', kind: 'cetv' },
+  { ref: 'gxtv-yd', rawName: '移动数字电视频道', name: '广西移动', kind: 'core' },
 ]
 
 const CHANNEL_BY_RAW_NAME = new Map(CHANNELS.map(channel => [channel.rawName, channel]))
@@ -60,9 +56,7 @@ export function streamUrlOf(row) {
  * rows → 官网正式频道。按白名单顺序输出，因此 API 调整 displayOrder 不会让用户
  * 的播放列表每次刷新都乱序；同名重复行只取第一条有可播地址的。
  */
-export function buildChannelGroups(rows, config = {}) {
-  const includeSpecialty = config.includeSpecialty !== false
-  const includeCetv = config.includeCetv === true
+export function buildChannelGroups(rows) {
   const candidates = new Map()
 
   for (const row of Array.isArray(rows) ? rows : []) {
@@ -81,22 +75,13 @@ export function buildChannelGroups(rows, config = {}) {
   }
 
   const main = []
-  const cetv = []
   for (const definition of CHANNELS) {
     const channel = candidates.get(definition.rawName)
     if (!channel) continue
-    if (definition.kind === 'specialty' && !includeSpecialty) continue
-    if (definition.kind === 'cetv') {
-      if (includeCetv) cetv.push(channel)
-      continue
-    }
     main.push(channel)
   }
 
-  return [
-    ...(main.length ? [{ name: '广西电视台', dataList: main }] : []),
-    ...(cetv.length ? [{ name: '中国教育电视台', dataList: cetv }] : []),
-  ]
+  return main.length ? [{ name: '广西电视台', dataList: main }] : []
 }
 
 /** 把本轮频道接口里的正式流地址放进播放解析缓存。 */

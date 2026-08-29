@@ -12,26 +12,6 @@ export default {
 
   configSchema: [
     {
-      key: 'quality',
-      section: '播放偏好',
-      label: '优先画质',
-      type: 'select',
-      default: '1080P',
-      options: [
-        { value: '1080P', label: '1080P 超清' },
-        { value: '720P', label: '720P 高清（省带宽）' },
-      ],
-      hint: '目标画质暂时不可用时会自动回落到其它视频档，不会误选纯音频。',
-    },
-    {
-      key: 'includeShopping',
-      section: '频道范围',
-      label: '包括好易购',
-      type: 'boolean',
-      default: true,
-      hint: '关闭后不在播放列表中加入购物频道。',
-    },
-    {
       key: 'cachingMs',
       section: '播放偏好',
       label: '播放缓冲 (ms)',
@@ -45,7 +25,7 @@ export default {
 
   async fetch(config, ctx = {}) {
     const rows = await fetchChannelList({ timeoutMs: ctx.timeoutMs, fetchImpl: ctx.fetchImpl })
-    const channels = buildChannels(rows, config).map(channel => ({
+    const channels = buildChannels(rows).map(channel => ({
       ...channel,
       opts: Number(config.cachingMs) > 0 ? [`network-caching=${Number(config.cachingMs)}`] : [],
     }))

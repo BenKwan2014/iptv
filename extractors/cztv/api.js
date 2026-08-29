@@ -39,8 +39,7 @@ function validChannelId(raw) {
   return /^\d{1,8}$/.test(id) ? id : ''
 }
 
-export function buildChannels(rows, config = {}) {
-  const includeShopping = config.includeShopping !== false
+export function buildChannels(rows) {
   const seen = new Set()
   const channels = []
   for (const row of Array.isArray(rows) ? rows : []) {
@@ -48,7 +47,8 @@ export function buildChannels(rows, config = {}) {
     const rawName = String(row?.name || '').trim()
     const name = NAME_OVERRIDES[rawName]
     if (!id || !name || seen.has(id)) continue
-    if (!includeShopping && rawName === '好易购') continue
+    // 购物频道固定排除，不再向用户暴露开关。
+    if (rawName === '好易购') continue
     seen.add(id)
     channels.push({
       name,
@@ -247,7 +247,8 @@ export async function resolveChannel(ref, ctx = {}) {
       now: ctx.now,
     })
     const now = Number(ctx.now ?? Date.now())
-    const selected = await selectReachableStream(match[1], data, ctx.config?.quality, ctx, now)
+    // 固定优先官网提供的最高视频档；1080P 缺失时仍自动回落到其它视频档。
+    const selected = await selectReachableStream(match[1], data, '1080P', ctx, now)
     if (!selected) return { url: '', desc: `浙江新蓝网频道 ${match[1]} 当前没有可用的视频流` }
     return {
       url: signStreamUrl(selected.url, now),
