@@ -2404,16 +2404,16 @@
             </div>
 
             <!-- 源管理：平台的全部内容来源集中在这一页，并像设置页一样用二级标签分区。
-                 默认展示最高频的「自定义源」，同时记住用户上次停留的分类。 -->
+                 首次默认展示核心的「内置抓取模块」，同时记住用户上次停留的分类。 -->
             <div class="panel">
                 <div class="source-subtabs" role="tablist" aria-label="源管理分类">
-                    <button type="button" class="mode-switch-btn active" role="tab" aria-selected="true" aria-controls="sourceSub0" onclick="switchSourceTab(0)">👤 自定义源 <span class="source-tab-count" id="sourceTabExternalCount"></span></button>
-                    <button type="button" class="mode-switch-btn" role="tab" aria-selected="false" aria-controls="sourceSub1" onclick="switchSourceTab(1)">🧩 抓取模块 <span class="source-tab-count" id="sourceTabExtractorCount"></span></button>
+                    <button type="button" class="mode-switch-btn" role="tab" aria-selected="false" aria-controls="sourceSub0" onclick="switchSourceTab(0)">👤 自定义源 <span class="source-tab-count" id="sourceTabExternalCount"></span></button>
+                    <button type="button" class="mode-switch-btn active" role="tab" aria-selected="true" aria-controls="sourceSub1" onclick="switchSourceTab(1)">🧩 内置抓取模块 <span class="source-tab-count" id="sourceTabExtractorCount"></span></button>
                     <button type="button" class="mode-switch-btn" role="tab" aria-selected="false" aria-controls="sourceSub2" onclick="switchSourceTab(2)">📦 内置源 <span class="source-tab-count" id="sourceTabBuiltInCount"></span></button>
                 </div>
 
                 <!-- ① 自定义源 ------------------------------------------------ -->
-                <div class="source-subpanel active" id="sourceSub0" role="tabpanel">
+                <div class="source-subpanel" id="sourceSub0" role="tabpanel">
                 <div class="source-section">
                     <div class="source-section-head">
                         <div>
@@ -2447,7 +2447,7 @@
                 </div>
 
                 <!-- ② 抓取模块 ------------------------------------------------ -->
-                <div class="source-subpanel" id="sourceSub1" role="tabpanel">
+                <div class="source-subpanel active" id="sourceSub1" role="tabpanel">
                 <div class="source-section">
                     <div class="source-section-head">
                         <div>
@@ -2806,10 +2806,11 @@
         let systemConfig = {};
         let updatingSourceIndex = null; // 记录正在更新的源索引
         let epgConfig = { enabled: true, sources: [] }; // EPG 聚合源配置（issue #38）
-        let selectedSourceTab = 0;
+        let selectedSourceTab = 1;
         try {
-            const savedSourceTab = Number(localStorage.getItem('iptv-source-tab'));
-            if ([0, 1, 2].includes(savedSourceTab)) selectedSourceTab = savedSourceTab;
+            const savedSourceTab = localStorage.getItem('iptv-source-tab');
+            const savedSourceTabIndex = Number(savedSourceTab);
+            if (savedSourceTab !== null && [0, 1, 2].includes(savedSourceTabIndex)) selectedSourceTab = savedSourceTabIndex;
         } catch (e) {
             // 隐私模式或浏览器禁用存储时继续使用默认分类，不影响源管理功能。
         }
@@ -2866,7 +2867,7 @@
         // 源管理页二级标签：记住上次停留位置。切到抓取模块时顺手刷新运行状态；
         // 从顶层 Tab 恢复时会单独统一刷新，所以可用 refresh=false 避免重复请求。
         function switchSourceTab(index, refresh = true) {
-            const next = [0, 1, 2].includes(Number(index)) ? Number(index) : 0;
+            const next = [0, 1, 2].includes(Number(index)) ? Number(index) : 1;
             selectedSourceTab = next;
             document.querySelectorAll('.source-subtabs .mode-switch-btn').forEach((button, i) => {
                 const active = i === next;
