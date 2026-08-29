@@ -1,13 +1,12 @@
 #EXTM3U
 #EXT-X-APP APTV
 
-#EXTINF:-1 group-title="少儿",浙江少儿
-http://ali-xwl.cztv.com/live/channel081080Plxw.m3u8
-
-#EXTINF:-1 group-title="综艺",苏州娱乐
-https://live-auth.51kandianshi.com/szgd/csztv4.m3u8
-#EXTINF:-1 group-title="综艺",南宁娱乐
-http://hls.nntv.cn/nnlive/YSYL_244.m3u8
+#EXTINF:-1 group-title="卫视",湖南卫视4K
+http://hlsal-ldvt.qing.mgtv.com/nn_live/nn_x64/Y2RuZXhfaWQ9YWxfaGxzX2xkdnQmZT02OTE0NjA0JnY9MSZpZD1ITldTWkdTVCZzPTcwN2RiYTc2YzJjNmJmMTQ4MmUyZGYzOWU2NWM3YWFi/HNWSZGST.m3u8
+#EXTINF:-1 group-title="卫视",东方卫视4K
+https://bp-resource-dfl.bestv.cn/148/3/video.m3u8
+#EXTINF:-1 group-title="卫视",浙江卫视4K
+http://ali-xwl.cztv.com/live/channel4k2160p.m3u8
 
 #EXTINF:-1 group-title="体育",Red Bull TV
 http://rbmn-live.akamaized.net/hls/live/590964/BoRB-AT/master_3360.m3u8
@@ -132,8 +131,6 @@ http://4gtv.cnlive.club/channel/n122ce57e/index.m3u8?q=1784702901150
 http://4gtv.cnlive.club/channel/3fae463b/index.m3u8?q=1784702901150
 #EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/TVBS%E6%AD%A1%E6%A8%82%E5%8F%B0.png" group-title="亚太",TVBS歡樂台
 http://4gtv.cnlive.club/channel/498f035d/index.m3u8?q=1784702901150
-#EXTINF:-1 tvg-name="民视新闻" tvg-logo="https://epg.112114.xyz/logo/民视新闻.png" group-title="亚太",民视新闻
-http://rihou.cc:555/tv/%E6%B0%91%E8%A7%86%E6%96%B0%E9%97%BB
 #EXTINF:-1 tvg-name="公视" tvg-logo="https://epg.112114.xyz/logo/公视.png" group-title="亚太",公视高清
 http://211.72.174.95:8116/0.ts
 #EXTINF:-1 tvg-name="民视" tvg-logo="https://epg.112114.xyz/logo/民视.png" group-title="亚太",民视高清
@@ -150,16 +147,6 @@ http://220.135.241.47:8315/0.ts
 http://38.64.72.148/hls/modn/list/4005/playlist.m3u8
 #EXTINF:-1 group-title="亚太",TVBS亚洲
 http://38.64.72.148/hls/modn/list/4005/chunklist1.m3u8
-#EXTINF:-1 group-title="亚太",中视
-rtmp://f13h.mine.nu/sat/tv091
-#EXTINF:-1 group-title="亚太",纬来育乐
-rtmp://f13h.mine.nu/sat/tv701
-#EXTINF:-1 group-title="亚太",纬来日本
-rtmp://f13h.mine.nu/sat/tv771
-#EXTINF:-1 group-title="亚太",东森超视
-rtmp://f13h.mine.nu/sat/tv331
-#EXTINF:-1 tvg-id="456560" tvg-name="非凡新聞HD" tvg-logo="https://epg.pw/media/images/channel/2016/06/17/large/20160617165249161501_56.png" group-title="亚太",非凡新聞
-rtmp://f13h.mine.nu/sat/tv581
 #EXTINF:-1 group-title="亚太",耀才财经
 https://v3.mediacast.hk/webcast/bshdlive-pc/playlist.m3u8
 #EXTINF:-1 group-title="亚太",泰国ASTV
@@ -203,20 +190,11 @@ http://4gtv.cnlive.club/channel/3fcf6ae8/index.m3u8?q=1784702901150
 http://4gtv.cnlive.club/channel/n4f2af9e/index.m3u8?q=1784702901150
 #EXTINF:-1 tvg-logo="https://epg.112114.xyz/logo/%E7%B6%93%E5%85%B8%E9%9B%BB%E5%BD%B1%E5%8F%B0.png" group-title="影视",經典電影台
 http://4gtv.cnlive.club/channel/n2eb7240a/index.m3u8?q=1784702901150
-#EXTINF:-1 group-title="影视",千禧经典
-https://o11.163189.xyz/stream/live/tvbc/
-#EXTINF:-1 group-title="影视",ASTRO爱奇艺
-https://o11.163189.xyz/stream/live/iqiyi/
 
 #EXTINF:-1 group-title="纪实",WildEarth
 https://wildearth-plex.amagi.tv/masterR1080p.m3u8
 
-#EXTINF:-1 group-title="卫视",湖南卫视4K
-http://hlsal-ldvt.qing.mgtv.com/nn_live/nn_x64/Y2RuZXhfaWQ9YWxfaGxzX2xkdnQmZT02OTE0NjA0JnY9MSZpZD1ITldTWkdTVCZzPTcwN2RiYTc2YzJjNmJmMTQ4MmUyZGYzOWU2NWM3YWFi/HNWSZGST.m3u8
-#EXTINF:-1 group-title="卫视",东方卫视4K
-https://bp-resource-dfl.bestv.cn/148/3/video.m3u8
-#EXTINF:-1 group-title="卫视",浙江卫视4K
-http://ali-xwl.cztv.com/live/channel4k2160p.m3u8
+
 
 #EXTINF:-1 tvg-logo="https://image.xumo.com/v1/channels/channel/99991387/168x168.png?type=color_onBlack" group-title="体育",beIN SPORTS XTRA
 https://d9ssxzmclhfo4.cloudfront.net/v1/manifest/3722c60a815c199d9c0ef36c5b73da68a62b09d1/cc-t7en7ol3kq3sp/f881b29a-280a-4416-be20-40db0fcc0f07/3.m3u8
@@ -272,8 +250,6 @@ http://207.56.13.146:81/cdnlive/gefwq.m3u8
 
 #EXTINF:-1 group-title="影视",LMN
 http://23.237.104.106:8080/USA_LMN/tracks-v1a1/mono.m3u8
-#EXTINF:-1 group-title="影视",Cinemax精选
-http://23.237.104.106:8080/USA_MOREMAX/mono.m3u8
 #EXTINF:-1 group-title="影视",Cinemax
 http://23.237.104.106:8080/USA_CINEMAX/tracks-v1a1/mono.m3u8
 #EXTINF:-1 group-title="影视",HBO王牌
