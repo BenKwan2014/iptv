@@ -32,6 +32,10 @@ import {
   streamUrlOf,
 } from '../extractors/gxtv/api.js'
 import {
+  buildChannelGroups as buildFjtvGroups,
+  hlsOf as fjtvHlsOf,
+} from '../extractors/fjtv/api.js'
+import {
   buildChannels as buildCztvChannels,
   clearPlayInfoCache as clearCztvPlayInfoCache,
   resolveChannel as resolveCztvChannel,
@@ -443,6 +447,16 @@ check('第一阶段两个官方直播模块已注册，缓存/解析能力声明
   assert.deepEqual(cztv.configSchema, [], '浙江不向用户暴露播放缓冲等技术参数')
 })
 
+check('福建海博TV模块已注册，固定六小时刷新且播放地址可直出', () => {
+  const fjtv = getModule('fjtv')
+  assert.ok(fjtv)
+  assert.equal(fjtv.capabilities.cache, 'disk')
+  assert.equal(fjtv.capabilities.resolve, false)
+  assert.equal(fjtv.defaultRefreshMinutes, 360)
+  assert.equal(fjtv.refreshConfigurable, false)
+  assert.deepEqual(fjtv.configSchema, [])
+})
+
 check('江苏网络台模块已注册，使用固定频道周期和播放时解析', () => {
   const jstv = getModule('jstv')
   assert.ok(jstv)
@@ -679,6 +693,16 @@ try {
     const groups = manager.getValidChannels()
     assert.equal(groups.length, 1)
     assert.equal(groups[0].dataList.length, 1, '全局的 0 频道守卫只看总数，护不住单个模块')
+    const moduleState = manager.getState().modules.find(module => module.id === 'bilibili-live')
+    assert.equal(moduleState.health.usingCachedChannels, true,
+      '面板必须说明失败时的频道数来自上一轮缓存')
+  })
+
+  check('首次抓取失败且无缓存时，面板不得误报沿用缓存', () => {
+    const manager = newManager()
+    seed(manager, [], { status: 'failed', consecutiveFailures: 1, lastError: 'HTTP 403', channelCount: 0 })
+    const moduleState = manager.getState().modules.find(module => module.id === 'bilibili-live')
+    assert.equal(moduleState.health.usingCachedChannels, false)
   })
 
   // 「抓取模块总开关」已退休：旧关闭态只负责升级迁移，运行时不能再覆盖卡片选择。
@@ -1447,6 +1471,116 @@ await checkAsync('看看新闻：模块抓频道表，播放时还原短效地�
   assert.equal(scenicFirst.url, scenicUrl)
   assert.equal(scenicCached.url, scenicUrl)
   assert.equal(scenicCalls, 1, '景观线路共用详情接口，播放器轮询时必须复用缓存')
+})
+
+// ---- 福建海博TV ----
+
+const fjtvRow = (id, title, sortId, path, extra = {}) => ({
+  id,
+  title,
+  sort_id: sortId,
+  indexpic: `https://fyfile.fjtv.net/file/${id}.png`,
+  topic_camera: [{
+    // 这个字段在真实「福建综合」行里曾指向无关频道，测试确保实现不会读取它。
+    extra: { play_stream_url: 'https://stream3.fjtv.net/cctv1hd/hd/live.m3u8' },
+    streams: [{ hls: `https://live4-fuyun.fjtv.net/${path}/live.m3u8` }],
+  }],
+  ...extra,
+})
+
+const fjtvProvinceSort = '665226484478443521'
+const fjtvCitySort = '665226484646215680'
+const fjtvProvinceRows = () => [
+  fjtvRow('665248990102917120', '综合频道', fjtvProvinceSort, 'zhpd/hd'),
+  fjtvRow('665248966136664064', '东南卫视', fjtvProvinceSort, 'dnpd/hd'),
+  fjtvRow('665248914378952704', '新闻频道', fjtvProvinceSort, 'xwpd/hd'),
+  fjtvRow('665248752898248704', '文旅·体育频道', fjtvProvinceSort, 'dspd/hd'),
+  fjtvRow('665248553475870720', '少儿频道', fjtvProvinceSort, 'child/hd'),
+  fjtvRow('665248523855695872', '海峡卫视', fjtvProvinceSort, 'haixiapd/hd'),
+]
+const fjtvCityRows = () => [
+  fjtvRow('727571808803282944', '厦门卫视', fjtvCitySort, 'hb_xmtv/sd'),
+  fjtvRow('731087090473676800', '福州新闻综合频道', fjtvCitySort, 'hb_fztv/sd'),
+  fjtvRow('727214415649083392', '漳州新闻综合频道', fjtvCitySort, 'hb_zztv/sd'),
+  fjtvRow('727216678547394560', '三明综合频道', fjtvCitySort, 'hb_smtv/sd'),
+  fjtvRow('727572738755977216', '泉州新闻综合频道', fjtvCitySort, 'hb_qztv/sd'),
+  fjtvRow('727216450918322176', '南平综合频道', fjtvCitySort, 'hb_nptv/sd'),
+  fjtvRow('727212352215093248', '龙岩综合频道', fjtvCitySort, 'hb_lytv/sd'),
+  fjtvRow('727213694589505536', '莆田新闻综合频道', fjtvCitySort, 'hb_puttv/sd'),
+  fjtvRow('727574414028103680', '平潭综合频道', fjtvCitySort, 'hb_pttv/sd'),
+  fjtvRow('727213159174017024', '宁德新闻综合频道', fjtvCitySort, 'hb_ndtv/sd'),
+]
+
+check('福建：只读取官方 streams[].hls，不使用错误备用字段或外站地址', () => {
+  assert.equal(
+    fjtvHlsOf(fjtvProvinceRows()[0]),
+    'https://live4-fuyun.fjtv.net/zhpd/hd/live.m3u8',
+  )
+  assert.equal(fjtvHlsOf({
+    topic_camera: [{
+      extra: { play_stream_url: 'https://stream3.fjtv.net/wrong/live.m3u8' },
+      streams: [{ hls: 'https://example.com/fake/live.m3u8' }],
+    }],
+  }), '')
+  assert.equal(fjtvHlsOf({
+    topic_camera: [{ streams: [{ hls: 'http://live1-fuyun.fjtv.net/xwpd/hd/live.m3u8' }] }],
+  }), '')
+})
+
+check('福建：固定输出6个省级与10个地市频道，规范名称并排除活动直播', () => {
+  const groups = buildFjtvGroups([
+    {
+      sortId: fjtvProvinceSort,
+      rows: [
+        ...fjtvProvinceRows(),
+        fjtvRow('999', '临时活动直播', fjtvProvinceSort, 'event/hd'),
+        fjtvRow('665248990102917120', '错误频道名', fjtvProvinceSort, 'wrong/hd'),
+      ],
+    },
+    { sortId: fjtvCitySort, rows: fjtvCityRows() },
+  ])
+  assert.deepEqual(groups.map(group => group.name), ['福建电视台', '福建地市台'])
+  assert.deepEqual(
+    groups[0].dataList.map(channel => channel.name),
+    ['福建综合', '东南卫视', '福建新闻', '福建文旅体育', '福建少儿', '海峡卫视'],
+  )
+  assert.deepEqual(
+    groups[1].dataList.map(channel => channel.name),
+    ['厦门卫视', '福州新闻综合', '漳州新闻综合', '三明综合', '泉州新闻综合', '南平综合', '龙岩综合', '莆田新闻综合', '平潭综合', '宁德新闻综合'],
+  )
+  assert.ok(groups.flatMap(group => group.dataList).every(channel =>
+    !channel.proxyHls && !channel.relayHls && !channel.deferredRef))
+})
+
+await checkAsync('福建：模块分别请求两个官方分类，任一分类缺台则整轮失败保旧缓存', async () => {
+  const module = getModule('fjtv')
+  const calls = []
+  const fetchImpl = async (requestUrl, options) => {
+    const url = new URL(String(requestUrl))
+    calls.push(url.searchParams.get('sort_id'))
+    assert.equal(url.origin + url.pathname, 'https://mapi-plus.fjtv.net/api/open/haibo8/tv_channel_list.php')
+    assert.equal(options.headers.Referer, 'https://www.fjtv.net/')
+    return fakeResponse(url.searchParams.get('sort_id') === fjtvProvinceSort
+      ? fjtvProvinceRows()
+      : fjtvCityRows())
+  }
+  const result = await module.fetch({}, { fetchImpl })
+  assert.deepEqual(calls, [fjtvProvinceSort, fjtvCitySort])
+  assert.equal(result.groups[0].dataList.length, 6)
+  assert.equal(result.groups[1].dataList.length, 10)
+
+  await assert.rejects(
+    () => module.fetch({}, { fetchImpl: async requestUrl => {
+      const sortId = new URL(String(requestUrl)).searchParams.get('sort_id')
+      return fakeResponse(sortId === fjtvProvinceSort ? fjtvProvinceRows().slice(1) : fjtvCityRows())
+    } }),
+    /只找到 5\/6 个正式频道/,
+  )
+
+  await assert.rejects(
+    () => module.fetch({}, { fetchImpl: async () => ({ ok: false, status: 403 }) }),
+    /HTTP 403/,
+  )
 })
 
 // ---- 河南大象新闻 ----

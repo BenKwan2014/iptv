@@ -2959,7 +2959,7 @@
             if (h.skippedCount) extra += ' · 跳过 ' + h.skippedCount;
             if (h.consecutiveFailures) extra += ' · 连续失败 ' + h.consecutiveFailures + ' 次';
             let line = `<span style="color:${color};">● ${escapeHtml(text)}</span>` +
-                `<span style="color:#888;"> · 频道 ${h.channelCount || 0}${escapeHtml(extra)} · 上次成功 ${escapeHtml(when)}</span>`;
+                `<span style="color:#888;"> · ${escapeHtml(extractorChannelSummary(h))}${escapeHtml(extra)} · 上次成功 ${escapeHtml(when)}</span>`;
             if (h.lastError) {
                 line += `<div style="color:#ff4d4f; font-size:12px; margin-top:4px; word-break:break-all;">${escapeHtml(h.lastError)}</div>`;
             }
@@ -3200,6 +3200,12 @@
             return `<span style="color:${color};">● ${escapeHtml(text)}</span>`;
         }
 
+        /** 失败时 channelCount 是上次成功缓存的数量，不是本轮抓到的数量。 */
+        function extractorChannelSummary(h) {
+            const count = h.channelCount || 0;
+            return h.usingCachedChannels ? `沿用缓存 ${count} 频道` : `${count} 频道`;
+        }
+
         /** 有表单字段或可编辑刷新间隔时才存在“配置”；否则展开区只是运行详情。 */
         function extractorHasEditableConfig(module) {
             const visibleFields = (module.configSchema || []).some(field => !field.hidden);
@@ -3252,7 +3258,7 @@
                     </div>
                     <div class="source-card-desc">${escapeHtml(m.description || '')}</div>
                     <div class="source-card-foot">
-                        <span title="上次成功抓取：${escapeHtml(when)}">${extractorCardStatus(h)} · ${h.channelCount || 0} 频道</span>
+                        <span title="上次成功抓取：${escapeHtml(when)}">${extractorCardStatus(h)} · ${extractorChannelSummary(h)}</span>
                         <span class="card-open-hint">${hasEditableConfig ? '⚙️ 配置 ›' : '详情 ›'}</span>
                     </div>
                 </div>`;

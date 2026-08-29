@@ -521,6 +521,16 @@ class ExtractorManager {
     const modules = listModules().map(module => {
       const entry = this.#entry(module.id)
       const cacheEntry = this.#cacheEntry(module.id)
+      const cachedChannelCount = cacheEntry.groups.reduce(
+        (sum, group) => sum + (group?.dataList?.length || 0), 0)
+      const health = {
+        ...emptyHealth(),
+        ...cacheEntry.health,
+        // 失败状态下的 channelCount 描述的是仍在输出的上次成功缓存，不是本轮结果。
+        // 显式告诉前端，避免卡片出现「失败 · 16 频道」却不解释链接为何还在。
+        usingCachedChannels: ['failed', 'risk'].includes(cacheEntry.health.status)
+          && cachedChannelCount > 0,
+      }
       const effective = this.effectiveConfig(module)
       const enabled = this.isModuleEnabled(module)
       const { config, secretsSet } = redactConfig(module, effective)
@@ -556,7 +566,7 @@ class ExtractorManager {
         maxRefreshMinutes: module.maxRefreshMinutes ?? 1440,
         refreshConfigurable: module.refreshConfigurable !== false,
         refreshDescription: module.refreshDescription || '',
-        health: cacheEntry.health,
+        health,
       }
     })
     return {

@@ -71,6 +71,7 @@
  */
 import bilibiliLive from './bilibili-live/index.js'
 import cztv from './cztv/index.js'
+import fjtv from './fjtv/index.js'
 import gdtv from './gdtv/index.js'
 import gxtv from './gxtv/index.js'
 import hntv from './hntv/index.js'
@@ -90,6 +91,7 @@ const MODULES = [
   bilibiliLive,
   gdtv,
   gxtv,
+  fjtv,
   hntv,
   cztv,
   jstv,
