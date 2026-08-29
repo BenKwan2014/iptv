@@ -418,7 +418,7 @@ check('第一阶段两个官方直播模块已注册，缓存/解析能力声明
   assert.equal(cztv.capabilities.cache, 'disk')
   assert.equal(cztv.capabilities.resolve, true)
   assert.equal(cztv.refreshConfigurable, false, '浙江的签名和 CDN 探测不是外层刷新输入框能控制的')
-  assert.deepEqual(cztv.configSchema.map(field => field.key), ['cachingMs'], '浙江只保留播放缓冲设置')
+  assert.deepEqual(cztv.configSchema, [], '浙江不向用户暴露播放缓冲等技术参数')
 })
 
 check('江苏网络台模块已注册，使用固定频道周期和播放时解析', () => {
@@ -428,6 +428,7 @@ check('江苏网络台模块已注册，使用固定频道周期和播放时解�
   assert.equal(jstv.capabilities.resolve, true)
   assert.equal(jstv.defaultRefreshMinutes, 240)
   assert.equal(jstv.refreshConfigurable, false)
+  assert.deepEqual(jstv.configSchema, [], '江苏不向用户暴露播放缓冲等技术参数')
   assert.equal(resolverFor('jstv-670')?.id, 'jstv')
 })
 
@@ -1122,6 +1123,17 @@ check('浙江：频道名规范化、deferredRef 带平台前缀并固定排除�
   assert.equal(channels[0].relayHls, true, '浙江清单需经本机中继，播放中才能持续换签和切 CDN')
 })
 
+await checkAsync('浙江：播放缓冲固定 3000ms，旧配置不再影响输出', async () => {
+  const module = getModule('cztv')
+  const result = await module.fetch({ cachingMs: 0 }, {
+    fetchImpl: async () => fakeResponse({
+      state: 0,
+      content: { list: [{ name: '浙江卫视', station_code: '101' }] },
+    }),
+  })
+  assert.deepEqual(result.groups[0].dataList[0].opts, ['network-caching=3000'])
+})
+
 check('浙江：优先目标画质、缺档自动回落，绝不误选 AUDIO', () => {
   const playInfo = { multiBitrateStreamList: [
     { bitrateCode: 'AUDIO', urlList: ['https://x/audio.m3u8'] },
@@ -1289,8 +1301,9 @@ await checkAsync('江苏：模块取 Bearer 频道表，缓存后播放时签名
     return fakeResponse({ code: 200, data: { articles } })
   }
   const module = getModule('jstv')
-  const result = await module.fetch({ cachingMs: 3000 }, { fetchImpl })
+  const result = await module.fetch({ cachingMs: 0 }, { fetchImpl })
   assert.deepEqual(result.groups[0].dataList.map(x => x.name), ['江苏卫视', '江苏卫视4K'])
+  assert.ok(result.groups[0].dataList.every(x => x.opts?.[0] === 'network-caching=3000'), '旧配置不影响固定缓冲')
   assert.equal(calls.length, 2)
   assert.match(calls[1].options.headers.Authorization, /^Bearer /)
 

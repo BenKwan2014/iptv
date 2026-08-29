@@ -10,25 +10,15 @@ export default {
   refreshConfigurable: false,
   refreshDescription: '自动管理：频道列表每 240 分钟刷新；每次播放及清单更新都会重新生成约 3 分钟有效的地址。',
 
-  configSchema: [
-    {
-      key: 'cachingMs',
-      section: '播放偏好',
-      label: '播放缓冲 (ms)',
-      type: 'int',
-      min: 0,
-      max: 60000,
-      default: 3000,
-      hint: '写入 #EXTVLCOPT:network-caching；填 0 则不写。',
-    },
-  ],
+  configSchema: [],
 
-  async fetch(config, ctx = {}) {
+  async fetch(_config, ctx = {}) {
     const rows = await fetchChannelList({ timeoutMs: ctx.timeoutMs, fetchImpl: ctx.fetchImpl })
     primeChannelCache(rows)
     const channels = buildChannels(rows).map(channel => ({
       ...channel,
-      opts: Number(config.cachingMs) > 0 ? [`network-caching=${Number(config.cachingMs)}`] : [],
+      // 仅 VLC/libVLC 会读取这条提示；固定一个稳妥值，不向用户暴露技术参数。
+      opts: ['network-caching=3000'],
     }))
     if (!channels.length) throw new Error('江苏网络台接口成功，但没有找到可用频道（接口可能已改版）')
     return { groups: [{ name: '江苏电视台', dataList: channels }], meta: { skipped: [], warnings: [] } }

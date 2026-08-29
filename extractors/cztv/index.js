@@ -10,24 +10,14 @@ export default {
   refreshConfigurable: false,
   refreshDescription: '自动管理：频道列表每 240 分钟刷新；播放签名约 5 分钟更新，CDN 节点约 15 秒重新评估，失败后 1 分钟重试。',
 
-  configSchema: [
-    {
-      key: 'cachingMs',
-      section: '播放偏好',
-      label: '播放缓冲 (ms)',
-      type: 'int',
-      min: 0,
-      max: 60000,
-      default: 3000,
-      hint: '写入 #EXTVLCOPT:network-caching；填 0 则不写。',
-    },
-  ],
+  configSchema: [],
 
-  async fetch(config, ctx = {}) {
+  async fetch(_config, ctx = {}) {
     const rows = await fetchChannelList({ timeoutMs: ctx.timeoutMs, fetchImpl: ctx.fetchImpl })
     const channels = buildChannels(rows).map(channel => ({
       ...channel,
-      opts: Number(config.cachingMs) > 0 ? [`network-caching=${Number(config.cachingMs)}`] : [],
+      // 仅 VLC/libVLC 会读取这条提示；固定一个稳妥值，不向用户暴露技术参数。
+      opts: ['network-caching=3000'],
     }))
     if (!channels.length) throw new Error('浙江新蓝网接口成功，但没有找到可用频道（接口可能已改版）')
     return {

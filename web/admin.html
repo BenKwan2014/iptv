@@ -482,16 +482,11 @@
             margin-bottom: 4px;
         }
 
-        /* ===== 源管理页：分段 + 卡片网格 =====
-           平台的全部内容来源（自定义源 / 抓取模块 / 内置源）集中在这一页，三段共用
-           这套外壳。自定义源刻意排最上——「添加源」是本页最高频的入口，要第一眼看到。 */
+        /* ===== 源管理页：二级标签 + 卡片网格 =====
+           平台的全部内容来源（自定义源 / 抓取模块 / 内置源）集中在这一页，三类内容
+           共享卡片样式，通过二级标签切换，避免配置和说明在同一长页里相互挤压。 */
         .source-section {
-            margin-bottom: 28px;
-        }
-
-        .source-section + .source-section {
-            border-top: 1px solid #f0f0f0;
-            padding-top: 20px;
+            margin-bottom: 0;
         }
 
         .source-section-head {
@@ -501,21 +496,6 @@
             gap: 12px;
             flex-wrap: wrap;
             margin-bottom: 12px;
-        }
-
-        .source-section-title {
-            font-size: 16px;
-            font-weight: 600;
-            color: #333;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .source-section-count {
-            font-size: 12px;
-            font-weight: 500;
-            color: #888;
         }
 
         .source-section-hint {
@@ -643,7 +623,7 @@
             text-overflow: ellipsis;
         }
 
-        /* 卡片上的启用开关。放在卡片而不是展开区里：展开区底部有「💾 保存配置」，
+        /* 卡片上的启用开关。放在卡片而不是展开区里：有可编辑项的展开区底部有「💾 保存配置」，
            一个「点了就生效」的勾选框混在一堆「要按保存」的字段中间，外观一样、
            语义相反，是全站最容易让人误判的一处。内置源卡片本来就是这个形态。
            stopPropagation 是必须的，否则点开关会连带触发卡片的展开/收起。 */
@@ -834,8 +814,7 @@
         }
 
         /* 展开的详情区：卡片网格在上、详情在下。280px 那一栏是使用说明。
-           默认收起 —— 页面上还有「抓取模块」「内置源」两段，详情一直撑开会把它们
-           顶到屏幕外，那就违背了「把源模块提到显眼位置」这件事本身。 */
+           默认收起，避免一进入自定义源就被长表单占满。 */
         .external-detail-wrap {
             display: grid;
             grid-template-columns: 1fr 280px;
@@ -1119,8 +1098,9 @@
             font-weight: 500;
         }
 
-        /* 设置页二级标签（issue #72）：按钮复用 .mode-switch-btn，子面板显隐同 .panel */
-        .settings-subtabs {
+        /* 设置页与源管理页共用同一套二级标签视觉，但分别限定按钮选择器，互不串台。 */
+        .settings-subtabs,
+        .source-subtabs {
             display: flex;
             gap: 8px;
             flex-wrap: wrap;
@@ -1128,11 +1108,19 @@
             padding-bottom: 14px;
             border-bottom: 1px solid #e8e8e8;
         }
-        .settings-subpanel {
+        .settings-subpanel,
+        .source-subpanel {
             display: none;
         }
-        .settings-subpanel.active {
+        .settings-subpanel.active,
+        .source-subpanel.active {
             display: block;
+        }
+
+        .source-tab-count {
+            margin-left: 4px;
+            font-size: 11px;
+            opacity: 0.85;
         }
 
         .external-item-body {
@@ -2415,19 +2403,20 @@
                 </div>
             </div>
 
-            <!-- 源管理：平台的全部内容来源集中在这一页。
-                 段落顺序刻意把「自定义源」放最上 —— 「添加自定义源」是本页最高频的
-                 入口，排在第一屏才显眼；抓取模块与内置源都是配好一次就少动的东西。
-                 「抓取模块」原来是设置页的第 6 个二级标签，两层点击太深，整段搬到这里。 -->
+            <!-- 源管理：平台的全部内容来源集中在这一页，并像设置页一样用二级标签分区。
+                 默认展示最高频的「自定义源」，同时记住用户上次停留的分类。 -->
             <div class="panel">
+                <div class="source-subtabs" role="tablist" aria-label="源管理分类">
+                    <button type="button" class="mode-switch-btn active" role="tab" aria-selected="true" aria-controls="sourceSub0" onclick="switchSourceTab(0)">👤 自定义源 <span class="source-tab-count" id="sourceTabExternalCount"></span></button>
+                    <button type="button" class="mode-switch-btn" role="tab" aria-selected="false" aria-controls="sourceSub1" onclick="switchSourceTab(1)">🧩 抓取模块 <span class="source-tab-count" id="sourceTabExtractorCount"></span></button>
+                    <button type="button" class="mode-switch-btn" role="tab" aria-selected="false" aria-controls="sourceSub2" onclick="switchSourceTab(2)">📦 内置源 <span class="source-tab-count" id="sourceTabBuiltInCount"></span></button>
+                </div>
 
                 <!-- ① 自定义源 ------------------------------------------------ -->
+                <div class="source-subpanel active" id="sourceSub0" role="tabpanel">
                 <div class="source-section">
                     <div class="source-section-head">
                         <div>
-                            <div class="source-section-title">
-                                👤 自定义源 <span class="source-section-count" id="externalSourceCount"></span>
-                            </div>
                             <div class="source-section-hint">
                                 自己添加的直连 / 抓取 / 订阅源。卡片顺序 = 播放列表输出顺序 = 播放器里同名频道「源1 / 源2」的先后，
                                 偏好的源用 ◀ ▶ 往前排。点卡片展开编辑。
@@ -2437,8 +2426,7 @@
 
                     <div class="source-grid" id="externalSourceList"></div>
 
-                    <!-- 详情默认收起（hidden）：本页下面还有「抓取模块」「内置源」两段，
-                         详情一直撑开会把它们顶出第一屏，那就违背搬家的初衷了。 -->
+                    <!-- 详情默认收起（hidden），避免打开分类时立即被长表单占满。 -->
                     <div class="external-detail-wrap hidden" id="externalDetailWrap">
                         <div class="external-detail" id="externalDetail"></div>
                         <div class="external-usage-side">
@@ -2456,14 +2444,13 @@
                         </div>
                     </div>
                 </div>
+                </div>
 
                 <!-- ② 抓取模块 ------------------------------------------------ -->
+                <div class="source-subpanel" id="sourceSub1" role="tabpanel">
                 <div class="source-section">
                     <div class="source-section-head">
                         <div>
-                            <div class="source-section-title">
-                                🧩 抓取模块
-                            </div>
                             <div class="source-section-hint">
                                 平台自带的抓取模块。每个模块一个开关，点了立刻生效、无需保存；关掉即不联网、
                                 不出现在播放列表，配置原样保留、开回来即恢复。带「独立开关」标记的模块，其状态同时
@@ -2476,12 +2463,13 @@
                     <div class="source-grid" id="extractorList"></div>
                     <div class="extractor-detail hidden" id="extractorDetail"></div>
                 </div>
+                </div>
 
                 <!-- ③ 内置源 -------------------------------------------------- -->
+                <div class="source-subpanel" id="sourceSub2" role="tabpanel">
                 <div class="source-section">
                     <div class="source-section-head">
                         <div>
-                            <div class="source-section-title">📦 内置源</div>
                             <div class="source-section-hint">
                                 随程序自带的内容，由维护者策展、不可编辑。每项一个开关，关闭后对应内容不再加载，可能导致频道大幅减少。
                             </div>
@@ -2522,6 +2510,7 @@
                             </div>
                         </div>
                     </div>
+                </div>
                 </div>
             </div>
 
@@ -2817,6 +2806,13 @@
         let systemConfig = {};
         let updatingSourceIndex = null; // 记录正在更新的源索引
         let epgConfig = { enabled: true, sources: [] }; // EPG 聚合源配置（issue #38）
+        let selectedSourceTab = 0;
+        try {
+            const savedSourceTab = Number(localStorage.getItem('iptv-source-tab'));
+            if ([0, 1, 2].includes(savedSourceTab)) selectedSourceTab = savedSourceTab;
+        } catch (e) {
+            // 隐私模式或浏览器禁用存储时继续使用默认分类，不影响源管理功能。
+        }
 
         // Tab 切换功能
         async function switchTab(index) {
@@ -2846,10 +2842,10 @@
                 isViewingDeleted = false;
                 await loadMyPlaylist();
             }
-            // 切换到源管理Tab时刷新抓取模块状态（健康/频道数/上次成功时间都会变）。
-            // 抓取模块原在设置页，这一句跟着它一起从 index===2 搬过来 —— 漏搬的话
-            // 打开源管理看到的是空网格，而且不报错，只是「模块都不见了」。
+            // 切换到源管理时恢复上次浏览的二级分类，并刷新抓取模块状态
+            // （健康/频道数/上次成功时间都会变）。即便当前不是模块分类，也先把数据备好。
             if (index === 1) {
+                switchSourceTab(selectedSourceTab, false);
                 loadExtractors();
             }
             // 切换到系统配置Tab时刷新 EPG 源状态（抓取时间/匹配数等）、用户列表、频道别名
@@ -2865,6 +2861,25 @@
         function switchSettingsTab(index) {
             document.querySelectorAll('.settings-subtabs .mode-switch-btn').forEach((b, i) => b.classList.toggle('active', i === index));
             document.querySelectorAll('.settings-subpanel').forEach((p, i) => p.classList.toggle('active', i === index));
+        }
+
+        // 源管理页二级标签：记住上次停留位置。切到抓取模块时顺手刷新运行状态；
+        // 从顶层 Tab 恢复时会单独统一刷新，所以可用 refresh=false 避免重复请求。
+        function switchSourceTab(index, refresh = true) {
+            const next = [0, 1, 2].includes(Number(index)) ? Number(index) : 0;
+            selectedSourceTab = next;
+            document.querySelectorAll('.source-subtabs .mode-switch-btn').forEach((button, i) => {
+                const active = i === next;
+                button.classList.toggle('active', active);
+                button.setAttribute('aria-selected', active ? 'true' : 'false');
+            });
+            document.querySelectorAll('.source-subpanel').forEach((panel, i) => panel.classList.toggle('active', i === next));
+            try {
+                localStorage.setItem('iptv-source-tab', String(next));
+            } catch (e) {
+                // 存储不可用只会失去“记住位置”，不影响标签切换。
+            }
+            if (refresh && next === 1) loadExtractors();
         }
 
         // ===== EPG 节目单聚合（issue #38）=====
@@ -3106,6 +3121,12 @@
             if (bs) bs.checked = flags.enableBuiltInSources !== false;
             const sub = document.getElementById('cfBuiltInSubscriptions');
             if (sub) sub.checked = flags.enableBuiltInSubscriptions !== false;
+            const tabCount = document.getElementById('sourceTabBuiltInCount');
+            if (tabCount) {
+                const enabledCount = Number(flags.enableBuiltInSources !== false)
+                    + Number(flags.enableBuiltInSubscriptions !== false);
+                tabCount.textContent = `${enabledCount}/2`;
+            }
         }
 
         // 顶部提示条。也从 renderExtractors 里拆出来，理由同上：零模块时也该看得见。
@@ -3135,6 +3156,18 @@
             return `<span style="color:${color};">● ${escapeHtml(text)}</span>`;
         }
 
+        /** 有表单字段或可编辑刷新间隔时才存在“配置”；否则展开区只是运行详情。 */
+        function extractorHasEditableConfig(module) {
+            const visibleFields = (module.configSchema || []).some(field => !field.hidden);
+            return visibleFields || module.refreshConfigurable !== false;
+        }
+
+        /** 可配置模块保存后要手动重抓；自动模块只在异常时给一个人工重试入口。 */
+        function extractorCanManualRefresh(module) {
+            if (extractorHasEditableConfig(module)) return true;
+            return ['failed', 'empty', 'risk'].includes((module.health || {}).status);
+        }
+
         function renderExtractors() {
             renderExtractorNotice();
             renderContentFlags();
@@ -3142,6 +3175,11 @@
             const box = document.getElementById('extractorList');
             if (!box) return;
             const modules = extractorsState.modules || [];
+            const tabCount = document.getElementById('sourceTabExtractorCount');
+            if (tabCount) {
+                const enabledCount = modules.filter(module => module.enabled).length;
+                tabCount.textContent = modules.length ? `${enabledCount}/${modules.length}` : '0';
+            }
             if (!modules.length) {
                 box.innerHTML = '<div class="system-config-hint" style="margin:0;">本版本没有内置任何抓取模块。</div>';
                 renderExtractorDetail();
@@ -3156,6 +3194,7 @@
             box.innerHTML = modules.map(m => {
                 const h = m.health || {};
                 const when = h.lastSuccessAt ? new Date(h.lastSuccessAt).toLocaleString() : '从未';
+                const hasEditableConfig = extractorHasEditableConfig(m);
                 return `
                 <div class="source-card${m.id === selectedExtractorId ? ' active' : ''}"
                      onclick="selectExtractorModule('${escapeHtml(m.id)}')">
@@ -3171,7 +3210,7 @@
                     <div class="source-card-desc">${escapeHtml(m.description || '')}</div>
                     <div class="source-card-foot">
                         <span title="上次成功抓取：${escapeHtml(when)}">${extractorCardStatus(h)} · ${h.channelCount || 0} 频道</span>
-                        <span class="card-open-hint">${m.id === selectedExtractorId ? '收起 ⌃' : '⚙️ 配置 ›'}</span>
+                        <span class="card-open-hint">${m.id === selectedExtractorId ? '收起 ⌃' : (hasEditableConfig ? '⚙️ 配置 ›' : '详情 ›')}</span>
                     </div>
                 </div>`;
             }).join('');
@@ -3221,6 +3260,8 @@
                 return;
             }
 
+            const hasEditableConfig = extractorHasEditableConfig(m);
+            const canManualRefresh = extractorCanManualRefresh(m);
             box.classList.remove('hidden');
             box.innerHTML = `
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
@@ -3228,10 +3269,7 @@
                         <strong style="font-size:15px;">${escapeHtml(m.name)}</strong>
                         ${m.enabledEnv ? `<span style="font-size:12px; color:#888;">（启用开关也可用环境变量 <code>${escapeHtml(m.enabledEnv)}</code> 控制）</span>` : ''}
                     </div>
-                    <span style="display:inline-flex; gap:6px;">
-                        <button class="btn btn-sm" onclick="refreshExtractorNow('${escapeHtml(m.id)}')">🔄 立即刷新</button>
-                        <button class="btn btn-sm" onclick="selectExtractorModule('${escapeHtml(m.id)}')">收起</button>
-                    </span>
+                    ${canManualRefresh ? `<button class="btn btn-sm" onclick="refreshExtractorNow('${escapeHtml(m.id)}')">🔄 立即刷新</button>` : ''}
                 </div>
                 <div style="font-size:12px; margin-bottom:12px;">${extractorHealthHtml(m.health || {})}</div>
                 <div style="border-top:1px solid #f5f5f5; padding-top:12px;">
@@ -3247,7 +3285,7 @@
                         <input type="number" min="${m.minRefreshMinutes || 1}" max="${m.maxRefreshMinutes || 1440}" id="xf-${escapeHtml(m.id)}-__refresh" oninput="setSaveDirty('xt:${escapeHtml(m.id)}')" value="${m.refreshMinutes}" style="width:140px;">
                         <div style="font-size:12px; color:#888; margin-top:3px;">允许范围 ${m.minRefreshMinutes || 1}–${m.maxRefreshMinutes || 1440} 分钟，默认 ${m.defaultRefreshMinutes} 分钟。${m.id === 'bilibili-live' ? '过短容易触发风控，过长会压缩地址失效前的重试余量。' : ''}</div>
                     </div>`}
-                    <button class="btn btn-sm btn-success" data-save-scope="xt:${escapeHtml(m.id)}" onclick="saveExtractorConfig('${escapeHtml(m.id)}')">💾 保存配置</button>
+                    ${hasEditableConfig ? `<button class="btn btn-sm btn-success" data-save-scope="xt:${escapeHtml(m.id)}" onclick="saveExtractorConfig('${escapeHtml(m.id)}')">💾 保存配置</button>` : ''}
                 </div>`;
 
             // 助手随展开区一起重建，每次渲染后重新挂一次
@@ -3271,7 +3309,7 @@
         async function setContentFlag(key, on) {
             applyExtractorResult(await extractorPost({ action: 'contentFlag', key, enabled: on }),
                 on ? '已启用' : '已关闭');
-            // 「内置订阅源」开关同时决定上方「精选频道」那张卡片的实际生效状态，
+            // 「内置订阅源」开关同时决定自定义源数据中「精选频道」的实际生效状态，
             // 不重画的话卡片会继续显示「已启用」，而它的频道其实已经不进播放列表了。
             if (key === 'enableBuiltInSubscriptions') renderExternalSources();
         }
@@ -4141,8 +4179,8 @@
         // 抄一份就等着某天静默对不上：内置订阅的卡片看起来和用户自建源一模一样，
         // 但「内置源」那段的总开关仍在管着它、删了也不复活。
         //
-        // 之所以要标出来：它和用户自己加的源长得一样，但删除语义不同，而且本页下面那段
-        // 还有个总开关管着它 —— 不标会被当成重复项。清单没加载到就只是少个徽标，不影响功能。
+        // 之所以要识别出来：它和用户自己加的源数据结构相同，但删除语义不同，而且「内置源」
+        // 分类还有总开关管着它。清单没加载到只会缺少识别信息，不影响功能。
         function isBuiltInSubscription(source) {
             if (!source || !source.subscriptionUrl) return false;
             return (builtInConfig.builtInSubscriptionUrls || []).includes(source.subscriptionUrl);
@@ -4150,12 +4188,11 @@
 
         function renderExternalSources() {
             const externalSourceList = document.getElementById('externalSourceList');
-            const externalSourceCount = document.getElementById('externalSourceCount');
             const detail = document.getElementById('externalDetail');
             const wrap = document.getElementById('externalDetailWrap');
 
             // 添加DOM元素安全检查
-            if (!externalSourceList || !externalSourceCount || !detail || !wrap) {
+            if (!externalSourceList || !detail || !wrap) {
                 console.error('自定义源相关DOM元素未找到');
                 return;
             }
@@ -4163,14 +4200,15 @@
             const sources = externalConfig.sources || [];
             // 内置订阅（精选频道）不在这一段露面：它是随程序自带、由维护者策展的内容，
             // 用户不该改它的名字/分组/刷新间隔，也不该把它删掉或换序 —— 需要的只有
-            // 「要不要它」这一个开关，那个开关在下方「内置源」那一段。
+            // 「要不要它」这一个开关，那个开关在「内置源」分类。
             // 注意**只是不渲染，不从数组里摘掉**：externalConfig.sources 的下标是全站的
             // 定位键（还会作为 { action:'update', index } 发给服务端），动数组等于动契约。
             const visible = sources
                 .map((source, index) => ({ source, index }))
                 .filter(({ source }) => !isBuiltInSubscription(source));
             const enabledCount = visible.filter(v => v.source.enabled !== false).length;
-            externalSourceCount.textContent = visible.length ? `${enabledCount}/${visible.length} 启用` : '暂无';
+            const tabCount = document.getElementById('sourceTabExternalCount');
+            if (tabCount) tabCount.textContent = visible.length ? `${enabledCount}/${visible.length}` : '0';
 
             externalSourceList.innerHTML = '';
             visible.forEach(({ source, index }, visiblePos) => {
@@ -4204,7 +4242,7 @@
                     <div class="external-nav-meta">
                         <span class="external-mode-badge ${modeClass}">${modeText}</span>
                         ${isBuiltInSubscription(source) ? '<span class="source-badge builtin">内置</span>' : ''}
-                        <span style="color: ${on ? '#52c41a' : '#999'};" ${suppressedByBuiltIn ? 'title="下方「内置源 → 内置订阅源」的开关是关的，本源不进播放列表"' : ''}>${
+                        <span style="color: ${on ? '#52c41a' : '#999'};" ${suppressedByBuiltIn ? 'title="「内置源 → 内置订阅源」的开关是关的，本源不进播放列表"' : ''}>${
                             suppressedByBuiltIn ? '⊘ 被「内置源」关闭' : (on ? '✓ 已启用' : '× 已停用')
                         }</span>
                     </div>
@@ -4231,9 +4269,8 @@
             addCard.innerHTML = '<span class="plus">＋</span><span>添加自定义源</span>';
             externalSourceList.insertBefore(addCard, externalSourceList.firstChild);
 
-            // 详情只在有选中项时展开。**不再「默认选中第一个」**：本页下面还有
-            // 「抓取模块」「内置源」两段，详情一进页面就撑开会把它们顶出第一屏，
-            // 那正是把源模块搬上来要解决的问题。
+            // 详情只在有选中项时展开。**不再「默认选中第一个」**，避免一进入分类
+            // 就被长表单占满，先让用户看清源列表再决定编辑哪一项。
             // 选中项指向已隐藏的内置订阅时收起：遗留状态（老版本存下来的下标、
             // 或换序把它换到了选中位）不该把一张本不该出现的详情捞出来。
             if (selectedExternalIndex !== null && isBuiltInSubscription(sources[selectedExternalIndex])) {
@@ -8315,6 +8352,7 @@ if(success){
 
             // 切换到源管理tab
             switchTab(1);
+            switchSourceTab(0, false);
 
             // 延迟确保tab切换和数据加载完成，然后查找并选中对应的源
             setTimeout(() => {
@@ -8342,6 +8380,7 @@ if(success){
                 if (foundIndex !== -1 && isBuiltInSubscription(externalConfig.sources[foundIndex])) {
                     // 内置订阅（精选频道）在「源管理」里不露面，没有可跳转的卡片。
                     // 它是随程序自带、由维护者策展的内容，本来就不打算让用户编辑。
+                    switchSourceTab(2, false);
                     showStatus('该频道来自内置订阅源（随程序自带，不可编辑）。如需整体关闭，请到「源管理 → 内置源」', 'error', 6000);
                 } else if (foundIndex !== -1) {
                     // 展开该源（selectExternalSource 是「一律展开」语义，不会 toggle）
