@@ -47,6 +47,7 @@ import {
 } from '../extractors/jstv/api.js'
 import {
   buildChannels as buildKankanewsChannels,
+  buildScenicChannels as buildKankanewsScenicChannels,
   buildSignedHeaders as buildKankanewsSignedHeaders,
   clearCache as clearKankanewsCache,
   decryptLiveAddress as decryptKankanewsLiveAddress,
@@ -1314,6 +1315,23 @@ check('看看新闻：只收录官网 8 个正式上海频道，规范命名并�
   assert.ok(channels.every(channel => channel.proxyHls === true))
 })
 
+check('看看新闻：收录上海这一刻 5 路景观直播，并区分同名电视台频道', () => {
+  const channels = buildKankanewsScenicChannels([
+    { id: 15989, title: '陆家嘴', play_url: 'encrypted', cover: 'http://p.statickksmg.com/ljz.jpg' },
+    { id: 13755, title: '外滩观光平台', play_url: 'encrypted' },
+    { id: 12835, title: '魔都眼', play_url: 'encrypted' },
+    { id: 13973, title: '北外滩', play_url: 'encrypted' },
+    { id: 13974, title: '外白渡桥', play_url: 'encrypted' },
+    { id: 99999, title: '临时机位', play_url: 'encrypted' },
+  ])
+  assert.deepEqual(channels.map(channel => channel.name), [
+    '陆家嘴', '外滩观光平台', '魔都眼景观', '北外滩', '外白渡桥',
+  ])
+  assert.equal(channels[0].deferredRef, 'kankanews-scenic-15989')
+  assert.equal(channels[0].logo, 'https://p.statickksmg.com/ljz.jpg')
+  assert.ok(channels.every(channel => channel.proxyHls === true))
+})
+
 check('看看新闻：分块 RSA 公钥还原能跨块拼回完整 HLS 地址，并拒绝坏密文', () => {
   const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 1024 })
   const plain = 'https://volc-stream.kksmg.com/live/xwzh/index.m3u8?token=' + 'x'.repeat(180)
@@ -1329,28 +1347,48 @@ await checkAsync('看看新闻：模块抓频道表，播放时还原短效地�
   clearKankanewsCache()
   const module = getModule('kankanews')
   const list = await module.fetch({}, { fetchImpl: async (url, options) => {
-    assert.equal(String(url), 'https://kapi.kankanews.com/content/pc/tv/channels')
     assert.match(options.headers.sign, /^[a-f0-9]{32}$/)
-    return fakeResponse({ code: '1000', result: { list: [{ id: 1, name: '东方卫视' }] } })
+    if (String(url) === 'https://kapi.kankanews.com/content/pc/tv/channels') {
+      return fakeResponse({ code: '1000', result: { list: [{ id: 1, name: '东方卫视' }] } })
+    }
+    assert.equal(String(url), 'https://kapi.kankanews.com/content/pc/news/detail?content_id=8029037XEw6')
+    return fakeResponse({ code: '1000', result: {
+      play_info: [{ id: 15989, title: '陆家嘴', play_url: 'encrypted' }],
+    } })
   } })
   assert.equal(list.groups[0].name, '上海电视台')
   assert.deepEqual(list.groups[0].dataList[0].opts, ['network-caching=3000'])
+  assert.equal(list.groups[1].name, '上海景观')
+  assert.equal(list.groups[1].dataList[0].deferredRef, 'kankanews-scenic-15989')
+  assert.equal(module.claimsRef('kankanews-scenic-15989'), true)
 
   const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 1024 })
   const startedAt = 1720000000000
   const tokenPayload = Buffer.from(JSON.stringify({ exp: Math.floor(startedAt / 1000) + 3600 })).toString('base64url')
   const url = `https://volc-stream.kksmg.com/live/dfws4k/index.m3u8?token=x.${tokenPayload}.x&volcTime=abc`
-  const encrypted = []
-  for (let offset = 0; offset < Buffer.byteLength(url); offset += 117) {
-    encrypted.push(privateEncrypt({ key: privateKey, padding: constants.RSA_PKCS1_PADDING }, Buffer.from(url).subarray(offset, offset + 117)))
+  const scenicUrl = `https://live-ws.kksmg.com/live/sdi5/playlist.m3u8?token=x.${tokenPayload}.x&volcTime=def`
+  const encryptUrl = plain => {
+    const encrypted = []
+    for (let offset = 0; offset < Buffer.byteLength(plain); offset += 117) {
+      encrypted.push(privateEncrypt({ key: privateKey, padding: constants.RSA_PKCS1_PADDING }, Buffer.from(plain).subarray(offset, offset + 117)))
+    }
+    return Buffer.concat(encrypted).toString('base64')
   }
-  let calls = 0
+  let channelCalls = 0
+  let scenicCalls = 0
   const fetchImpl = async requestUrl => {
-    calls++
-    assert.match(String(requestUrl), /channel\/detail\?channel_id=1$/)
+    if (/channel\/detail\?channel_id=1$/.test(String(requestUrl))) {
+      channelCalls++
+      return fakeResponse({ code: '1000', result: {
+        id: 1, name: '东方卫视', limit_time: 180,
+        live_address: encryptUrl(url),
+      } })
+    }
+    scenicCalls++
+    assert.match(String(requestUrl), /news\/detail\?content_id=8029037XEw6$/)
     return fakeResponse({ code: '1000', result: {
-      id: 1, name: '东方卫视', limit_time: 180,
-      live_address: Buffer.concat(encrypted).toString('base64'),
+      limit_time: 180,
+      play_info: [{ id: 15989, title: '陆家嘴', play_url: encryptUrl(scenicUrl) }],
     } })
   }
   const first = await resolveKankanewsChannel('kankanews-1', {
@@ -1361,9 +1399,19 @@ await checkAsync('看看新闻：模块抓频道表，播放时还原短效地�
   })
   assert.equal(first.url, url)
   assert.equal(cached.url, url)
-  assert.equal(calls, 1, '播放器轮询清单时不能每次都重打频道详情接口')
+  assert.equal(channelCalls, 1, '播放器轮询清单时不能每次都重打频道详情接口')
   assert.equal(first.upstreamHeaders.Origin, 'https://live.kankanews.com')
   assert.equal(first.upstreamHeaders.Referer, 'https://live.kankanews.com/huikan')
+
+  const scenicFirst = await resolveKankanewsChannel('kankanews-scenic-15989', {
+    now: startedAt, publicKey, fetchImpl, nonce: 'abcd1234',
+  })
+  const scenicCached = await resolveKankanewsChannel('kankanews-scenic-15989', {
+    now: startedAt + 1000, publicKey, fetchImpl, nonce: 'abcd1234',
+  })
+  assert.equal(scenicFirst.url, scenicUrl)
+  assert.equal(scenicCached.url, scenicUrl)
+  assert.equal(scenicCalls, 1, '景观线路共用详情接口，播放器轮询时必须复用缓存')
 })
 
 // ---- 江苏网络台 ----

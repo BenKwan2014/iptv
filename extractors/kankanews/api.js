@@ -10,6 +10,7 @@ import fetch from 'node-fetch'
 
 export const CHANNEL_LIST_URL = 'https://kapi.kankanews.com/content/pc/tv/channels'
 export const CHANNEL_DETAIL_URL = 'https://kapi.kankanews.com/content/pc/tv/channel/detail'
+export const SCENIC_DETAIL_URL = 'https://kapi.kankanews.com/content/pc/news/detail'
 
 // v2 详情接口虽然仍返回成功，但它生成的播放 token 会被 CDN 拒绝（HTTP 403）。
 // 官网兼容的 v1 / 2.42.15 组合生成的同一条 HLS 地址可正常取回。
@@ -21,6 +22,7 @@ const UUID_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz01234
 const DETAIL_RETRY_MS = 60 * 1000
 const DEFAULT_REFRESH_MS = 150 * 1000
 const EXPIRY_SKEW_MS = 5 * 60 * 1000
+const SCENIC_CONTENT_ID = '8029037XEw6'
 
 // 必须与 utils/appUtils.js / utils/hlsProxy.js 的上游 UA 一致。官网把 UA 的 MD5
 // 写进播放 token；取详情和随后代理清单/分片若不是同一个 UA，CDN 会直接 403。
@@ -52,9 +54,21 @@ const CHANNELS = [
   { id: '9', rawName: '哈哈炫动', name: '哈哈炫动' },
 ]
 
+const SCENIC_CHANNELS = [
+  { id: '15989', rawName: '陆家嘴', name: '陆家嘴' },
+  { id: '13755', rawName: '外滩观光平台', name: '外滩观光平台' },
+  // 与电视台频道「魔都眼」不是同一条流，显示名必须区分，避免全局频道去重。
+  { id: '12835', rawName: '魔都眼', name: '魔都眼景观' },
+  { id: '13973', rawName: '北外滩', name: '北外滩' },
+  { id: '13974', rawName: '外白渡桥', name: '外白渡桥' },
+]
+
 const CHANNEL_BY_ID = new Map(CHANNELS.map(channel => [channel.id, channel]))
+const SCENIC_BY_ID = new Map(SCENIC_CHANNELS.map(channel => [channel.id, channel]))
 const detailCache = new Map()
 const detailPending = new Map()
+let scenicCache = null
+let scenicPending = null
 
 function randomString(length, alphabet) {
   const bytes = randomBytes(length)
@@ -115,6 +129,23 @@ export function buildChannels(rows) {
     })
   }
   return CHANNELS.map(channel => found.get(channel.id)).filter(Boolean)
+}
+
+export function buildScenicChannels(rows) {
+  const found = new Map()
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const id = String(row?.id || '')
+    const definition = SCENIC_BY_ID.get(id)
+    if (!definition || String(row?.title || '').trim() !== definition.rawName || found.has(id)) continue
+    if (!String(row?.play_url || '').trim()) continue
+    found.set(id, {
+      name: definition.name,
+      deferredRef: `kankanews-scenic-${id}`,
+      proxyHls: true,
+      logo: validLogo(row?.cover),
+    })
+  }
+  return SCENIC_CHANNELS.map(channel => found.get(channel.id)).filter(Boolean)
 }
 
 function unpadSignedBlock(block) {
@@ -199,6 +230,12 @@ export async function fetchChannelList(options = {}) {
   return result.list
 }
 
+export async function fetchScenicList(options = {}) {
+  const result = await requestJson(SCENIC_DETAIL_URL, { content_id: SCENIC_CONTENT_ID }, options)
+  if (!Array.isArray(result?.play_info)) throw new Error('上海景观接口没有返回线路列表')
+  return result
+}
+
 export async function fetchChannelDetail(channelId, options = {}) {
   const id = String(channelId || '')
   if (!CHANNEL_BY_ID.has(id)) throw new Error('频道 ID 无效')
@@ -243,8 +280,67 @@ async function cachedChannelDetail(channelId, options = {}) {
   }
 }
 
+async function fetchScenicDetails(options = {}) {
+  const result = await fetchScenicList(options)
+  const details = new Map()
+  for (const row of result.play_info) {
+    const id = String(row?.id || '')
+    const definition = SCENIC_BY_ID.get(id)
+    if (!definition || String(row?.title || '').trim() !== definition.rawName) continue
+    const url = decryptLiveAddress(row?.play_url, options.publicKey)
+    if (!validStreamUrl(url)) throw new Error(`${definition.name}还原后的地址不是看看新闻 HTTPS HLS`)
+    details.set(id, { ...row, url })
+  }
+  if (!details.size) throw new Error('上海景观接口没有可用播放线路')
+  return { details, limit_time: result.limit_time }
+}
+
+async function cachedScenicDetails(options = {}) {
+  const now = Number(options.now ?? Date.now())
+  if (scenicCache?.refreshAt > now || scenicCache?.retryAt > now) return scenicCache
+
+  if (!scenicPending) {
+    scenicPending = fetchScenicDetails(options)
+      .then(bundle => {
+        const apiTtl = Math.max(30 * 1000, Number(bundle.limit_time || 180) * 1000 - 30 * 1000)
+        const expiries = [...bundle.details.values()].map(detail => streamExpiry(detail.url)).filter(Boolean)
+        const entry = {
+          bundle,
+          refreshAt: now + Math.min(DEFAULT_REFRESH_MS, apiTtl),
+          validUntil: expiries.length ? Math.min(...expiries) : now + 30 * 60 * 1000,
+          retryAt: 0,
+        }
+        scenicCache = entry
+        return entry
+      })
+      .finally(() => { scenicPending = null })
+  }
+
+  try {
+    return await scenicPending
+  } catch (error) {
+    if (!scenicCache || scenicCache.validUntil <= now + EXPIRY_SKEW_MS) throw error
+    scenicCache.retryAt = now + DETAIL_RETRY_MS
+    return scenicCache
+  }
+}
+
 export async function resolveChannel(ref, ctx = {}) {
   try {
+    const scenicMatch = /^kankanews-scenic-(\d{4,5})$/.exec(String(ref || ''))
+    if (scenicMatch) {
+      const definition = SCENIC_BY_ID.get(scenicMatch[1])
+      if (!definition) return { url: '', desc: '看看新闻景观频道引用格式错误' }
+      const cached = await cachedScenicDetails(ctx)
+      const detail = cached.bundle.details.get(scenicMatch[1])
+      if (!detail) return { url: '', desc: `${definition.name}当前没有可用播放线路` }
+      return {
+        url: detail.url,
+        desc: `${definition.name}播放地址获取成功`,
+        upstreamHeaders: UPSTREAM_HEADERS,
+      }
+    }
+
     const match = /^kankanews-(\d{1,2})$/.exec(String(ref || ''))
     if (!match || !CHANNEL_BY_ID.has(match[1])) return { url: '', desc: '看看新闻频道引用格式错误' }
     const cached = await cachedChannelDetail(match[1], ctx)
@@ -261,4 +357,6 @@ export async function resolveChannel(ref, ctx = {}) {
 export function clearCache() {
   detailCache.clear()
   detailPending.clear()
+  scenicCache = null
+  scenicPending = null
 }
