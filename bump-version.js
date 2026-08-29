@@ -107,7 +107,7 @@ readme = readme.replace(
 const changelogEntry = `### v${newVersion} (${today})`
 if (!readme.includes(changelogEntry)) {
   readme = readme.replace(
-    /(## 📋 更新日志\r?\n\r?\n)/,
+    /(## 更新日志\r?\n\r?\n)/,
     `$1${changelogEntry}${readmeEol}- ${readmeEol}${readmeEol}`
   )
 }
@@ -168,11 +168,19 @@ function syncTopReleaseNotes(readme, eol) {
   while (body.length && body[body.length - 1].trim() === '') body.pop()
   const isEmpty = body.length === 0 || body.every(l => /^[-*]\s*$/.test(l.trim()))
 
-  const out = [`#### 🆕 ${version} 更新内容`, '']
+  const cleanBody = body.map(line => line
+    .replace(/\p{Extended_Pictographic}\uFE0F?/gu, '')
+    .replace(/\u200D/g, '')
+    .replace(/^([-*]\s+)\s+/, '$1')
+    .replace(/([「（])\s+/g, '$1')
+    .replace(/\s+([」）])/g, '$1')
+    .replace(/ {2,}/g, ' ')
+  )
+  const out = [`#### ${version} 更新内容`, '']
   if (isEmpty) {
-    out.push('（本版更新内容整理中，完整历史见下方 [更新日志](#-更新日志)）')
+    out.push('（本版更新内容整理中，完整历史见下方 [更新日志](#更新日志)）')
   } else {
-    out.push(...body, '', '<sub>完整更新历史见下方 <a href="#-更新日志">更新日志</a></sub>')
+    out.push(...cleanBody, '', '<sub>完整更新历史见下方 <a href="#更新日志">更新日志</a></sub>')
   }
   const inner = eol + out.join(eol) + eol
   return readme.slice(0, sIdx + START.length) + inner + readme.slice(eIdx)
