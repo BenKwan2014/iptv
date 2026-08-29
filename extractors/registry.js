@@ -73,6 +73,7 @@ import bilibiliLive from './bilibili-live/index.js'
 import cztv from './cztv/index.js'
 import gxtv from './gxtv/index.js'
 import jstv from './jstv/index.js'
+import mgtv from './mgtv/index.js'
 import migu from './migu/index.js'
 
 // 模块 id 会进 sourceId 并写进 EXTINF 属性值，不消毒就是注入面。
@@ -86,6 +87,7 @@ const MODULES = [
   gxtv,
   cztv,
   jstv,
+  mgtv,
 ]
 
 /**

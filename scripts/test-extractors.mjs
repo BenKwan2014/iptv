@@ -44,6 +44,13 @@ import {
   resolveChannel as resolveJstvChannel,
   signStreamUrl as signJstvStreamUrl,
 } from '../extractors/jstv/api.js'
+import {
+  buildChannels as buildMgtvChannels,
+  buildSourceRequest as buildMgtvSourceRequest,
+  clearCache as clearMgtvCache,
+  resolveChannel as resolveMgtvChannel,
+  selectHighestSource as selectMgtvSource,
+} from '../extractors/mgtv/api.js'
 import { shouldFailRound as miguShouldFailRound } from '../extractors/migu/index.js'
 import {
   ExtractorManager, validateConfig, redactConfig, resolveConfig, normalizeGroups, emptyHealth,
@@ -422,6 +429,17 @@ check('江苏网络台模块已注册，使用固定频道周期和播放时解�
   assert.equal(jstv.defaultRefreshMinutes, 240)
   assert.equal(jstv.refreshConfigurable, false)
   assert.equal(resolverFor('jstv-670')?.id, 'jstv')
+})
+
+check('芒果 TV 模块已注册，固定刷新策略且不暴露技术设置', () => {
+  const mgtv = getModule('mgtv')
+  assert.ok(mgtv)
+  assert.equal(mgtv.capabilities.cache, 'disk')
+  assert.equal(mgtv.capabilities.resolve, true)
+  assert.equal(mgtv.defaultRefreshMinutes, 240)
+  assert.equal(mgtv.refreshConfigurable, false)
+  assert.deepEqual(mgtv.configSchema, [])
+  assert.equal(resolverFor('mgtv-287')?.id, 'mgtv')
 })
 
 
@@ -1283,6 +1301,109 @@ await checkAsync('江苏：模块取 Bearer 频道表，缓存后播放时签名
   assert.match(resolved.url, /txSecret=/)
   assert.equal(resolved.upstreamHeaders.Origin, 'https://live.jstv.com')
   assert.equal(resolved.upstreamHeaders.Referer, 'https://live.jstv.com/')
+})
+
+// ---- 芒果 TV ----
+
+check('芒果：固定排除快乐购，官网分类重复频道只输出一次且全部走全代理', () => {
+  const rows = [
+    { id: '287', name: '金鹰卡通', channel_image: 'http://0img.hitv.com/jykt.jpg' },
+    { id: '267', name: '快乐购', channel_image: '' },
+    { id: '280', name: '湖南经视', channel_image: 'https://2img.hitv.com/hnjs.jpg' },
+    { id: '287', name: '金鹰卡通', channel_image: 'https://2img.hitv.com/duplicate.jpg' },
+    { id: '999', name: '临时活动直播', channel_image: '' },
+  ]
+  const channels = buildMgtvChannels(rows)
+  assert.deepEqual(channels.map(channel => channel.name), ['金鹰卡通', '湖南经视'])
+  assert.equal(channels[0].deferredRef, 'mgtv-287')
+  assert.equal(channels[0].logo, 'https://0img.hitv.com/jykt.jpg')
+  assert.ok(channels.every(channel => channel.proxyHls === true))
+})
+
+check('芒果：播放签名与官网固定样本一致，且最高 definition 同档优先 H.264', () => {
+  const request = new URL(buildMgtvSourceRequest('287', {
+    now: 1787985107731,
+    deviceId: '494daf13-3a4d-4e45-a020-3d24c425b9d4',
+  }))
+  assert.equal(request.searchParams.get('sign'), 'AD8915099571D2CDE4CFCF5F6CA95715')
+  assert.equal(request.searchParams.get('_support'), '10000000')
+
+  const selected = selectMgtvSource({ sources: [
+    { definition: 1, name: '480P', format: '.m3u8', videoFormat: 'h264', url: 'https://padal.qing.mgtv.com/live/480.m3u8' },
+    { definition: 3, name: '1080P', format: '.m3u8', videoFormat: 'h265', url: 'https://padhw.qing.mgtv.com/live/1080-hevc.m3u8' },
+    { definition: 3, name: '1080P', format: '.m3u8', videoFormat: 'h264', url: 'https://padqq.qing.mgtv.com/live/1080-avc.m3u8' },
+  ] })
+  assert.match(selected.url, /1080-avc\.m3u8$/)
+})
+
+await checkAsync('芒果：模块取官方频道表，播放时签名并声明防盗链请求头', async () => {
+  clearMgtvCache()
+  const module = getModule('mgtv')
+  const listResult = await module.fetch({}, { fetchImpl: async url => {
+    assert.match(String(url), /media_asset_id=TVStationAll/)
+    return fakeResponse({ errno: '0', data: { category: [
+      { channels: [
+        { id: '287', name: '金鹰卡通', channel_image: 'http://0img.hitv.com/jykt.jpg' },
+        { id: '267', name: '快乐购', channel_image: '' },
+      ] },
+    ] } })
+  } })
+  assert.deepEqual(listResult.groups[0].dataList.map(channel => channel.name), ['金鹰卡通'])
+
+  let calls = 0
+  const resolved = await resolveMgtvChannel('mgtv-287', {
+    now: 1720000000000,
+    deviceId: '00000000-0000-4000-8000-000000000001',
+    fetchImpl: async url => {
+      calls++
+      assert.match(String(url), /cameraId=287/)
+      return fakeResponse({ code: 0, data: { activityName: '金鹰卡通', sources: [
+        { definition: 1, name: '480P', format: '.m3u8', videoFormat: 'h264', urlExpireDuration: 28800,
+          url: 'https://padal.qing.mgtv.com/live/480.m3u8' },
+        { definition: 3, name: '1080P', format: '.m3u8', videoFormat: 'h264', urlExpireDuration: 28800,
+          url: 'https://padqq.qing.mgtv.com/live/1080.m3u8' },
+      ] } })
+    },
+  })
+  assert.equal(calls, 1)
+  assert.match(resolved.url, /1080\.m3u8$/)
+  assert.equal(resolved.upstreamHeaders.Origin, 'https://www.mgtv.com')
+  assert.equal(resolved.upstreamHeaders.Referer, 'https://www.mgtv.com/')
+})
+
+await checkAsync('芒果：每小时提前换新，失败沿用未过期地址并一分钟后恢复', async () => {
+  clearMgtvCache()
+  const startedAt = 1720000000000
+  let calls = 0
+  const payload = suffix => fakeResponse({ code: 0, data: { activityName: '金鹰卡通', sources: [
+    { definition: 1, name: '480P', format: '.m3u8', videoFormat: 'h264', urlExpireDuration: 28800,
+      url: `https://padal.qing.mgtv.com/live/${suffix}.m3u8` },
+  ] } })
+  const first = await resolveMgtvChannel('mgtv-287', {
+    now: startedAt,
+    fetchImpl: async () => { calls++; return payload('old') },
+  })
+  assert.match(first.url, /old\.m3u8$/)
+
+  const stale = await resolveMgtvChannel('mgtv-287', {
+    now: startedAt + 60 * 60 * 1000 + 1,
+    fetchImpl: async () => { calls++; throw new Error('官网瞬时故障') },
+  })
+  assert.match(stale.url, /old\.m3u8$/)
+
+  const retrySuppressed = await resolveMgtvChannel('mgtv-287', {
+    now: startedAt + 60 * 60 * 1000 + 30 * 1000,
+    fetchImpl: async () => { calls++; throw new Error('一分钟内不应重试') },
+  })
+  assert.match(retrySuppressed.url, /old\.m3u8$/)
+  assert.equal(calls, 2)
+
+  const recovered = await resolveMgtvChannel('mgtv-287', {
+    now: startedAt + 61 * 60 * 1000 + 2,
+    fetchImpl: async () => { calls++; return payload('new') },
+  })
+  assert.match(recovered.url, /new\.m3u8$/)
+  assert.equal(calls, 3)
 })
 
 console.log(`\n全部通过：${passed} ✅`)
