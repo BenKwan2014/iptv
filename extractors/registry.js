@@ -71,6 +71,7 @@
  */
 import bilibiliLive from './bilibili-live/index.js'
 import cztv from './cztv/index.js'
+import gdtv from './gdtv/index.js'
 import gxtv from './gxtv/index.js'
 import jstv from './jstv/index.js'
 import mgtv from './mgtv/index.js'
@@ -84,6 +85,7 @@ const MODULES = [
   // 顺序即后台展示顺序，也是 channelMerger 的合并顺序（先到的分组优先保留）
   migu,
   bilibiliLive,
+  gdtv,
   gxtv,
   cztv,
   jstv,
