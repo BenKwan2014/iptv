@@ -813,8 +813,7 @@
             border-color: #d3adf7;
         }
 
-        /* 展开的详情区：卡片网格在上、详情在下。280px 那一栏是使用说明。
-           默认收起，避免一进入自定义源就被长表单占满。 */
+        /* 自定义源的展开详情区。280px 那一栏是使用说明。 */
         .external-detail-wrap {
             display: grid;
             grid-template-columns: 1fr 280px;
@@ -827,13 +826,51 @@
             display: none;
         }
 
-        /* 模块配置的展开区，与自定义源详情同一视觉层级 */
+        /* 抓取模块详情改用弹窗，避免模块很多时表单被推到卡片网格下方很远。 */
+        .extractor-modal-content {
+            padding: 0;
+            max-height: 88vh;
+            overflow: hidden;
+            box-shadow: 0 12px 36px rgba(0, 0, 0, 0.2);
+        }
+
+        .extractor-modal-close {
+            position: absolute;
+            top: 12px;
+            right: 14px;
+            z-index: 1;
+            width: 32px;
+            height: 32px;
+            border: 0;
+            border-radius: 50%;
+            background: #f5f5f5;
+            color: #666;
+            font-size: 22px;
+            line-height: 30px;
+            cursor: pointer;
+        }
+
+        .extractor-modal-close:hover {
+            background: #e8e8e8;
+            color: #222;
+        }
+
         .extractor-detail {
-            margin-top: 14px;
             background: white;
-            border: 1px solid #e8e8e8;
             border-radius: 8px;
-            padding: 16px;
+            padding: 24px;
+            max-height: 88vh;
+            overflow-y: auto;
+        }
+
+        /* 通用弹窗会给所有 input 套文本框样式；模块里的复选框需恢复紧凑尺寸。 */
+        .extractor-modal-content .extractor-detail input {
+            margin-bottom: 0;
+        }
+
+        .extractor-modal-content .extractor-detail input[type="checkbox"] {
+            width: auto;
+            padding: 0;
         }
 
         .external-nav-meta {
@@ -2227,6 +2264,14 @@
         </div>
     </div>
 
+    <!-- 内置抓取模块配置 / 运行详情弹窗 -->
+    <div class="modal" id="extractorDetailModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="extractorDetailTitle">
+        <div class="modal-content extractor-modal-content" style="width: 820px; max-width: 92%;">
+            <button type="button" class="extractor-modal-close" onclick="closeExtractorDetailModal()" aria-label="关闭模块详情">×</button>
+            <div class="extractor-detail hidden" id="extractorDetail"></div>
+        </div>
+    </div>
+
     <!-- Bookmarklet 添加引导弹窗 -->
     <!-- B 站扫码登录（issue：SESSDATA 是 HttpOnly，咪咕那种书签读 cookie 的招在这里行不通） -->
     <div class="modal" id="biliQrModal">
@@ -2460,7 +2505,6 @@
 
                     <div id="extractorNotice"></div>
                     <div class="source-grid" id="extractorList"></div>
-                    <div class="extractor-detail hidden" id="extractorDetail"></div>
                 </div>
                 </div>
 
@@ -3108,7 +3152,7 @@
             return '';
         }
 
-        // 当前展开配置的模块 id；null = 全部收起。与自定义源的 selectedExternalIndex 同一套交互。
+        // 当前在详情弹窗中展示的模块 id；null = 弹窗关闭。
         let selectedExtractorId = null;
 
         // 内置源开关的回填。**刻意独立于 renderExtractors**：那边有两条提前 return
@@ -3186,7 +3230,7 @@
                 return;
             }
 
-            // 选中的模块若已不存在（换版本、模块被下架），收起详情而不是渲染空白
+            // 选中的模块若已不存在（换版本、模块被下架），关闭详情而不是渲染空白
             if (selectedExtractorId && !modules.some(m => m.id === selectedExtractorId)) {
                 selectedExtractorId = null;
             }
@@ -3209,7 +3253,7 @@
                     <div class="source-card-desc">${escapeHtml(m.description || '')}</div>
                     <div class="source-card-foot">
                         <span title="上次成功抓取：${escapeHtml(when)}">${extractorCardStatus(h)} · ${h.channelCount || 0} 频道</span>
-                        <span class="card-open-hint">${m.id === selectedExtractorId ? '收起 ⌃' : (hasEditableConfig ? '⚙️ 配置 ›' : '详情 ›')}</span>
+                        <span class="card-open-hint">${hasEditableConfig ? '⚙️ 配置 ›' : '详情 ›'}</span>
                     </div>
                 </div>`;
             }).join('');
@@ -3217,20 +3261,44 @@
             renderExtractorDetail();
         }
 
-        /** 点卡片：展开该模块的配置；再点一次收起。 */
+        /** 点卡片：在居中弹窗中打开该模块的配置或运行详情。 */
         function selectExtractorModule(id) {
-            selectedExtractorId = (selectedExtractorId === id) ? null : id;
+            selectedExtractorId = id;
             renderExtractors();
-            if (selectedExtractorId) {
-                const el = document.getElementById('extractorDetail');
-                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            const modal = document.getElementById('extractorDetailModal');
+            if (modal) {
+                modal.style.display = 'block';
+                modal.setAttribute('aria-hidden', 'false');
+                setTimeout(() => {
+                    const closeButton = modal.querySelector('.extractor-modal-close');
+                    if (closeButton) closeButton.focus();
+                }, 0);
             }
+        }
+
+        /** 关闭详情弹窗；有未保存配置时先确认，避免误点遮罩或 Esc 丢输入。 */
+        async function closeExtractorDetailModal(force = false) {
+            const id = selectedExtractorId;
+            const dirtyScope = id ? `xt:${id}` : '';
+            if (!force && dirtyScope && dirtySaveScopes.has(dirtyScope)) {
+                const discard = await showConfirm('当前模块有未保存的配置改动，确定放弃并关闭吗？', '放弃未保存的修改？');
+                if (!discard) return;
+                setSaveDirty(dirtyScope, false);
+            }
+
+            const modal = document.getElementById('extractorDetailModal');
+            if (modal) {
+                modal.style.display = 'none';
+                modal.setAttribute('aria-hidden', 'true');
+            }
+            selectedExtractorId = null;
+            renderExtractors();
         }
 
         // 展开区当前渲染的是哪个模块。用来判断「这次渲染是不是在原地重建同一个表单」。
         let renderedExtractorDetailId = null;
 
-        /** 展开区：选中模块的开关 / 健康详情 / helper / configSchema 表单。 */
+        /** 弹窗内容：选中模块的健康详情 / helper / configSchema 表单。 */
         function renderExtractorDetail() {
             const box = document.getElementById('extractorDetail');
             if (!box) return;
@@ -3240,6 +3308,11 @@
                 box.classList.add('hidden');
                 box.innerHTML = '';
                 renderedExtractorDetailId = null;
+                const modal = document.getElementById('extractorDetailModal');
+                if (modal) {
+                    modal.style.display = 'none';
+                    modal.setAttribute('aria-hidden', 'true');
+                }
                 return;
             }
 
@@ -3263,9 +3336,9 @@
             const canManualRefresh = extractorCanManualRefresh(m);
             box.classList.remove('hidden');
             box.innerHTML = `
-                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; margin-bottom:10px; padding-right:36px;">
                     <div style="display:flex; align-items:center; gap:6px; min-width:0;">
-                        <strong style="font-size:15px;">${escapeHtml(m.name)}</strong>
+                        <strong id="extractorDetailTitle" style="font-size:17px;">${escapeHtml(m.name)}</strong>
                         ${m.enabledEnv ? `<span style="font-size:12px; color:#888;">（启用开关也可用环境变量 <code>${escapeHtml(m.enabledEnv)}</code> 控制）</span>` : ''}
                     </div>
                     ${canManualRefresh ? `<button class="btn btn-sm" onclick="refreshExtractorNow('${escapeHtml(m.id)}')">🔄 立即刷新</button>` : ''}
@@ -8410,6 +8483,7 @@ if(success){
         document.addEventListener('click', function(event) {
             const detailModal = document.getElementById('channelDetailModal');
             const nonMiguModal = document.getElementById('nonMiguPlayModal');
+            const extractorModal = document.getElementById('extractorDetailModal');
             
             if (event.target === detailModal) {
                 closeChannelDetail();
@@ -8418,6 +8492,21 @@ if(success){
             if (event.target === nonMiguModal) {
                 nonMiguModal.style.display = 'none';
             }
+
+            if (event.target === extractorModal) {
+                closeExtractorDetailModal();
+            }
+        });
+
+        // 抓取模块详情支持 Esc 关闭；若上面还叠着登录/帮助等子弹窗，则先留给子弹窗处理。
+        document.addEventListener('keydown', function(event) {
+            if (event.key !== 'Escape') return;
+            const extractorModal = document.getElementById('extractorDetailModal');
+            if (!extractorModal || extractorModal.style.display !== 'block') return;
+            const hasModalAbove = Array.from(document.querySelectorAll('.modal')).some(modal =>
+                modal !== extractorModal && modal.style.display === 'block'
+            );
+            if (!hasModalAbove) closeExtractorDetailModal();
         });
 
         // 页面加载时初始化
