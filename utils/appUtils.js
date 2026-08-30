@@ -312,6 +312,8 @@ async function channel(url, urlUserId, urlToken) {
   result.segmentTransform = resolved.segmentTransform
   // 平台要求的上游请求头只在服务端清单/分片代理链消费，不下发给客户端。
   result.upstreamHeaders = resolved.upstreamHeaders
+  // 个别平台要求每一条子清单/分片路径分别签名；仅全代理登记上游地址时调用。
+  result.upstreamUrlTransform = resolved.upstreamUrlTransform
   // 平台可要求旧的无后缀入口也直出动态 HLS 清单；用于兼容已收藏/已下发的旧地址。
   result.relayHls = resolved.relayHls === true
   return result

@@ -16,7 +16,7 @@
  * 运行： node scripts/test-extractors.mjs   （或 npm test）
  */
 import assert from 'node:assert/strict'
-import { constants, createCipheriv, createDecipheriv, createHash, generateKeyPairSync, privateEncrypt } from 'node:crypto'
+import { constants, createCipheriv, createDecipheriv, createHash, createHmac, generateKeyPairSync, privateEncrypt } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -89,6 +89,15 @@ import {
   resolveChannel as resolveMgtvChannel,
   selectHighestSource as selectMgtvSource,
 } from '../extractors/mgtv/api.js'
+import {
+  buildCatalogAuth as buildSztvCatalogAuth,
+  buildChannels as buildSztvChannels,
+  buildLiveKeyRequest as buildSztvLiveKeyRequest,
+  clearCache as clearSztvCache,
+  decodeLiveKey as decodeSztvLiveKey,
+  resolveChannel as resolveSztvChannel,
+  signStreamUrl as signSztvStreamUrl,
+} from '../extractors/sztv/api.js'
 import { shouldFailRound as miguShouldFailRound } from '../extractors/migu/index.js'
 import {
   ExtractorManager, validateConfig, redactConfig, resolveConfig, normalizeGroups, emptyHealth,
@@ -527,6 +536,18 @@ check('海南网台模块已注册，频道定时同步且播放时解析签名�
   assert.deepEqual(hnntv.configSchema, [])
   assert.equal(resolverFor('hnntv-13')?.id, 'hnntv')
   assert.equal(resolverFor('hnntv-13/extra'), null)
+})
+
+check('深圳广电模块已注册，固定周期刷新且逐路径签名流必须全代理', () => {
+  const sztv = getModule('sztv')
+  assert.ok(sztv)
+  assert.equal(sztv.capabilities.cache, 'disk')
+  assert.equal(sztv.capabilities.resolve, true)
+  assert.equal(sztv.defaultRefreshMinutes, 240)
+  assert.equal(sztv.refreshConfigurable, false)
+  assert.deepEqual(sztv.configSchema, [])
+  assert.equal(resolverFor('sztv-24725')?.id, 'sztv')
+  assert.equal(resolverFor('sztv-R77mK1v'), null)
 })
 
 check('芒果 TV 模块已注册，固定刷新策略且不暴露技术设置', () => {
@@ -2101,6 +2122,124 @@ await checkAsync('江苏：模块取 Bearer 频道表，缓存后播放时签名
   assert.match(resolved.url, /txSecret=/)
   assert.equal(resolved.upstreamHeaders.Origin, 'https://live.jstv.com')
   assert.equal(resolved.upstreamHeaders.Referer, 'https://live.jstv.com/')
+})
+
+ // ---- 深圳广电「第一现场」 ----
+
+const sztvRows = () => [
+  {
+    id: 24725, name: '深圳卫视4K超高清', logo: 'https://www.sztv.com.cn/4k.jpg',
+    extend: { liveId: 'R77mK1v', liveRate: [500], backGroundImageV1: '' },
+  },
+  {
+    id: 7867, name: '深圳卫视', logo: 'https://www.sztv.com.cn/ws.jpg',
+    extend: { liveId: 'AxeFRth', liveRate: [500], backGroundImageV1: '' },
+  },
+  {
+    id: 7868, name: '都市频道', logo: '',
+    extend: { liveId: 'ZwxzUXr', liveRate: [500], backGroundImageV1: 'https://www.sztv.com.cn/ds.jpg' },
+  },
+  { id: 7880, name: '电视剧频道', extend: { liveId: '4azbkoY', liveRate: [500] } },
+  { id: 7881, name: '少儿频道', extend: { liveId: '1SIQj6s', liveRate: [500] } },
+  { id: 7869, name: '移动电视', extend: { liveId: 'wDF6KJ3', liveRate: [500] } },
+  { id: 7878, name: '宜和购物频道', extend: { liveId: 'BJ5u5k2', liveRate: [500] } },
+  { id: 7944, name: '国际频道', extend: { liveId: 'sztvgjpd', liveRate: [500] } },
+]
+
+check('深圳：匿名 Web HMAC 固定样本与官网 yszsdk 一致', () => {
+  const now = 1720000000000
+  const nonce = '01234567-89ab-4cde-8123-456789abcdef'
+  const auth = buildSztvCatalogAuth(undefined, now, nonce)
+  const date = new Date(now).toUTCString()
+  const canonical = `x-date: ${date}\n@request-target: get /api/com/catalog/getCatalogList\nhost: apix.scms.sztv.com.cn\nnonce: ${nonce}`
+  const secret = Buffer.from('eFVKN0dsczQ1U3QwQ1RuYXRud1p3c0g0VXlZajBycFg=', 'base64').toString('utf8')
+  const expected = createHmac('sha512', secret).update(canonical).digest('base64')
+  assert.equal(auth['X-Date'], date)
+  assert.equal(auth.Nonce, nonce)
+  assert.match(auth.Authorization, /^hmac username="onesz"/)
+  assert.ok(auth.Authorization.endsWith(`signature="${expected}"`))
+})
+
+check('深圳：直播 Key 请求、混淆解码及 CDN 逐路径签名与固定样本一致', () => {
+  const now = 1720000000000
+  const keyRequest = new URL(buildSztvLiveKeyRequest('R77mK1v', now))
+  assert.equal(keyRequest.searchParams.get('t'), '1720000000')
+  assert.equal(
+    keyRequest.searchParams.get('token'),
+    createHash('md5').update('1720000000R77mK1vcutvLiveStream|Dream2017').digest('hex'),
+  )
+  assert.equal(decodeSztvLiveKey('"nUzgzN==AM3M"'), '783Rs70')
+  const signed = new URL(signSztvStreamUrl(
+    'https://sztv-live.sztv.com.cn/R77mK1v/500/783Rs70.m3u8',
+    now,
+  ))
+  assert.equal(signed.searchParams.get('t'), '66853a20')
+  assert.equal(
+    signed.searchParams.get('sign'),
+    createHash('md5').update(`ejow6p6p6hmrm9g96beh2knecdq5kyw9bp0zxyg7${signed.pathname}66853a20`).digest('hex'),
+  )
+  assert.throws(() => signSztvStreamUrl('https://example.com/steal.ts', now), /不是深圳广电/)
+})
+
+check('深圳：固定排除购物，七套频道规范命名并全部走全代理', () => {
+  const rows = sztvRows().filter(row => row.name !== '宜和购物频道').map(row => ({
+    id: String(row.id),
+    name: ({
+      深圳卫视4K超高清: '深圳卫视4K', 深圳卫视: '深圳卫视', 都市频道: '深圳都市',
+      电视剧频道: '深圳电视剧', 少儿频道: '深圳少儿', 移动电视: '深圳移动电视', 国际频道: '深圳国际',
+    })[row.name],
+    liveId: row.extend.liveId,
+    rate: row.extend.liveRate[0],
+    logo: row.logo || row.extend.backGroundImageV1 || '',
+  }))
+  const channels = buildSztvChannels(rows)
+  assert.deepEqual(channels.map(channel => channel.name), [
+    '深圳卫视4K', '深圳卫视', '深圳都市', '深圳电视剧', '深圳少儿', '深圳移动电视', '深圳国际',
+  ])
+  assert.deepEqual(channels.map(channel => channel.deferredRef), [
+    'sztv-24725', 'sztv-7867', 'sztv-7868', 'sztv-7880', 'sztv-7881', 'sztv-7869', 'sztv-7944',
+  ])
+  assert.ok(channels.every(channel => channel.proxyHls === true))
+})
+
+await checkAsync('深圳：模块取七套官网频道，播放时换 Key 并提供分片动态签名器', async () => {
+  clearSztvCache()
+  let catalogCalls = 0
+  let keyCalls = 0
+  const fetchImpl = async (requestUrl, options = {}) => {
+    const url = new URL(String(requestUrl))
+    if (url.hostname === 'apix.scms.sztv.com.cn') {
+      catalogCalls++
+      assert.match(options.headers.Authorization, /^hmac username="onesz"/)
+      assert.match(options.headers.Nonce, /^[0-9a-f-]{36}$/)
+      return fakeResponse({ returnCode: '0000', returnDesc: '成功', returnData: sztvRows() })
+    }
+    keyCalls++
+    assert.equal(url.hostname, 'hls-api.sztv.com.cn')
+    assert.equal(url.searchParams.get('id'), 'R77mK1v')
+    assert.equal(options.headers.Origin, 'https://www.sztv.com.cn')
+    return fakeResponse('"nUzgzN==AM3M"')
+  }
+
+  const module = getModule('sztv')
+  const result = await module.fetch({}, { fetchImpl })
+  assert.equal(result.groups[0].name, '深圳电视台')
+  assert.deepEqual(result.groups[0].dataList.map(channel => channel.name), [
+    '深圳卫视4K', '深圳卫视', '深圳都市', '深圳电视剧', '深圳少儿', '深圳移动电视', '深圳国际',
+  ])
+
+  const first = await resolveSztvChannel('sztv-24725', { fetchImpl, now: 1720000000000 })
+  const cached = await resolveSztvChannel('sztv-24725', { fetchImpl, now: 1720000001000 })
+  assert.match(first.url, /^https:\/\/sztv-live\.sztv\.com\.cn\/R77mK1v\/500\/783Rs70\.m3u8\?sign=/)
+  assert.equal(first.upstreamHeaders.Origin, 'https://www.sztv.com.cn')
+  assert.equal(typeof first.upstreamUrlTransform, 'function')
+  assert.match(
+    first.upstreamUrlTransform('https://sztv-live.sztv.com.cn/R77mK1v/500/123/456.ts'),
+    /\/456\.ts\?sign=[0-9a-f]{32}&t=[0-9a-f]+$/,
+  )
+  assert.match(cached.url, /783Rs70\.m3u8/)
+  assert.equal(catalogCalls, 1)
+  assert.equal(keyCalls, 1)
 })
 
 // ---- 芒果 TV ----

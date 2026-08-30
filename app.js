@@ -878,7 +878,13 @@ async function handleRequest(req, res) {
     if (/\.m3u8(?:\?|$)/i.test(routeUrl)) {
       const nested = await fetchNested(target.url, target.upstreamHeaders)
       if (nested) {
-        const body = Buffer.from(toProxyManifest(rewriteManifest(nested.text, nested.finalUrl), target.pid, target.transform, target.upstreamHeaders), 'utf-8')
+        const body = Buffer.from(toProxyManifest(
+          rewriteManifest(nested.text, nested.finalUrl),
+          target.pid,
+          target.transform,
+          target.upstreamHeaders,
+          target.upstreamUrlTransform,
+        ), 'utf-8')
         res.writeHead(200, {
           'Content-Type': 'application/vnd.apple.mpegurl',
           'Access-Control-Allow-Origin': '*',
@@ -996,7 +1002,15 @@ async function handleRequest(req, res) {
     // 服务端取回清单、相对路径改写为绝对地址后直出，播放器无需跟随任何跳转
     let manifest = await fetchManifestDirect(result.playURL, result.upstreamHeaders)
     // 全代理：再把清单里的绝对地址换成本机同源相对地址，分片改由 /proxy/s<key>.ts 转发
-    if (manifest != null && proxyMode) manifest = toProxyManifest(manifest, proxyPid, result.segmentTransform, result.upstreamHeaders)
+    if (manifest != null && proxyMode) {
+      manifest = toProxyManifest(
+        manifest,
+        proxyPid,
+        result.segmentTransform,
+        result.upstreamHeaders,
+        result.upstreamUrlTransform,
+      )
+    }
     if (manifest != null) {
       const body = Buffer.from(manifest, 'utf-8')
       res.writeHead(200, {

@@ -89,6 +89,21 @@ check('平台防盗链请求头随分片地址登记，不暴露到播放列表�
   assert.ok(!manifest.includes('Origin') && !manifest.includes('Referer'))
 })
 
+check('逐路径签名器在登记前改写上游地址，同时分片 key 仍按未签名路径保持稳定', () => {
+  let generation = 0
+  const signer = raw => `${raw}?sign=v${++generation}`
+  const unsigned = 'https://sztv-live.sztv.com.cn/R77mK1v/500/123/456.ts'
+  const firstRef = toProxyManifest(unsigned, 'sztv-24725', undefined, undefined, signer).trim()
+  const first = lookup(firstRef.replace(/\.ts$/, ''))
+  assert.equal(first.url, `${unsigned}?sign=v1`)
+  assert.equal(first.upstreamUrlTransform, signer)
+
+  const secondRef = toProxyManifest(unsigned, 'sztv-24725', undefined, undefined, signer).trim()
+  const second = lookup(secondRef.replace(/\.ts$/, ''))
+  assert.equal(secondRef, firstRef, '短效签名变化不能让代理地址表 key 跟着变化')
+  assert.equal(second.url, `${unsigned}?sign=v2`, '重复登记应把上游短签名刷新为最新值')
+})
+
 // ---------- 2. 订阅输出 ----------
 check('?relay=2 订阅频道地址输出 /proxy/<pid>.m3u8（relay=1 仍是 /relay/）', () => {
   writeFileSync(join(DATA_DIR, 'interface.txt'), [

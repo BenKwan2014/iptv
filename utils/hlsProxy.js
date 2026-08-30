@@ -23,7 +23,7 @@ import { printDebug, printRed } from "./colorOut.js";
 const TTL_MS = 10 * 60 * 1000     // 分片地址带时效签名，10 分钟足够覆盖播放器的重试窗口
 const MAX_ENTRIES = 5000          // 一个直播频道 10 分钟约 100 条，这个上限够几十路同放，超出按最早登记淘汰
 
-const registry = new Map()        // key -> { url, pid, transform, upstreamHeaders, expires }
+const registry = new Map()        // key -> { url, pid, transform, upstreamHeaders, upstreamUrlTransform, expires }
 
 // 已知的媒体后缀：保留原后缀，按后缀识别流格式的播放器（极影视）才认得出分片
 const KNOWN_EXT = new Set(['ts', 'm3u8', 'aac', 'mp3', 'mp4', 'm4s', 'm4a', 'vtt', 'key'])
@@ -57,9 +57,17 @@ function sweep() {
  * key 前缀固定为 s：让分片路径 /proxy/s<hex>.ts 与频道清单路径 /proxy/<纯数字频道号>.m3u8
  * 在词法上永不相交，两条路由怎么排都不会互相误吃。
  */
-function register(url, pid = '', transform, upstreamHeaders) {
+function register(url, pid = '', transform, upstreamHeaders, upstreamUrlTransform) {
   const key = 's' + createHash('md5').update(url).digest('hex').slice(0, 16)
-  registry.set(key, { url, pid, transform, upstreamHeaders, expires: Date.now() + TTL_MS })
+  const targetUrl = upstreamUrlTransform ? upstreamUrlTransform(url) : url
+  registry.set(key, {
+    url: targetUrl,
+    pid,
+    transform,
+    upstreamHeaders,
+    upstreamUrlTransform,
+    expires: Date.now() + TTL_MS,
+  })
   if (registry.size > MAX_ENTRIES) sweep()
   return key
 }
@@ -75,6 +83,7 @@ function lookup(key) {
   const result = { url: entry.url, pid: entry.pid }
   if (entry.transform) result.transform = entry.transform
   if (entry.upstreamHeaders) result.upstreamHeaders = entry.upstreamHeaders
+  if (entry.upstreamUrlTransform) result.upstreamUrlTransform = entry.upstreamUrlTransform
   return result
 }
 
@@ -93,10 +102,14 @@ function registrySize() {
  *
  * 纯字符串处理（除登记地址表外无副作用），便于单测。
  */
-function toProxyManifest(text, pid = '', transform, upstreamHeaders) {
+function toProxyManifest(text, pid = '', transform, upstreamHeaders, upstreamUrlTransform) {
   const toRef = (uri, fallbackExt) => {
     if (!/^https?:\/\//i.test(uri)) return null   // 非绝对地址说明上一步改写没覆盖到，保持原样别弄坏
-    return `${register(uri, pid, transform, upstreamHeaders)}.${extOf(uri, fallbackExt)}`
+    try {
+      return `${register(uri, pid, transform, upstreamHeaders, upstreamUrlTransform)}.${extOf(uri, fallbackExt)}`
+    } catch {
+      return null
+    }
   }
   return text.split('\n').map(line => {
     const t = line.trim()
