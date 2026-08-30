@@ -100,8 +100,8 @@ export const MIGU_LOCAL_REASSIGNMENTS = Object.freeze({
 
 // 这些地方频道还会出现在「新闻」等分类里，因此需要在
 // 所有咪咕分类中全局剔除，避免删掉「地方」组后又从别组复活。
-// 中国天气是明确保留项，不在此表。
 export const MIGU_CHANNEL_EXCLUSIONS = new Set([
+  '中国天气',
   '公共新闻频道',
   '新动力量创一流',
   '梨园频道',

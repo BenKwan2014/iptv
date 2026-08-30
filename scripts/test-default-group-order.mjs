@@ -23,10 +23,12 @@ console.log('默认分组顺序测试')
 
 check('内容类按固定顺序置顶，不受来源顺序影响', () => {
   const shuffled = [
-    '斗鱼', '卫视', '体育-明天', '新闻', '体育', 'B站', '央视',
+    '斗鱼', '卫视', '体育-明天', '国际', '体育', 'B站', '央视',
     '少儿', '文旅', '体育-昨天', '亚太', '综艺', '虎牙', '影视', '教育', '体育-今天',
   ]
   assert.deepEqual(sortGroupsByDefault(makeGroups(shuffled)).map(group => group.name), DEFAULT_GROUP_ORDER)
+  assert.equal(DEFAULT_GROUP_ORDER.indexOf('国际'), DEFAULT_GROUP_ORDER.indexOf('亚太') + 1)
+  assert.equal(DEFAULT_GROUP_ORDER.includes('新闻'), false)
 })
 
 check('地方台连续放在内容类之后，并保持原相对顺序', () => {

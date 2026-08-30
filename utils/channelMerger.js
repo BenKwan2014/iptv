@@ -179,6 +179,29 @@ function consolidateLocalEducationChannels(groups) {
   })
 }
 
+// 地方体育频道多数直接带「体育」，「武术世界」是河南官方体育频道的例外名称。
+const LOCAL_SPORTS_EXACT_NAMES = new Set(['武术世界'])
+
+function isSportsChannel(channel) {
+  const name = String(channel?.name || '').trim()
+  return LOCAL_SPORTS_EXACT_NAMES.has(name) || /体育/.test(name)
+}
+
+function sportsChannelKey(channel) {
+  return String(channel?.name || '')
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/频道$/, '')
+}
+
+function consolidateLocalSportsChannels(groups) {
+  return consolidateLocalChannels(groups, {
+    targetGroup: '体育',
+    matches: isSportsChannel,
+    keyOf: sportsChannelKey,
+  })
+}
+
 /**
  * 获取所有频道数据（咪咕 + 外部源）
  * @param {Object} options - 选项
@@ -255,8 +278,9 @@ async function getAllChannels() {
     // 也合并到同一组，避免新旧名并存。
     allChannels = normalizeContentGroupNames(allChannels)
 
-    // 内容型分组按频道性质统一：地方少儿 / 教育频道分别移入
-    // 「少儿」/「教育」，且在同台多源时优先地方官方线路。
+    // 内容型分组按频道性质统一：地方体育 / 少儿 / 教育频道分别复制到
+    // 对应内容组，地方组仍保持完整；同台多源时优先地方官方线路。
+    allChannels = consolidateLocalSportsChannels(allChannels)
     allChannels = consolidateLocalKidsChannels(allChannels)
     allChannels = consolidateLocalEducationChannels(allChannels)
     
@@ -382,6 +406,7 @@ export {
   dedupeAllChannels,
   primarySourceId,
   normalizeContentGroupNames,
+  consolidateLocalSportsChannels,
   consolidateLocalKidsChannels,
   consolidateLocalEducationChannels
 }

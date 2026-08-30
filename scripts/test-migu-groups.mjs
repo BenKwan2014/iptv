@@ -114,7 +114,7 @@ check('咪咕地方组只保留指定独有频道，并归入上海 / 陕西 / �
   assert.equal(out.some(group => group.name === '地方'), false)
 })
 
-check('新闻组剔除咪咕地方重复源，只保留中国天气', () => {
+check('咪咕新闻频道全部剔除，去掉空的新闻分组', () => {
   const news = {
     name: '新闻',
     dataList: [
@@ -132,7 +132,7 @@ check('新闻组剔除咪咕地方重复源，只保留中国天气', () => {
       { pID: '12', name: '海南广播电视总台新闻频道' },
     ],
   }
-  assert.deepEqual(shape(redistributeMiguLocalChannels([news])), [['新闻', ['1']]])
+  assert.deepEqual(redistributeMiguLocalChannels([news]), [])
 })
 
 check('咪咕综艺分组整组移除', () => {

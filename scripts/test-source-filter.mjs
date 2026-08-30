@@ -20,6 +20,7 @@ import { ensureSourceIds, inheritExistingSourceIds } from '../utils/externalSour
 import {
   consolidateLocalEducationChannels,
   consolidateLocalKidsChannels,
+  consolidateLocalSportsChannels,
   dedupeAllChannels,
   normalizeContentGroupNames,
   primarySourceId,
@@ -164,6 +165,46 @@ check('地方教育频道同时归入教育组，地方组仍保留且同台优�
   assert.deepEqual(output.find(group => group.name === '江苏').dataList.map(channel => channel.name), ['江苏教育', '江苏新闻'])
   assert.equal(output.find(group => group.name === '河北').dataList[0].name, '河北少儿科教')
   assert.equal(output.find(group => group.name === '央视').dataList[0].name, 'CCTV10科教')
+  assert.equal(JSON.stringify(input), before, '不应修改输入分组')
+})
+
+check('地方体育频道同时归入体育组，地方组仍保留且同台优先官方源', () => {
+  const input = [
+    { name: '体育', dataList: [
+      { name: 'CCTV5体育', pID: 'm1' },
+      { name: '武术世界', pID: 'm2' },
+      { name: '陕西体育休闲频道', pID: 'm3' },
+      { name: '纬来体育', sourceId: 'bi:vltv' },
+    ] },
+    { name: '上海', dataList: [
+      { name: '五星体育', sourceId: 'xt:kankanews' },
+      { name: '上海新闻', sourceId: 'xt:kankanews' },
+    ] },
+    { name: '江苏', dataList: [{ name: '江苏体育休闲', sourceId: 'xt:jstv' }] },
+    { name: '辽宁', dataList: [{ name: '辽宁体育休闲', sourceId: 'xt:beidou' }] },
+    { name: '广东', dataList: [{ name: '广东体育', sourceId: 'xt:gdtv' }] },
+    { name: '河北', dataList: [{ name: '河北文旅体育', sourceId: 'xt:hebtv' }] },
+    { name: '福建', dataList: [{ name: '福建文旅体育', sourceId: 'xt:fjtv' }] },
+    { name: '河南', dataList: [{ name: '武术世界', sourceId: 'xt:hntv' }] },
+    { name: '山东', dataList: [{ name: '山东体育休闲', sourceId: 'xt:iqilu' }] },
+    { name: '亚太', dataList: [{ name: '澳门体育', sourceId: 'ext:apac' }] },
+  ]
+  const before = JSON.stringify(input)
+  const output = consolidateLocalSportsChannels(input)
+  const sports = output.find(group => group.name === '体育').dataList
+
+  assert.deepEqual(sports.map(channel => channel.name), [
+    'CCTV5体育', '武术世界', '陕西体育休闲频道', '纬来体育',
+    '五星体育', '江苏体育休闲', '辽宁体育休闲', '广东体育',
+    '河北文旅体育', '福建文旅体育', '山东体育休闲',
+  ])
+  assert.equal(sports.find(channel => channel.name === '武术世界').sourceId, 'xt:hntv')
+  assert.deepEqual(output.find(group => group.name === '上海').dataList.map(channel => channel.name), [
+    '五星体育', '上海新闻',
+  ])
+  assert.equal(output.find(group => group.name === '河南').dataList[0].name, '武术世界')
+  assert.equal(output.find(group => group.name === '亚太').dataList[0].name, '澳门体育')
+  assert.equal(sports.some(channel => channel.name === '澳门体育'), false)
   assert.equal(JSON.stringify(input), before, '不应修改输入分组')
 })
 

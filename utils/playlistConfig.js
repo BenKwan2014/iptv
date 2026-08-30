@@ -30,7 +30,7 @@ const DEFAULT_PROFILE = { id: 'default', name: '默认' }
 // groupOrder，下方 applyConfig 仍以用户顺序为最终优先级。
 export const DEFAULT_GROUP_ORDER = [
   '体育', '体育-昨天', '体育-今天', '体育-明天',
-  '央视', '卫视', '亚太', '新闻', '影视', '少儿', '教育', '综艺', '文旅',
+  '央视', '卫视', '亚太', '国际', '影视', '少儿', '教育', '综艺', '文旅',
   'B站', '虎牙', '斗鱼',
 ]
 
