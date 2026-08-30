@@ -70,7 +70,7 @@ check('dedupeAllChannels：重复频道归属并入保留者 sourceIds', () => {
   assert.deepEqual(migu.sourceIds, ['migu'])                  // 同源重复归并为单元素集合（与写盘回退主来源等价）
 })
 
-check('地方少儿频道统一移入少儿组，同台优先地方官方源', () => {
+check('地方少儿频道同时归入少儿组，地方组仍保留且同台优先官方源', () => {
   const input = [
     { name: '少儿', dataList: [
       { name: '嘉佳卡通', pID: 'm1' },
@@ -103,7 +103,9 @@ check('地方少儿频道统一移入少儿组，同台优先地方官方源', (
   assert.equal(kids.find(channel => channel.name === '优漫卡通').sourceId, 'xt:jstv')
   assert.equal(kids.find(channel => channel.name === '新动漫').sourceId, 'xt:beidou')
   assert.equal(kids.find(channel => channel.name === '海南少儿').sourceId, 'xt:hnntv')
-  assert.deepEqual(output.find(group => group.name === '广东').dataList.map(channel => channel.name), ['广东新闻'])
+  assert.deepEqual(output.find(group => group.name === '广东').dataList.map(channel => channel.name), [
+    '广东少儿', '嘉佳卡通', '广东新闻', '深圳少儿',
+  ])
   assert.equal(output.find(group => group.name === '央视').dataList[0].name, 'CCTV14少儿')
   assert.equal(JSON.stringify(input), before, '不应修改输入分组')
 })
@@ -113,11 +115,12 @@ check('原本没有少儿组时自动创建，并放在地方分组之前', () =
     { name: '新闻', dataList: [{ name: '国际新闻' }] },
     { name: '浙江', dataList: [{ name: '浙江少儿', sourceId: 'xt:cztv' }] },
   ])
-  assert.deepEqual(output.map(group => group.name), ['新闻', '少儿'])
+  assert.deepEqual(output.map(group => group.name), ['新闻', '少儿', '浙江'])
   assert.deepEqual(output[1].dataList.map(channel => channel.name), ['浙江少儿'])
+  assert.deepEqual(output[2].dataList.map(channel => channel.name), ['浙江少儿'])
 })
 
-check('地方教育频道统一移入教育组，同台优先地方官方源', () => {
+check('地方教育频道同时归入教育组，地方组仍保留且同台优先官方源', () => {
   const input = [
     { name: '教育', dataList: [
       { name: '江苏教育', pID: 'm1' },
@@ -144,7 +147,7 @@ check('地方教育频道统一移入教育组，同台优先地方官方源', (
   assert.equal(education.find(channel => channel.name === '江苏教育').sourceId, 'xt:jstv')
   assert.equal(education.find(channel => channel.name === '南京教育科技').sourceId, 'xt:njtv')
   assert.equal(output.some(group => group.dataList.some(channel => channel.name === '南京教科频道')), false)
-  assert.deepEqual(output.find(group => group.name === '江苏').dataList.map(channel => channel.name), ['江苏新闻'])
+  assert.deepEqual(output.find(group => group.name === '江苏').dataList.map(channel => channel.name), ['江苏教育', '江苏新闻'])
   assert.equal(output.find(group => group.name === '河北').dataList[0].name, '河北少儿科教')
   assert.equal(output.find(group => group.name === '央视').dataList[0].name, 'CCTV10科教')
   assert.equal(JSON.stringify(input), before, '不应修改输入分组')

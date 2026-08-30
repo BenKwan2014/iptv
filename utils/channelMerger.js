@@ -65,8 +65,9 @@ function kidsChannelKey(channel) {
 }
 
 /**
- * 把符合条件的地方频道收入内容分组；如果其它分组已有同台条目，
- * 用地方官方源替换并去掉重复。返回新分组，不修改输入。
+ * 把符合条件的地方频道复制到内容分组，地方组仍保留完整频道；
+ * 如果其它内容分组已有同台条目，用地方官方源替换并去掉重复。
+ * 返回新分组，不修改输入。
  */
 function consolidateLocalChannels(groups, { targetGroup, matches, keyOf }) {
   const output = (Array.isArray(groups) ? groups : []).map(group => ({
@@ -77,11 +78,9 @@ function consolidateLocalChannels(groups, { targetGroup, matches, keyOf }) {
 
   for (const group of output) {
     if (!isLocalGroup(group.name)) continue
-    group.dataList = group.dataList.filter(channel => {
-      if (!matches(channel)) return true
-      localChannels.push(channel)
-      return false
-    })
+    for (const channel of group.dataList) {
+      if (matches(channel)) localChannels.push(channel)
+    }
   }
   if (!localChannels.length) return output
 
@@ -92,9 +91,10 @@ function consolidateLocalChannels(groups, { targetGroup, matches, keyOf }) {
   }
 
   // 同台可能被平台放在其它分类（如「南京教科频道」在纪实），
-  // 不能只查目标组，否则重复源会换个分组继续存在。
+  // 不能只查目标组，否则重复源会换个分组继续存在；
+  // 地方组是用户需要的完整省份入口，不参与此处删重。
   for (const group of output) {
-    if (group.name === targetGroup) continue
+    if (group.name === targetGroup || isLocalGroup(group.name)) continue
     group.dataList = group.dataList.filter(channel => !preferred.has(keyOf(channel)))
   }
 

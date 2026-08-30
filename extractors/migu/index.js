@@ -126,6 +126,9 @@ export function redistributeMiguLocalChannels(groups) {
   }
 
   for (const group of Array.isArray(groups) ? groups : []) {
+    // 咪咕「综艺」只有一条专题轮播和一条已由江苏官方模块
+    // 提供的重复频道，单独保留该分组意义不大，整组不输出。
+    if (group?.name === '综艺') continue
     const channels = (Array.isArray(group?.dataList) ? group.dataList : [])
       .filter(channel => !MIGU_CHANNEL_EXCLUSIONS.has(String(channel?.name || '').trim()))
     if (group?.name !== '地方') {

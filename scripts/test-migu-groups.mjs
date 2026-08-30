@@ -135,6 +135,21 @@ check('新闻组剔除咪咕地方重复源，只保留中国天气', () => {
   assert.deepEqual(shape(redistributeMiguLocalChannels([news])), [['新闻', ['1']]])
 })
 
+check('咪咕综艺分组整组移除', () => {
+  const input = [
+    g('体育', 1),
+    { name: '综艺', dataList: [
+      { pID: '2', name: '最强综艺趴' },
+      { pID: '3', name: '江苏综艺频道' },
+    ] },
+    g('少儿', 4),
+  ]
+  assert.deepEqual(shape(redistributeMiguLocalChannels(input)), [
+    ['体育', ['1']],
+    ['少儿', ['4']],
+  ])
+})
+
 check('重分组会合并已有地区组，且不修改输入', () => {
   const input = [
     { name: '上海', dataList: [{ pID: '1', name: '旧频道' }] },
