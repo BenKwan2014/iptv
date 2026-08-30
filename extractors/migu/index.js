@@ -46,9 +46,10 @@ import { setSystemFlagAPI } from "../../utils/systemConfigAPI.js"
  *     4 次，而界面上没有任何地方提示还有另外 3 份；
  *   · 频道数虚高：实测 645 个条目对应 593 个真实频道，47 个频道跨分组重复。
  *
- * 顺序**不在这里定义**，原样沿用 fetchList.cateList() 拿到的咪咕分类顺序
- *（当前 体育/央视/卫视/地方/影视/新闻/教育/熊猫/综艺/少儿/纪实）。所以「先出现者胜」
- * 等价于「按咪咕自己的分类优先级归属」：CCTV5 落在体育、其余 CCTV 落在央视。
+ * 顺序**不在这里定义**，除「地方」经 redistributeMiguLocalChannels
+ * 收窄并归类外，原样沿用 fetchList.cateList() 拿到的咪咕分类顺序。所以
+ * 「先出现者胜」等价于「按咪咕自己的分类优先级归属」：CCTV5 落在体育、
+ * 其余 CCTV 落在央视。
  * 刻意不另立一张优先级表——两处各自定义顺序必然走偏。
  *
  * 去重只在**咪咕模块内部**按 pID 做，绝不跨源：「咪咕的 CCTV1 + 精选频道的 CCTV1」
@@ -73,6 +74,61 @@ export function dedupeAcrossGroups(groups) {
   return out
 }
 
+// 咪咕「地方」分组与免登录的地方官方模块大量重复，而且咪咕高画质
+// 受账号/VIP 限制。最终播放列表不再输出「地方」，只保留官方模块
+// 尚未覆盖且用户明确要保留的频道，并直接并入对应地区。精确白名单刻意
+// 不自动接纳咪咕后续新增的地方频道，避免重复项刷新后悄悄复活。
+export const MIGU_LOCAL_REASSIGNMENTS = Object.freeze({
+  '上视东方影视': '上海',
+  '陕西银龄频道': '陕西',
+  '陕西都市青春频道': '陕西',
+  '陕西秦腔频道': '陕西',
+  '陕西新闻资讯频道': '陕西',
+  '财富天下': '江苏',
+})
+
+// 这些地方频道还会出现在「新闻」等分类里，因此需要在
+// 所有咪咕分类中全局剔除，避免删掉「地方」组后又从别组复活。
+// 中国天气是明确保留项，不在此表。
+export const MIGU_CHANNEL_EXCLUSIONS = new Set([
+  '公共新闻频道',
+  '淮安新闻综合',
+  '宿迁新闻综合',
+  '徐州新闻综合',
+  '盐城新闻综合',
+  '江阴新闻综合',
+  '南通新闻综合',
+  '宜兴新闻综合',
+  '溧水新闻综合',
+  '镇江新闻综合',
+  '海南广播电视总台新闻频道',
+])
+
+/** 清理咪咕地方重复源，并把少数保留频道合并进地区分组。 */
+export function redistributeMiguLocalChannels(groups) {
+  const output = []
+  const append = (name, channels) => {
+    if (!channels.length) return
+    const existing = output.find(group => group.name === name)
+    if (existing) existing.dataList.push(...channels)
+    else output.push({ name, dataList: [...channels] })
+  }
+
+  for (const group of Array.isArray(groups) ? groups : []) {
+    const channels = (Array.isArray(group?.dataList) ? group.dataList : [])
+      .filter(channel => !MIGU_CHANNEL_EXCLUSIONS.has(String(channel?.name || '').trim()))
+    if (group?.name !== '地方') {
+      append(group?.name, channels)
+      continue
+    }
+    for (const channel of channels) {
+      const target = MIGU_LOCAL_REASSIGNMENTS[String(channel?.name || '').trim()]
+      if (target) append(target, [channel])
+    }
+  }
+  return output
+}
+
 /**
  * 这一轮算不算失败（与 B 站模块的 shouldFailRound 同一套约定）。
  *
@@ -92,7 +148,7 @@ export function shouldFailRound(channelCount, failedCateCount) {
 export default {
   id: 'migu',
   name: '咪咕视频',
-  description: '央视 / 卫视 / 地方等 300+ 频道，含体育赛事与节目单。',
+  description: '央视 / 卫视 / 体育等 300+ 频道，含体育赛事与节目单。',
 
   // 归属标识保持字面量 'migu'，不用注册表默认的 'xt:migu'（见文件头约束 2）
   sourceId: 'migu',
@@ -236,7 +292,8 @@ export default {
           })),
       }))
 
-    const deduped = dedupeAcrossGroups(groups)
+    const redistributed = redistributeMiguLocalChannels(groups)
+    const deduped = dedupeAcrossGroups(redistributed)
     const count = deduped.reduce((sum, g) => sum + g.dataList.length, 0)
 
     if (shouldFailRound(count, failed.length)) {
