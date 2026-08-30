@@ -33,8 +33,11 @@ import {
 } from '../extractors/gxtv/api.js'
 import {
   buildChannelGroups as buildFjtvGroups,
+  fetchFuzhouChannels,
+  FUZHOU_CHANNELS,
   hlsOf as fjtvHlsOf,
 } from '../extractors/fjtv/api.js'
+import { mergeFuzhouChannels } from '../extractors/fjtv/index.js'
 import {
   buildChannels as buildCztvChannels,
   clearPlayInfoCache as clearCztvPlayInfoCache,
@@ -447,7 +450,7 @@ check('第一阶段两个官方直播模块已注册，缓存/解析能力声明
   assert.deepEqual(cztv.configSchema, [], '浙江不向用户暴露播放缓冲等技术参数')
 })
 
-check('福建海博TV模块已注册，固定六小时刷新且播放地址可直出', () => {
+check('福建模块仍是原 id，固定六小时刷新且播放地址可直出', () => {
   const fjtv = getModule('fjtv')
   assert.ok(fjtv)
   assert.equal(fjtv.capabilities.cache, 'disk')
@@ -1088,7 +1091,12 @@ await checkAsync('★ B 站：热门榜获取失败且无手填 → 整轮判失
 
 // ---- 广西网络台 / 浙江新蓝网 ----
 
-const fakeResponse = payload => ({ ok: true, status: 200, json: async () => payload })
+const fakeResponse = payload => ({
+  ok: true,
+  status: 200,
+  json: async () => payload,
+  text: async () => typeof payload === 'string' ? payload : JSON.stringify(payload),
+})
 
 check('广西：只取官网正式频道、规范命名并排除内部/专题流', () => {
   const rows = [
@@ -1552,11 +1560,53 @@ check('福建：固定输出6个省级与10个地市频道，规范名称并排�
     !channel.proxyHls && !channel.relayHls && !channel.deferredRef))
 })
 
-await checkAsync('福建：模块分别请求两个官方分类，任一分类缺台则整轮失败保旧缓存', async () => {
+check('福建：福州三路替换原单路并留在既有福建地市台分组', () => {
+  const groups = mergeFuzhouChannels(buildFjtvGroups([
+    { sortId: fjtvProvinceSort, rows: fjtvProvinceRows() },
+    { sortId: fjtvCitySort, rows: fjtvCityRows() },
+  ]), FUZHOU_CHANNELS)
+  assert.deepEqual(groups.map(group => group.name), ['福建电视台', '福建地市台'])
+  assert.deepEqual(
+    groups[1].dataList.slice(0, 5).map(channel => channel.name),
+    ['厦门卫视', '福州综合', '福州生活', '福州少儿', '漳州新闻综合'],
+  )
+  assert.equal(groups[1].dataList.length, 12)
+  assert.ok(!groups[1].dataList.some(channel => channel.name === '福州新闻综合'))
+
+  const fallbackOnly = mergeFuzhouChannels([], FUZHOU_CHANNELS)
+  assert.deepEqual(fallbackOnly.map(group => group.name), ['福建地市台'])
+  assert.deepEqual(fallbackOnly[0].dataList.map(channel => channel.name), ['福州综合', '福州生活', '福州少儿'])
+})
+
+await checkAsync('福建：福州固定官方 HLS 逐路探测，单路失败不会拖掉其余频道', async () => {
+  const calls = []
+  const result = await fetchFuzhouChannels({ fetchImpl: async (requestUrl, options) => {
+    const url = new URL(String(requestUrl))
+    calls.push(url.href)
+    assert.equal(url.hostname, 'live.zohi.tv')
+    assert.equal(options.headers.Referer, 'https://www.zohi.tv/')
+    if (url.pathname.includes('fztv-3')) return { ok: false, status: 503 }
+    return fakeResponse('#EXTM3U\n#EXT-X-TARGETDURATION:6\n')
+  } })
+  assert.deepEqual(calls, FUZHOU_CHANNELS.map(channel => channel.url))
+  assert.deepEqual(result.channels.map(channel => channel.name), ['福州综合', '福州少儿'])
+  assert.match(result.warnings[0], /福州生活探测失败：HTTP 503/)
+
+  await assert.rejects(
+    () => fetchFuzhouChannels({ fetchImpl: async () => fakeResponse('<html>not hls</html>') }),
+    /三路直播全部不可用.*不是 HLS 清单/,
+  )
+})
+
+await checkAsync('福建：仍用一个模块和原有两组；海博失败时回落到福州三路', async () => {
   const module = getModule('fjtv')
   const calls = []
   const fetchImpl = async (requestUrl, options) => {
     const url = new URL(String(requestUrl))
+    if (url.hostname === 'live.zohi.tv') {
+      assert.equal(options.headers.Referer, 'https://www.zohi.tv/')
+      return fakeResponse('#EXTM3U\n#EXT-X-TARGETDURATION:6\n')
+    }
     calls.push(url.searchParams.get('sort_id'))
     assert.equal(url.origin + url.pathname, 'https://mapi-plus.fjtv.net/api/open/haibo8/tv_channel_list.php')
     assert.equal(options.headers.Referer, 'https://www.fjtv.net/')
@@ -1567,19 +1617,22 @@ await checkAsync('福建：模块分别请求两个官方分类，任一分类�
   const result = await module.fetch({}, { fetchImpl })
   assert.deepEqual(calls, [fjtvProvinceSort, fjtvCitySort])
   assert.equal(result.groups[0].dataList.length, 6)
-  assert.equal(result.groups[1].dataList.length, 10)
+  assert.equal(result.groups[1].dataList.length, 12)
+  assert.deepEqual(result.meta.warnings, [])
 
-  await assert.rejects(
-    () => module.fetch({}, { fetchImpl: async requestUrl => {
-      const sortId = new URL(String(requestUrl)).searchParams.get('sort_id')
-      return fakeResponse(sortId === fjtvProvinceSort ? fjtvProvinceRows().slice(1) : fjtvCityRows())
-    } }),
-    /只找到 5\/6 个正式频道/,
-  )
+  const fallback = await module.fetch({}, { fetchImpl: async requestUrl => {
+    const url = new URL(String(requestUrl))
+    if (url.hostname === 'live.zohi.tv') return fakeResponse('#EXTM3U\n#EXT-X-TARGETDURATION:6\n')
+    const sortId = url.searchParams.get('sort_id')
+    return fakeResponse(sortId === fjtvProvinceSort ? fjtvProvinceRows().slice(1) : fjtvCityRows())
+  } })
+  assert.deepEqual(fallback.groups.map(group => group.name), ['福建地市台'])
+  assert.deepEqual(fallback.groups[0].dataList.map(channel => channel.name), ['福州综合', '福州生活', '福州少儿'])
+  assert.match(fallback.meta.warnings[0], /只找到 5\/6 个正式频道/)
 
   await assert.rejects(
     () => module.fetch({}, { fetchImpl: async () => ({ ok: false, status: 403 }) }),
-    /HTTP 403/,
+    /全部抓取失败.*HTTP 403/,
   )
 })
 

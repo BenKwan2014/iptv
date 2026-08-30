@@ -1,10 +1,20 @@
-/** 福建海博TV的省级、地市频道接口与严格白名单选流。 */
+/** 福建海博TV频道接口，以及福州广电官网的独立直播线路。 */
 import fetch from 'node-fetch'
 
 export const CHANNEL_LIST_URL = 'https://mapi-plus.fjtv.net/api/open/haibo8/tv_channel_list.php'
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
   + '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+
+const FUZHOU_REFERER = 'https://www.zohi.tv/'
+
+// 福视悦动官网播放器公开的三路固定 HLS。它们不经过海博 API，因而海博被
+// 讯飞 WAF 拦截时仍可独立工作。只接受这张固定表，避免把活动直播混进频道组。
+export const FUZHOU_CHANNELS = Object.freeze([
+  Object.freeze({ name: '福州综合', url: 'http://live.zohi.tv/video/s10001-fztv-1/index.m3u8' }),
+  Object.freeze({ name: '福州生活', url: 'http://live.zohi.tv/video/s10001-fztv-3/index.m3u8' }),
+  Object.freeze({ name: '福州少儿', url: 'http://live.zohi.tv/video/s10001-fztv-4/index.m3u8' }),
+])
 
 // sortId 来自海博TV 9.0.3「看电视」频道分类接口。ID + 原始名称双重校验，
 // 防止接口混入活动直播，或后台复用频道 ID 后把其它内容静默写进播放列表。
@@ -140,4 +150,58 @@ export async function fetchChannelGroups(options = {}) {
   const result = []
   for (const group of GROUPS) result.push(await requestGroup(group.sortId, options))
   return result
+}
+
+function isExpectedFuzhouUrl(raw) {
+  try {
+    const url = new URL(String(raw || ''))
+    return url.protocol === 'http:'
+      && url.hostname === 'live.zohi.tv'
+      && /^\/video\/s10001-fztv-[134]\/index\.m3u8$/.test(url.pathname)
+  } catch {
+    return false
+  }
+}
+
+async function probeFuzhouChannel(channel, { timeoutMs = 10000, fetchImpl = fetch } = {}) {
+  if (!isExpectedFuzhouUrl(channel?.url)) throw new Error(`${channel?.name || '未知频道'}地址不在官方白名单`)
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetchImpl(channel.url, {
+      headers: {
+        'User-Agent': UA,
+        Referer: FUZHOU_REFERER,
+        Accept: 'application/vnd.apple.mpegurl, application/x-mpegURL, */*',
+      },
+      signal: controller.signal,
+    })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const manifest = await response.text()
+    if (!/^\s*#EXTM3U(?:\r?\n|$)/.test(manifest)) throw new Error('返回内容不是 HLS 清单')
+    return { name: channel.name, url: channel.url, logo: '' }
+  } catch (error) {
+    const reason = error?.name === 'AbortError' ? `超时 ${timeoutMs}ms` : (error?.message || String(error))
+    throw new Error(`${channel.name}探测失败：${reason}`)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * 并行探测福州三路固定官方 HLS。单路异常只跳过该路；三路全挂才抛错，
+ * 让调用方决定是沿用海博结果，还是把整轮记为失败以保留旧缓存。
+ */
+export async function fetchFuzhouChannels(options = {}) {
+  const settled = await Promise.allSettled(
+    FUZHOU_CHANNELS.map(channel => probeFuzhouChannel(channel, options)),
+  )
+  const channels = []
+  const warnings = []
+  settled.forEach((result, index) => {
+    if (result.status === 'fulfilled') channels.push(result.value)
+    else warnings.push(result.reason?.message || `${FUZHOU_CHANNELS[index].name}探测失败`)
+  })
+  if (!channels.length) throw new Error(`福州广电三路直播全部不可用：${warnings.join('；')}`)
+  return { channels, warnings }
 }
