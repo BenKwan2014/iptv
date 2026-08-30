@@ -126,6 +126,26 @@ export function validateConfig(module, input, stored = {}) {
       continue
     }
 
+    if (field.type === 'multiselect') {
+      const allowed = (field.options || []).map(o => String(o.value))
+      const submitted = (Array.isArray(raw) ? raw : String(raw ?? '').split(/\r?\n/))
+        .map(value => String(value).trim())
+        .filter(Boolean)
+      const values = [...new Set(submitted)]
+      const keepOrDrop = () => { if (kept !== undefined) config[key] = kept }
+      if (!values.length) {
+        errors.push({ key, message: `${field.label}：至少选择一项` })
+        keepOrDrop(); continue
+      }
+      if (values.some(value => !allowed.includes(value))) {
+        errors.push({ key, message: `${field.label}：包含无效选项` })
+        keepOrDrop(); continue
+      }
+      // 仍按换行字符串落盘，旧版 parseAreaNames 与已有配置无需迁移。
+      config[key] = values.join('\n')
+      continue
+    }
+
     if (field.type === 'int') {
       if (raw === '' || raw === null) {
         // 清空 = 回到「没配过」，交给 env / 默认值
@@ -919,7 +939,7 @@ function normalizeLegacyConfig(module, config) {
   if (!module) return
   for (const field of module.configSchema || []) {
     const type = field.type || 'text'
-    if (type !== 'text' && type !== 'select') continue
+    if (type !== 'text' && type !== 'select' && type !== 'multiselect') continue
     if (config[field.key] === '') delete config[field.key]
   }
 }

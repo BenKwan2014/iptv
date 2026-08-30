@@ -670,6 +670,45 @@
             margin-bottom: 10px;
         }
 
+        /* 分区这种有限集合不该让用户靠说明文字手敲。做成可扫读、可点选的标签网格；
+           checkbox 本身保留可见，键盘和读屏也能按原生控件操作。 */
+        .xt-multiselect {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+            gap: 8px;
+            margin-top: 6px;
+        }
+
+        .xt-choice {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            min-width: 0;
+            padding: 8px 10px;
+            background: #fff;
+            border: 1px solid #d9d9d9;
+            border-radius: 6px;
+            color: #444;
+            cursor: pointer;
+            transition: border-color .15s, background .15s, color .15s;
+        }
+
+        .xt-choice:hover {
+            border-color: #69b1ff;
+        }
+
+        .xt-choice:has(input:checked) {
+            color: #0958d9;
+            background: #e6f4ff;
+            border-color: #4096ff;
+            font-weight: 600;
+        }
+
+        .xt-choice input {
+            margin: 0;
+            flex: 0 0 auto;
+        }
+
         /* 模块配置表单里的分段标题 */
         .xt-section {
             margin: 16px 0 10px;
@@ -2996,6 +3035,27 @@
                     <select id="${id}" onchange="setSaveDirty('xt:${moduleId}')" style="min-width:180px;">${opts}</select>
                     ${hint}${envNote}</div>`;
             }
+            if (field.type === 'multiselect') {
+                const selected = new Set(String(config[field.key] || '')
+                    .split(/\r?\n/).map(v => v.trim()).filter(Boolean));
+                const choicesId = `${id}-choices`;
+                const value = (field.options || [])
+                    .map(o => String(o.value)).filter(v => selected.has(v)).join('\n');
+                const choices = (field.options || []).map(o => {
+                    const optionValue = String(o.value);
+                    return `<label class="xt-choice">
+                        <input type="checkbox" data-value="${escapeHtml(optionValue)}"
+                            onchange="syncExtractorMultiSelect('${moduleId}','${field.key}')"
+                            ${selected.has(optionValue) ? 'checked' : ''}>
+                        <span>${escapeHtml(o.label ?? optionValue)}</span>
+                    </label>`;
+                }).join('');
+                return `<div style="margin-bottom:12px;">
+                    <label style="display:block; font-size:12px; color:#555; font-weight:600;">${label}</label>
+                    <input type="hidden" id="${id}" value="${escapeHtml(value)}">
+                    <div class="xt-multiselect" id="${choicesId}" role="group" aria-label="${label}">${choices}</div>
+                    ${hint}${envNote}</div>`;
+            }
             if (field.type === 'int') {
                 return `<div style="margin-bottom:12px;">
                     <label style="display:block; font-size:12px; color:#888;">${label}</label>
@@ -3056,6 +3116,16 @@
                 if (!el) continue;
                 el.dataset.initial = field.type === 'boolean' ? String(el.checked) : el.value;
             }
+        }
+
+        /** 把可视复选框同步成后端沿用的「一行一个」字符串，兼容已有落盘配置。 */
+        function syncExtractorMultiSelect(moduleId, key) {
+            const valueEl = document.getElementById(`xf-${moduleId}-${key}`);
+            const choicesEl = document.getElementById(`xf-${moduleId}-${key}-choices`);
+            if (!valueEl || !choicesEl) return;
+            valueEl.value = Array.from(choicesEl.querySelectorAll('input[data-value]:checked'))
+                .map(el => el.dataset.value).join('\n');
+            setSaveDirty(`xt:${moduleId}`);
         }
 
         /**

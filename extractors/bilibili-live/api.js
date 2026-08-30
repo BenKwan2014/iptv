@@ -21,7 +21,7 @@ const QN_NAMES = {
   400: '蓝光', 250: '超清', 150: '高清', 80: '流畅',
 }
 
-const DEFAULT_GROUP = '哔哩哔哩直播'
+export const BILIBILI_GROUP = 'B站'
 
 /** 一间房失败。其余房间照常，不影响整张播放列表。 */
 export class RoomError extends Error {
@@ -109,23 +109,20 @@ async function apiGet(path, params, { cookie, timeoutMs = 10000 } = {}) {
  * 2. 短链跟随显式限制跳数并把最终地址写进错误信息，避免跳转环。
  */
 /**
- * 热门榜的人气下限。低于这个数的房间一律不进播放列表。
+ * 热门榜的默认人气下限。低于这个数的房间不进播放列表。
  *
- * 刻意**不做成配置项**：用户不该为「垃圾从第几名开始」操心，那是我们该替他判断的。
- * 而且光有「取前 N 名」调不好——比赛多的时候 N 不够，没比赛的时候 N 个全是垃圾；
- * 加了下限之后是自适应的：有 TI 决赛就给满，平常日子可能只给两三个。
+ * 光有「取前 N 名」调不好——比赛多的时候 N 不够，没比赛的时候 N 个全是垃圾；
+ * 加了下限之后是自适应的。B 站的人气量级会调整，因此这只是模块默认值，用户可在
+ * 后台按自己的分区和时段修改，0 表示不设门槛。
  *
- * 1 万这个值来自实测的分布断层（赛事区当前 40 个在播）：
- *   1~6   名 300万~3700万   真·大型赛事
- *   7~9   名  15万~ 55万    守望先锋世界杯、PGS 吃鸡赛事这类
- *   10~12 名   1万~  9万    羽毛球世锦赛、K甲，还算真赛事
- *   13+   名      <1万      噪音，且有一堆「王者荣耀赛事第一视角7/9/3…」——
- *                            同一场比赛的不同机位，拉进来就是同一内容重复七八条
+ * 默认 3000 来自 2026-08 的赛事区分布：正常官方赛事约 3000~43000，二路直播和
+ * 小型转播多在 1500 以下。它比旧默认 10000 少漏掉 K甲 / PCL / EWC 等真实赛事，
+ * 同时仍能挡掉大部分低热度重复机位。
  *
  * 注意：B 站的「人气」不是真实观看人数，历史上做过量级调整。哪天这个门槛显得
  * 不合理了（大量真赛事被挡掉、或垃圾又漏进来），照上面的方法重新量一次分布再定。
  */
-const MIN_ONLINE = 10000
+export const DEFAULT_MIN_ONLINE = 3000
 
 /**
  * 扫码登录：生成二维码。
@@ -349,22 +346,25 @@ export async function topRoomsOfArea(parentAreaId, count, options) {
     // 只要正好 count 个的话，跳掉几个就不够数了
     page_size: Math.min(count * 2, 50),
   }, options)
-  return selectTopRooms(data, count)
+  return selectTopRooms(data, count, options?.minOnline)
 }
 
 /**
- * 热门榜原始条目 → 房间号数组。滤掉人气低于 MIN_ONLINE 的，再截到 count 个。
+ * 热门榜原始条目 → 房间号数组。滤掉人气低于配置门槛的，再截到 count 个。
  *
  * 抽成纯函数是为了能被测试直接打：过滤那一行删掉之后**不会有任何东西变红**，
  * 只是播放列表里悄悄多出一堆「王者荣耀赛事第一视角7」这种同场比赛的小号机位。
  *
  * @param {Array} rawList 接口返回的 data
- * @param {number} count  上限（不是保证——够格的不足这么多就给这么多）
+ * @param {number} count      上限（不是保证——够格的不足这么多就给这么多）
+ * @param {number} minOnline  最低人气，0 表示不过滤
  */
-export function selectTopRooms(rawList, count) {
+export function selectTopRooms(rawList, count, minOnline = DEFAULT_MIN_ONLINE) {
   const list = Array.isArray(rawList) ? rawList : []
+  const parsedMin = Number(minOnline)
+  const threshold = Number.isFinite(parsedMin) ? Math.max(0, parsedMin) : DEFAULT_MIN_ONLINE
   return list
-    .filter(room => Number(room?.online) >= MIN_ONLINE)
+    .filter(room => Number(room?.online) >= threshold)
     .map(room => Number(room?.roomid))
     .filter(id => Number.isInteger(id) && id > 0)
     .slice(0, Math.max(0, Number(count) || 0))
@@ -538,9 +538,9 @@ export async function resolveRoom(roomRef, options = {}) {
       logo: anchor.avatar || '',
       url,
       opts,
-      groupTitle: sanitizeText(info.area || DEFAULT_GROUP),
+      groupTitle: BILIBILI_GROUP,
     },
-    group: sanitizeText(info.area || DEFAULT_GROUP),
+    group: BILIBILI_GROUP,
     warning: anchor.warning,
     // 归一后的真实房间号。mergeRoomRefs 的去重键是用户填的字面量（URL / 短号 /
     // 短链各长各样），同一间房换个写法就绕过去了——外层要按这个再去一次重。
@@ -604,4 +604,4 @@ export async function mapLimit(items, limit, worker) {
   return results
 }
 
-export { QN_NAMES, DEFAULT_GROUP }
+export { QN_NAMES }

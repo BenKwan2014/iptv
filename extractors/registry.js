@@ -117,9 +117,9 @@ export function validateModule(module) {
     throw new Error(`抓取模块 ${module.id} 声明了 resolve 能力但没实现 resolve()`)
   }
   for (const field of module.configSchema || []) {
-    // select 必须给出可选值，否则校验层无从判断合法性
-    if (field.type === 'select' && !(field.options || []).length) {
-      throw new Error(`抓取模块 ${module.id} 的字段 ${field.key} 声明了 select 但没有 options`)
+    // 单选 / 多选都必须给出可选值，否则校验层无从判断合法性
+    if ((field.type === 'select' || field.type === 'multiselect') && !(field.options || []).length) {
+      throw new Error(`抓取模块 ${module.id} 的字段 ${field.key} 声明了 ${field.type} 但没有 options`)
     }
   }
 }

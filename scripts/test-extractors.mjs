@@ -23,8 +23,8 @@ import { join } from 'node:path'
 
 import { listModules, getModule, sourceIdOf, resolverFor, validateModule, MODULE_ID_RE } from '../extractors/registry.js'
 import { clearUrlCache } from '../utils/appUtils.js'
-import { selectFromPlayurl, parseRoomList, normalizeRoom, mapLimit, selectTopRooms, RoomError } from '../extractors/bilibili-live/api.js'
-import { shouldFailRound, parseAreaNames, mergeRoomRefs } from '../extractors/bilibili-live/index.js'
+import { selectFromPlayurl, parseRoomList, normalizeRoom, mapLimit, selectTopRooms, RoomError, BILIBILI_GROUP, DEFAULT_MIN_ONLINE } from '../extractors/bilibili-live/api.js'
+import { shouldFailRound, parseAreaNames, mergeRoomRefs, groupBilibiliResults } from '../extractors/bilibili-live/index.js'
 import {
   buildChannelGroups as buildGxtvGroups,
   clearStreamCache as clearGxtvStreamCache,
@@ -257,10 +257,25 @@ check('select 字段：只接受 options 里的值，且保留声明的原始类
   assert.match(bad.errors[0].message, /不是可选值/)
 })
 
-check('select 没有 options 会在启动期被拒绝', () => {
+check('multiselect 字段：兼容换行字符串，只接受 options 且至少选一项', () => {
+  const mod = { id: 'probe', configSchema: [{
+    key: 'areas', type: 'multiselect', label: '分区',
+    options: [{ value: '赛事' }, { value: '知识' }, { value: '生活' }],
+  }] }
+  assert.equal(validateConfig(mod, { areas: '赛事\n知识\n赛事' }, {}).config.areas, '赛事\n知识', '应去重并保持提交顺序')
+  assert.equal(validateConfig(mod, { areas: ['生活', '赛事'] }, {}).config.areas, '生活\n赛事', '也兼容数组输入')
+  assert.equal(validateConfig(mod, { areas: '' }, {}).ok, false, '不能保存空选择')
+  assert.equal(validateConfig(mod, { areas: '赛事\n不存在' }, {}).ok, false, '不能保存无效选项')
+  const bad = validateConfig(mod, { areas: '' }, { areas: '知识' })
+  assert.equal(bad.config.areas, '知识', '校验失败时保留原配置')
+})
+
+check('select / multiselect 没有 options 会在启动期被拒绝', () => {
   const withField = (field) => ({ id: 'probe', name: 'probe', fetch: async () => ({}), configSchema: [field] })
   assert.throws(() => validateModule(withField({ key: 'x', type: 'select', label: 'x' })), /没有 options/)
+  assert.throws(() => validateModule(withField({ key: 'x', type: 'multiselect', label: 'x' })), /没有 options/)
   validateModule(withField({ key: 'x', type: 'select', label: 'x', options: [{ value: 1, label: 'a' }] }))
+  validateModule(withField({ key: 'x', type: 'multiselect', label: 'x', options: [{ value: 1, label: 'a' }] }))
 })
 
 check('normalizeGroups 挡住畸形返回，不让一个坏模块搞崩整轮合并', () => {
@@ -762,13 +777,12 @@ try {
     assert.deepEqual(result.results, [])
   })
 
-  await checkAsync('什么都没配（房间清单空 + 热门分区空）：成功但 0 频道，且不联网', async () => {
-    // 注意 topAreas 默认是「赛事」——只清空 rooms 的话模块会去抓热门赛事直播间
-    //（那正是「不用自己找房间号」这个功能的意义），所以这条要测「真的什么都没配」
-    // 必须把 topAreas / topPerArea 也一起清掉。
+  await checkAsync('房间清单空 + 自动抓取关闭：成功但 0 频道，且不联网', async () => {
+    // 多选分区至少保留一个；关闭自动抓取由 topPerArea=0 明确表达。默认分区仍在，
+    // 但数量为 0 时不会发起热门榜请求。
     const manager = newManager()
     manager.setModuleEnabled('bilibili-live', true)
-    manager.updateModuleConfig('bilibili-live', { rooms: '', topAreas: '', topPerArea: 0 })
+    manager.updateModuleConfig('bilibili-live', { rooms: '', topPerArea: 0 })
     const result = await manager.updateAll({ forceAll: true, onlyId: 'bilibili-live' })
     assert.equal(result.results[0].success, true)
     const state = manager.getState()
@@ -1022,8 +1036,8 @@ try {
 
 // ---- 热门直播间自动加入（省去用户自己找房间号）----
 // 存在的理由：不这么做的话，想用 B 站直播就得先去网页上一个个找房间号，那是这个
-// 模块最劝退的一步。默认「赛事」分区 —— B 站的官方赛事转播区，人气比普通直播区高
-// 一个数量级（实测 3921 万 vs 254 万），拿到的就是当前正在打的比赛。
+// 模块最劝退的一步。默认「赛事 + 知识」兼顾官方比赛与新闻 / 教育 / 科普，适合
+// 电视端长时间观看；所有结果仍统一进一个 B站 组。
 
 check('分区名解析：一行一个、去空白、忽略空行与 # 注释', () => {
   assert.deepEqual(parseAreaNames('赛事\n  网游  \n\n# 这行是注释\n手游'), ['赛事', '网游', '手游'])
@@ -1053,6 +1067,24 @@ check('空输入不炸', () => {
   assert.deepEqual(mergeRoomRefs(null, undefined), [])
 })
 
+check('★ B 站不同分区统一归入「B站」组，且真实房间号仍去重', () => {
+  const warnings = []
+  const groups = groupBilibiliResults([
+    { roomId: '1', group: '赛事', channel: { name: '赛事 A', groupTitle: '赛事' } },
+    { roomId: '2', group: '娱乐', channel: { name: '娱乐 B', groupTitle: '娱乐' }, warning: '装饰信息缺失' },
+    { roomId: '1', group: '网游', channel: { name: '重复房间', groupTitle: '网游' } },
+  ], warnings)
+  assert.equal(BILIBILI_GROUP, 'B站')
+  assert.deepEqual(groups, [{
+    name: 'B站',
+    dataList: [
+      { name: '赛事 A', groupTitle: 'B站' },
+      { name: '娱乐 B', groupTitle: 'B站' },
+    ],
+  }])
+  assert.deepEqual(warnings, ['装饰信息缺失'])
+})
+
 check('★ 热门榜滤掉人气过低的房间（否则同一场比赛的多机位小号会灌进播放列表）', () => {
   // 实测赛事区 13 名往后全是「王者荣耀赛事第一视角7/9/3…」这种同场比赛的不同机位，
   // 人气普遍在 1000 上下。删掉过滤那行不会有任何报错，只是播放列表悄悄变脏。
@@ -1063,7 +1095,18 @@ check('★ 热门榜滤掉人气过低的房间（否则同一场比赛的多机
     { roomid: 4, online: 1_836 },       // 「第一视角7」这类
     { roomid: 5, online: 163 },
   ]
-  assert.deepEqual(selectTopRooms(raw, 10), [1, 2, 3], '1 万以下的必须滤掉')
+  assert.deepEqual(selectTopRooms(raw, 10), [1, 2, 3], '默认门槛以下的必须滤掉')
+})
+
+check('热门榜最低人气可配置，0 表示不过滤', () => {
+  const raw = [
+    { roomid: 1, online: 11_000 },
+    { roomid: 2, online: 3_000 },
+    { roomid: 3, online: 1_500 },
+  ]
+  assert.deepEqual(selectTopRooms(raw, 10, 10_000), [1], '可收紧到旧门槛')
+  assert.deepEqual(selectTopRooms(raw, 10, 1_000), [1, 2, 3], '可放宽门槛')
+  assert.deepEqual(selectTopRooms(raw, 10, 0), [1, 2, 3], '0 应关闭人气过滤')
 })
 
 check('数量是上限不是保证：够格的不足就给不足', () => {
@@ -1083,15 +1126,26 @@ check('脏数据不炸：非数组 / 缺字段 / 房间号非法', () => {
   assert.deepEqual(selectTopRooms([{ roomid: 7, online: 999999 }], 0), [], 'count=0 等于关掉')
 })
 
-check('topAreas / topPerArea 已进 configSchema 且默认值符合「开箱即用」', () => {
+check('热门榜配置已进 configSchema 且默认值符合「开箱即用」', () => {
   const schema = bili.configSchema
   const areas = schema.find(f => f.key === 'topAreas')
   const per = schema.find(f => f.key === 'topPerArea')
+  const minOnline = schema.find(f => f.key === 'minOnline')
   assert.ok(areas, 'topAreas 字段丢了')
   assert.ok(per, 'topPerArea 字段丢了')
-  assert.equal(areas.default, '赛事', '默认分区应是「赛事」——开箱即得当前正在打的比赛')
+  assert.ok(minOnline, 'minOnline 字段丢了')
+  assert.equal(areas.type, 'multiselect', '分区应直接勾选，不再依赖用户读说明后手填')
+  assert.deepEqual(areas.options.map(option => option.value), [
+    '赛事', '知识', '生活', '网游', '手游', '单机游戏',
+    '娱乐', '电台', '虚拟主播', '聊天室', '互动玩法', '购物',
+  ])
+  assert.equal(areas.default, '赛事\n知识', '默认分区应兼顾赛事与适合电视端的知识内容')
+  assert.deepEqual(parseAreaNames(areas.default), ['赛事', '知识'])
   assert.equal(per.default, 8, "实测赛事区人气在第 6~7 名有 82% 断崖，5 会漏掉 300 万人在看的比赛")
   assert.equal(per.min, 0, '填 0 必须能关掉这个功能')
+  assert.equal(minOnline.default, DEFAULT_MIN_ONLINE)
+  assert.equal(minOnline.default, 3000, '默认应兼顾正常赛事与低热度重复机位')
+  assert.equal(minOnline.min, 0, '填 0 必须能关闭人气过滤')
 })
 
 check('★ 咪咕：分类全失败判失败保缓存，部分失败/真没频道不误伤', () => {
