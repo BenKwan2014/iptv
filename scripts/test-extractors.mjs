@@ -26,6 +26,20 @@ import { clearUrlCache } from '../utils/appUtils.js'
 import { selectFromPlayurl, parseRoomList, normalizeRoom, mapLimit, selectTopRooms, RoomError, BILIBILI_GROUP, DEFAULT_MIN_ONLINE } from '../extractors/bilibili-live/api.js'
 import { shouldFailRound, parseAreaNames, mergeRoomRefs, groupBilibiliResults } from '../extractors/bilibili-live/index.js'
 import {
+  DEFAULT_MIN_HEAT,
+  HUYA_GROUP,
+  clearResolveCache as clearHuyaResolveCache,
+  normalizeRoom as normalizeHuyaRoom,
+  parseCategoryRooms as parseHuyaCategoryRooms,
+  parseEventRooms as parseHuyaEventRooms,
+  parseRoomList as parseHuyaRoomList,
+  parseRoomPage as parseHuyaRoomPage,
+  resolveRoom as resolveHuyaRoom,
+  selectBitrate as selectHuyaBitrate,
+  signHlsUrl as signHuyaHlsUrl,
+} from '../extractors/huya-live/api.js'
+import { mergeRooms as mergeHuyaRooms, parseAreaNames as parseHuyaAreaNames } from '../extractors/huya-live/index.js'
+import {
   buildChannelGroups as buildGxtvGroups,
   clearStreamCache as clearGxtvStreamCache,
   resolveChannel as resolveGxtvChannel,
@@ -118,6 +132,7 @@ const checkAsync = async (name, fn) => { await fn(); passed++; console.log(`  �
 console.log('抓取模块注册表测试')
 
 const bili = getModule('bilibili-live')
+const huya = getModule('huya-live')
 
 // ---- 注册表 ----
 
@@ -134,6 +149,13 @@ check('sourceId 用 xt: 命名空间，与外部源 ext: / 内置源 bi: 不撞'
   assert.equal(sourceIdOf('bilibili-live'), 'xt:bilibili-live')
   // app.js 的 sourceId 白名单正则要求这个形状
   assert.ok(/^xt:[\w.-]{1,64}$/.test(sourceIdOf('bilibili-live')))
+})
+
+check('虎牙模块已注册，且只认自己的单段播放引用', () => {
+  assert.equal(huya?.id, 'huya-live')
+  assert.equal(resolverFor('huya-660101')?.id, 'huya-live')
+  assert.equal(resolverFor('huya-lpl')?.id, 'huya-live')
+  assert.equal(resolverFor('huya-660101/extra'), null)
 })
 
 check('id 白名单挡住会破坏 EXTINF 属性的字符', () => {
@@ -1202,6 +1224,153 @@ await checkAsync('★ B 站：热门榜获取失败且无手填 → 整轮判失
   // 上一轮频道被覆盖成空且不退避。timeoutMs=1 模拟断网：现在必须抛。
   const config = resolveConfig(bili, {})
   await assert.rejects(() => bili.fetch(config, { timeoutMs: 1 }), /失败/)
+})
+
+// ---- 虎牙直播 ----
+
+const huyaEventHtml = `
+<ul><li class="game-live-item match-live-item" data-gid="1">
+  <a href="https://www.huya.com/660101" class="video-info clickstat">
+    <img class="pic" data-original="//img.example/live.jpg?a=1&amp;b=2" alt="主播的直播">
+  </a>
+  <a href="https://www.huya.com/660101" class="title" title="决赛 &amp; 颁奖">决赛</a>
+  <i class="nick" title="赛事官方">赛事官方</i>
+  <i class="js-num">1.2万</i>
+</li></ul>`
+
+const huyaAntiCode = new URLSearchParams({
+  wsSecret: 'old',
+  wsTime: '6553f100',
+  fm: 'c2FsdF8kMF8kMV8kMl8kMw==',
+  ctype: 'huya_live',
+  fs: 'bgct',
+}).toString()
+
+const huyaPlayerHtml = `
+<script>var hyPlayerConfig = {
+  stream: ${JSON.stringify({
+    data: [{
+      gameLiveInfo: {
+        uid: 123456,
+        profileRoom: 660101,
+        introduction: '虎牙测试直播',
+        nick: '测试主播',
+        screenshot: 'http://img.example/room.jpg',
+        totalCount: 12000,
+      },
+      gameStreamInfoList: [{
+        sStreamName: 'abc',
+        sHlsUrl: 'http://al.hls.huya.com/src',
+        sHlsUrlSuffix: 'm3u8',
+        sHlsAntiCode: huyaAntiCode,
+      }],
+    }],
+    vMultiStreamInfo: [{ iBitRate: 0 }, { iBitRate: 4000 }, { iBitRate: 2000 }, { iBitRate: 500 }],
+  })},
+  other: { nested: true }
+};</script>`
+
+check('虎牙：房间号/地址归一并去重，拒绝外站地址', () => {
+  assert.equal(normalizeHuyaRoom('６６０１０１'), '660101')
+  assert.equal(normalizeHuyaRoom('https://www.huya.com/lpl?from=web'), 'lpl')
+  assert.deepEqual(parseHuyaRoomList('660101\nhttps://www.huya.com/660101\n# 注释\nlpl'), ['660101', 'lpl'])
+  assert.throws(() => normalizeHuyaRoom('https://example.com/660101'), /不是虎牙/)
+})
+
+check('虎牙：赛事卡片解析标题、图片和“万”人气', () => {
+  const rows = parseHuyaEventRooms(huyaEventHtml)
+  assert.equal(rows.length, 1)
+  assert.deepEqual(rows[0], {
+    roomId: '660101',
+    name: '决赛 & 颁奖',
+    nick: '赛事官方',
+    logo: 'https://img.example/live.jpg?a=1&b=2',
+    heat: 12000,
+  })
+})
+
+check('虎牙：普通分类的 ALL_LIST_DATA JSON 可解析并归一频道', () => {
+  const html = `var ALL_LIST_DATA = ${JSON.stringify([{
+    lProfileRoom: 102411,
+    sNick: '神超',
+    sIntroduction: '标题里也可以有 ] 和 }',
+    sScreenshot: 'http://img.example/a.jpg',
+    lTotalCount: 1838540,
+    sGameFullName: '英雄联盟',
+  }])}; var after = true;`
+  const rows = parseHuyaCategoryRooms(html)
+  assert.equal(rows[0].roomId, '102411')
+  assert.equal(rows[0].name, '标题里也可以有 ] 和 }')
+  assert.equal(rows[0].heat, 1838540)
+  assert.equal(rows[0].logo, 'https://img.example/a.jpg')
+})
+
+check('虎牙：播放器配置与画质回落可从房间页稳定提取', () => {
+  const room = parseHuyaRoomPage(huyaPlayerHtml, '660101')
+  assert.equal(room.roomId, '660101')
+  assert.equal(room.presenterUid, '123456')
+  assert.equal(room.logo, 'https://img.example/room.jpg')
+  assert.equal(selectHuyaBitrate(room.bitrates, 2000), 2000)
+  assert.equal(selectHuyaBitrate(room.bitrates, 1000), 500, '缺 1M 时回落到不高于目标的最近档')
+  assert.equal(selectHuyaBitrate(room.bitrates, 0), 0, '0 表示原画')
+})
+
+check('虎牙：官网 H5 签名算法固定样本一致', () => {
+  const room = parseHuyaRoomPage(huyaPlayerHtml, '660101')
+  const signed = new URL(signHuyaHlsUrl(room.streams[0], room.presenterUid, 2000, 1700000000000))
+  assert.equal(signed.protocol, 'https:')
+  assert.equal(signed.pathname, '/src/abc.m3u8')
+  assert.equal(signed.searchParams.get('wsSecret'), '40f4876dcefaa5d837caaf0e35f06997')
+  assert.equal(signed.searchParams.get('seqid'), '1700000000000')
+  assert.equal(signed.searchParams.get('ratio'), '2000')
+  assert.equal(signed.searchParams.get('u'), '123456')
+  assert.equal(signed.searchParams.get('t'), '100')
+  assert.equal(signed.searchParams.get('fm'), null, 'fm 模板不能泄漏到最终播放地址')
+  assert.throws(() => signHuyaHlsUrl({
+    ...room.streams[0],
+    sHlsUrl: 'https://example.com/src',
+  }, room.presenterUid, 2000, 1700000000000), /官方域名/)
+})
+
+check('虎牙：默认配置控制数量与人气，所有频道固定放入虎牙组', () => {
+  const areas = huya.configSchema.find(field => field.key === 'topAreas')
+  assert.equal(areas.type, 'multiselect')
+  assert.deepEqual(areas.options.map(option => option.value), ['赛事', '网游', '手游', '单机', '娱乐'])
+  assert.deepEqual(parseHuyaAreaNames(areas.default), ['赛事'])
+  assert.equal(huya.configSchema.find(field => field.key === 'topPerArea').default, 8)
+  assert.equal(huya.configSchema.find(field => field.key === 'minHeat').default, DEFAULT_MIN_HEAT)
+  assert.equal(huya.configSchema.find(field => field.key === 'quality').default, 2000)
+  assert.deepEqual(mergeHuyaRooms(
+    [{ roomId: '1', name: '手填' }],
+    [{ roomId: '1', name: '重复' }, { roomId: '2', name: '自动' }],
+  ).map(room => room.name), ['手填', '自动'])
+  assert.equal(HUYA_GROUP, '虎牙')
+})
+
+await checkAsync('虎牙：模块抓取赛事卡片，播放时才刷新签名并要求清单中继', async () => {
+  clearHuyaResolveCache()
+  const response = text => ({ ok: true, status: 200, text: async () => text })
+  const config = resolveConfig(huya, {})
+  const fetched = await huya.fetch(config, { fetchImpl: async url => {
+    assert.equal(String(url), 'https://www.huya.com/m')
+    return response(huyaEventHtml)
+  } })
+  assert.equal(fetched.groups[0].name, '虎牙')
+  assert.equal(fetched.groups[0].dataList[0].deferredRef, 'huya-660101')
+  assert.equal(fetched.groups[0].dataList[0].relayHls, true)
+  assert.deepEqual(fetched.groups[0].dataList[0].opts, ['network-caching=3000'])
+
+  const resolved = await resolveHuyaRoom('huya-660101', {
+    now: 1700000000000,
+    config,
+    fetchImpl: async url => {
+      assert.equal(String(url), 'https://www.huya.com/660101')
+      return response(huyaPlayerHtml)
+    },
+  })
+  assert.match(resolved.url, /^https:\/\/al\.hls\.huya\.com\/src\/abc\.m3u8\?/)
+  assert.equal(resolved.relayHls, true)
+  assert.equal(resolved.upstreamHeaders.Referer, 'https://www.huya.com/')
 })
 
 // ---- 广西网络台 / 浙江新蓝网 ----
