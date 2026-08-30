@@ -4,9 +4,10 @@ import { clearCache, resolveChannel } from './resolver.js'
 
 export default {
   id: 'gdtv',
-  name: '广东荔枝网直播',
+  name: '广东',
   description: '广东卫视及地面频道官方直播。自动排除购物频道，播放时无感续签官网短效地址。',
   capabilities: { cache: 'disk', resolve: true, epg: false },
+  outputGroupName: '广东',
   defaultRefreshMinutes: 1440,
   refreshConfigurable: false,
   refreshDescription: '自动管理：频道表随模块版本维护；播放地址在约 45 秒后后台换新，90 秒前强制续签，失败后 10 秒重试。',

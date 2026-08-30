@@ -9,9 +9,10 @@ import {
 
 export default {
   id: 'gxtv',
-  name: '广西网络台直播',
+  name: '广西',
   description: '广西卫视及地面频道官方直播。只收录官网正式频道，自动排除测试流和矩阵号。',
   capabilities: { cache: 'disk', resolve: true, epg: false },
+  outputGroupName: '广西',
   defaultRefreshMinutes: 30,
   refreshConfigurable: false,
   refreshDescription: '自动管理：频道与播放参数每 30 分钟刷新；失败后 1 分钟重试，并沿用上次可用数据。',

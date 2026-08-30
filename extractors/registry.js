@@ -23,6 +23,8 @@
  *   maxRefreshMinutes     number  可选；用户可配置的最大刷新间隔
  *   refreshConfigurable   boolean 可选；false 表示刷新策略由模块自动管理，后台只读
  *   refreshDescription    string  可选；自动刷新策略的后台说明
+ *   outputGroupName       string  可选；播放列表统一分组名，并合并模块原有的多个子组
+ *   preserveGroupSuffixes array   可选；命中这些后缀的特殊分组不被 outputGroupName 覆盖
  *   configSchema          array   字段描述，后台据此渲染表单、后端据此校验
  *
  *   async fetch(config, ctx) → { groups: [{ name, dataList }], meta }

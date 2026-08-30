@@ -10,9 +10,11 @@ import {
 
 export default {
   id: 'kankanews',
-  name: '看看新闻上海电视台',
+  name: '上海',
   description: '东方卫视、新闻综合等 SMG 官方电视直播，以及陆家嘴、外滩等上海景观慢直播。播放时自动验签取流并全代理防盗链请求。',
   capabilities: { cache: 'disk', resolve: true, epg: false },
+  outputGroupName: '上海',
+  preserveGroupSuffixes: ['景观'],
   defaultRefreshMinutes: 240,
   refreshConfigurable: false,
   refreshDescription: '自动管理：频道列表每 240 分钟刷新；播放地址约每 150 秒重新获取，失败后 1 分钟重试。',

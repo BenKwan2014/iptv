@@ -5,9 +5,10 @@ import { clearCache, resolveChannel } from './resolver.js'
 
 export default {
   id: 'hbtv',
-  name: '湖北长江云新闻',
+  name: '湖北',
   description: '湖北卫视、经视、综合、影视、教育、垄上六套官网公开直播；自动处理短效签名与防盗链。',
   capabilities: { cache: 'disk', resolve: true, epg: false },
+  outputGroupName: '湖北',
   defaultRefreshMinutes: 240,
   refreshConfigurable: false,
   refreshDescription: '自动管理：频道表每 240 分钟核对；播放时用匿名浏览器会话刷新短效 HLS，清单与分片全代理。',

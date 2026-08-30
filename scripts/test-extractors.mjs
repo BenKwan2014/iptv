@@ -613,6 +613,24 @@ check('深圳广电模块已注册，固定周期刷新且逐路径签名流必�
   assert.equal(resolverFor('sztv-R77mK1v'), null)
 })
 
+check('省市广电模块卡片只显示地区名，不带平台品牌', () => {
+  const expectedNames = {
+    beidou: '辽宁', cztv: '浙江', fjtv: '福建', gdtv: '广东', gxtv: '广西',
+    gztv: '广州', hbtv: '湖北', hebtv: '河北', hnntv: '海南', hntv: '河南',
+    iqilu: '山东', jstv: '江苏', kankanews: '上海', mgtv: '湖南', njtv: '南京',
+    qtv: '青岛', sztv: '深圳',
+  }
+  const groupOverrides = { gztv: '广东', sztv: '广东' }
+  for (const [id, name] of Object.entries(expectedNames)) {
+    assert.equal(getModule(id)?.name, name, `${id} 卡片标题应只保留地区名`)
+    assert.equal(
+      getModule(id)?.outputGroupName,
+      groupOverrides[id] || name,
+      `${id} 播放列表分组应按地区归类`,
+    )
+  }
+})
+
 check('芒果 TV 模块已注册，固定刷新策略且不暴露技术设置', () => {
   const mgtv = getModule('mgtv')
   assert.ok(mgtv)
@@ -807,6 +825,32 @@ try {
     seed(manager, [{ name: 'G', dataList: [{ name: 'A', url: 'u', opts: ['program=/bin/sh', 'http-referrer=https://x/'] }] }])
     const [channel] = manager.getValidChannels()[0].dataList
     assert.deepEqual(channel.opts, ['http-referrer=https://x/'])
+  })
+
+  check('输出：省市分组与管理卡片同名，旧缓存也立即生效', () => {
+    const manager = newManager()
+    manager.cache.modules.beidou = {
+      groups: [{ name: '辽宁频道', dataList: [{ name: '辽宁卫视', deferredRef: 'beidou-liaoning-1' }] }],
+      health: { status: 'ok' },
+    }
+    manager.cache.modules.gztv = {
+      groups: [{ name: '广州电视台', dataList: [{ name: '广州综合', deferredRef: 'gztv-3001' }] }],
+      health: { status: 'ok' },
+    }
+    manager.cache.modules.sztv = {
+      groups: [{ name: '深圳电视台', dataList: [{ name: '深圳卫视', deferredRef: 'sztv-7867' }] }],
+      health: { status: 'ok' },
+    }
+    manager.cache.modules.kankanews = {
+      groups: [
+        { name: '上海电视台', dataList: [{ name: '上海新闻', deferredRef: 'kankanews-tv-1' }] },
+        { name: '上海景观', dataList: [{ name: '外滩', deferredRef: 'kankanews-scenic-1' }] },
+      ],
+      health: { status: 'ok' },
+    }
+    const groups = manager.getValidChannels()
+    assert.deepEqual(groups.map(group => group.name), ['辽宁', '广东', '上海', '上海景观'])
+    assert.equal(groups.find(group => group.name === '广东').dataList.length, 2)
   })
 
   check('抓取失败时沿用上一轮频道——频道不能静默从播放列表消失', () => {
@@ -2648,7 +2692,7 @@ await checkAsync('深圳：模块取七套官网频道，播放时换 Key 并提
 
   const module = getModule('sztv')
   const result = await module.fetch({}, { fetchImpl })
-  assert.equal(result.groups[0].name, '深圳电视台')
+  assert.equal(result.groups[0].name, '广东')
   assert.deepEqual(result.groups[0].dataList.map(channel => channel.name), [
     '深圳卫视4K', '深圳卫视', '深圳都市', '深圳电视剧', '深圳少儿', '深圳移动电视', '深圳国际',
   ])

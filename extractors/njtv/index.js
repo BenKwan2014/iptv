@@ -3,9 +3,11 @@ import { fetchChannelGroups, SCENIC_CHANNELS, TV_CHANNELS } from './api.js'
 
 export default {
   id: 'njtv',
-  name: '南京牛咔视频直播',
+  name: '南京',
   description: '南京四个电视频道与 Live 南京城市景观官方直播，自动去除重复电视流。',
   capabilities: { cache: 'disk', resolve: false, epg: false },
+  outputGroupName: '南京',
+  preserveGroupSuffixes: ['景观'],
   defaultRefreshMinutes: 360,
   refreshConfigurable: false,
   refreshDescription: '自动管理：每 360 分钟同步南京电视与城市景观页面；单页异常时沿用已核验地址。',

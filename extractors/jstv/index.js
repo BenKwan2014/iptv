@@ -3,9 +3,10 @@ import { buildChannels, clearCache, fetchChannelList, primeChannelCache, resolve
 
 export default {
   id: 'jstv',
-  name: '江苏网络台直播',
+  name: '江苏',
   description: '江苏卫视及地面频道官方直播。播放时自动生成短效签名并代理官网防盗链请求头。',
   capabilities: { cache: 'disk', resolve: true, epg: false },
+  outputGroupName: '江苏',
   defaultRefreshMinutes: 240,
   refreshConfigurable: false,
   refreshDescription: '自动管理：频道列表每 240 分钟刷新；每次播放及清单更新都会重新生成约 3 分钟有效的地址。',

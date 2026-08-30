@@ -3,9 +3,10 @@ import { buildChannels, clearCache, fetchChannelList, resolveChannel } from './a
 
 export default {
   id: 'mgtv',
-  name: '芒果TV直播',
+  name: '湖南',
   description: '湖南广电及长沙频道官方直播。自动排除购物频道并选择官网当前最高画质。',
   capabilities: { cache: 'disk', resolve: true, epg: false },
+  outputGroupName: '湖南',
   defaultRefreshMinutes: 240,
   refreshConfigurable: false,
   refreshDescription: '自动管理：频道列表每 240 分钟刷新；播放地址每 60 分钟提前换新，失败后 1 分钟重试并沿用未过期地址。',

@@ -3,9 +3,10 @@ import { buildChannels, clearCache, fetchChannelList, primeChannelCache, resolve
 
 export default {
   id: 'hebtv',
-  name: '河北冀时直播',
+  name: '河北',
   description: '河北广播电视台当前六套非购物电视频道直播，含河北卫视及五个地面频道。播放时自动续签。',
   capabilities: { cache: 'disk', resolve: true, epg: false },
+  outputGroupName: '河北',
   defaultRefreshMinutes: 240,
   refreshConfigurable: false,
   refreshDescription: '自动管理：频道列表每 240 分钟刷新；播放地址在请求时生成约两小时有效的官网签名。',

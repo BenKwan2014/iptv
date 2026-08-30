@@ -81,7 +81,7 @@ await checkAsync('广州：模块抓频道后预热签名缓存，播放不会�
   }
   const module = getModule('gztv')
   const result = await module.fetch({}, { fetchImpl, now: 1720000000000 })
-  assert.equal(result.groups[0].name, '广州电视台')
+  assert.equal(result.groups[0].name, '广东')
   assert.equal(result.groups[0].dataList.length, 3)
   const resolved = await resolveGztvChannel('gztv-3001', {
     fetchImpl: async () => { throw new Error('一分钟缓存内不该联网') },

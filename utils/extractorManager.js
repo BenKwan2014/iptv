@@ -866,7 +866,14 @@ class ExtractorManager {
       // 会让那些设置一次性失配。
       const sourceId = module.sourceId || sourceIdOf(module.id)
       for (const group of this.#cacheEntry(module.id).groups) {
-        const name = group?.name || module.name
+        // 模块更名分组后，抓取失败会继续沿用旧磁盘缓存。输出时先做别名
+        // 迁移，避免用户必须等平台下一次成功才能看到新分组名。
+        const cachedName = group?.name || module.name
+        const preserveName = (module.preserveGroupSuffixes || [])
+          .some(suffix => cachedName.endsWith(suffix))
+        const name = preserveName
+          ? cachedName
+          : module.outputGroupName || cachedName
         if (!groupMap.has(name)) groupMap.set(name, { name, dataList: [] })
         for (const channel of group?.dataList || []) {
           if (!channel?.name) continue

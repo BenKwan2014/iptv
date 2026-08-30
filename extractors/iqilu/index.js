@@ -9,9 +9,10 @@ import {
 
 export default {
   id: 'iqilu',
-  name: '山东齐鲁网直播',
+  name: '山东',
   description: '山东卫视及八个地面频道官方直播。播放时自动完成官网 AES 鉴权并获取最新地址。',
   capabilities: { cache: 'disk', resolve: true, epg: false },
+  outputGroupName: '山东',
   defaultRefreshMinutes: 240,
   refreshConfigurable: false,
   refreshDescription: '自动管理：频道页每 240 分钟刷新；播放地址按频道缓存 30 分钟，失败后短暂重试。',

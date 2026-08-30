@@ -72,9 +72,10 @@ function validateHaiboGroups(rows, groups) {
 
 export default {
   id: 'fjtv',
-  name: '福建电视台',
+  name: '福建',
   description: '福建省级频道与重点城市官方直播；福州、厦门线路独立于海博接口，自动探测后并入现有福建分组。',
   capabilities: { cache: 'disk', resolve: true, epg: false },
+  outputGroupName: '福建',
   defaultRefreshMinutes: 360,
   refreshConfigurable: false,
   refreshDescription: '自动管理：每 360 分钟刷新海博频道表及福州、厦门官方 HLS；单个平台失败时保留其它平台的可用频道。',

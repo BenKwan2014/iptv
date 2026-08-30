@@ -11,11 +11,11 @@ const STREAM_TTL_SECONDS = 30 * 60
 // 不是用户凭据，但属于可能随客户端版本调整的平台实现参数。
 export const TENANTS = [
   {
-    id: 'liaoning', label: '辽宁省台', group: '辽宁频道', host: 'bdrm.bdy.lnyun.com.cn', tabId: 3,
+    id: 'liaoning', label: '辽宁省台', group: '辽宁', host: 'bdrm.bdy.lnyun.com.cn', tabId: 3,
     streamHost: 'bdrmtvzb.lnyun.com.cn', pullKey: 'MbLqEBSNY8Di3WFP', cdnReferer: 'http://dggb.bdy.lnyun.com.cn',
   },
   {
-    id: 'shenyang', label: '沈阳台', group: '辽宁频道', host: 'sygbdst.bdy.lnyun.com.cn', tabId: 2,
+    id: 'shenyang', label: '沈阳台', group: '辽宁', host: 'sygbdst.bdy.lnyun.com.cn', tabId: 2,
     streamHost: 'sygbdsttvzb.lnyun.com.cn', pullKey: 'qjW8YviEH1t3z8s6', cdnReferer: 'http://doxe.bdy.lnyun.com.cn',
   },
 ]

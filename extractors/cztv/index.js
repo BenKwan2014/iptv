@@ -3,9 +3,10 @@ import { buildChannels, clearPlayInfoCache, fetchChannelList, resolveChannel } f
 
 export default {
   id: 'cztv',
-  name: '浙江新蓝网直播',
+  name: '浙江',
   description: '浙江卫视及地面频道官方直播。播放时即时选择码率并生成有效地址。',
   capabilities: { cache: 'disk', resolve: true, epg: false },
+  outputGroupName: '浙江',
   defaultRefreshMinutes: 240,
   refreshConfigurable: false,
   refreshDescription: '自动管理：频道列表每 240 分钟刷新；播放签名约 5 分钟更新，CDN 节点约 15 秒重新评估，失败后 1 分钟重试。',

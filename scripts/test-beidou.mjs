@@ -45,12 +45,12 @@ check('短签名格式、过期时间和摘要稳定', () => {
   assert.throws(() => signStreamUrl('https://evil.example/live.m3u8', 'liaoning', 1_700_000_000_000), /不是该北斗融媒租户/)
 })
 
-check('省台与沈阳台合并进辽宁频道，并固定走全代理', () => {
+check('省台与沈阳台合并进辽宁，并固定走全代理', () => {
   const groups = buildChannelGroups([
     { id: 'c077b260424404846285cba1e1759280', tenantId: 'liaoning', name: '辽宁卫视', url: 'x', logo: '' },
     { id: 'd447fcc472f14c7f14872d4e26b12d8f', tenantId: 'shenyang', name: '沈阳新闻综合', url: 'y', logo: '' },
   ])
-  assert.deepEqual(groups.map(group => group.name), ['辽宁频道'])
+  assert.deepEqual(groups.map(group => group.name), ['辽宁'])
   assert.deepEqual(groups[0].dataList.map(channel => channel.name), ['辽宁卫视', '沈阳新闻综合'])
   assert.ok(groups.every(group => group.dataList.every(channel => channel.proxyHls === true)))
 })

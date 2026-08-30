@@ -3,9 +3,10 @@ import { buildChannels, clearCache, fetchChannelList, primeChannelCache, resolve
 
 export default {
   id: 'gztv',
-  name: '广州花城+直播',
+  name: '广州',
   description: '广州综合、新闻与南国都市三路官方直播；播放时自动换取官网最新签名地址。',
   capabilities: { cache: 'disk', resolve: true, epg: false },
+  outputGroupName: '广东',
   defaultRefreshMinutes: 240,
   refreshConfigurable: false,
   refreshDescription: '自动管理：频道表每 240 分钟同步；播放地址按分钟短缓存并自动换新。',
@@ -17,7 +18,7 @@ export default {
     primeChannelCache(rows, ctx.now ?? Date.now())
     const channels = buildChannels(rows)
     if (channels.length !== 3) throw new Error(`花城+只找到 ${channels.length}/3 个正式频道（接口可能已改版）`)
-    return { groups: [{ name: '广州电视台', dataList: channels }], meta: { skipped: [], warnings: [] } }
+    return { groups: [{ name: '广东', dataList: channels }], meta: { skipped: [], warnings: [] } }
   },
 
   claimsRef: ref => /^gztv-300[1-3]$/.test(String(ref || '')),

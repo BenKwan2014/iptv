@@ -5,9 +5,10 @@ const REGIONS = TENANTS.map(tenant => tenant.id)
 
 export default {
   id: 'beidou',
-  name: '辽宁北斗融媒直播',
+  name: '辽宁',
   description: '北斗融媒官方辽宁省台与沈阳台直播；固定排除购物频道，只收录当前确认为 live 的频道。',
   capabilities: { cache: 'disk', resolve: true, epg: false },
+  outputGroupName: '辽宁',
   defaultRefreshMinutes: 10,
   refreshConfigurable: false,
   refreshDescription: '自动管理：每 10 分钟核对 live/replay 状态；播放时生成 30 分钟短签名，清单与分片经本机代理。',

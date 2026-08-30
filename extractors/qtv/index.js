@@ -3,9 +3,11 @@ import { fetchChannels, QTV_CHANNELS } from './api.js'
 
 export default {
   id: 'qtv',
-  name: '青岛蓝睛城市直播',
+  name: '青岛',
   description: '五四广场、奥帆中心及三路主干道官方城市直播。',
   capabilities: { cache: 'disk', resolve: false, epg: false },
+  outputGroupName: '青岛',
+  preserveGroupSuffixes: ['景观'],
   defaultRefreshMinutes: 360,
   refreshConfigurable: false,
   refreshDescription: '自动管理：每 360 分钟刷新五个城市直播页面；单页异常时沿用该路已核验地址。',
