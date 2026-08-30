@@ -40,6 +40,20 @@ import {
 } from '../extractors/huya-live/api.js'
 import { mergeRooms as mergeHuyaRooms, parseAreaNames as parseHuyaAreaNames } from '../extractors/huya-live/index.js'
 import {
+  ANONYMOUS_DID,
+  DEFAULT_MIN_HEAT as DEFAULT_DOUYU_MIN_HEAT,
+  DOUYU_GROUP,
+  clearResolveCache as clearDouyuResolveCache,
+  createMobileSign as createDouyuMobileSign,
+  isOfficialStreamUrl as isOfficialDouyuStreamUrl,
+  normalizeCategoryPayload as normalizeDouyuCategoryPayload,
+  normalizeRoom as normalizeDouyuRoom,
+  parseMobileRoomPage as parseDouyuMobileRoomPage,
+  parseRoomList as parseDouyuRoomList,
+  resolveRoom as resolveDouyuRoom,
+} from '../extractors/douyu-live/api.js'
+import { mergeRooms as mergeDouyuRooms, parseAreaNames as parseDouyuAreaNames } from '../extractors/douyu-live/index.js'
+import {
   buildChannelGroups as buildGxtvGroups,
   clearStreamCache as clearGxtvStreamCache,
   resolveChannel as resolveGxtvChannel,
@@ -133,6 +147,7 @@ console.log('抓取模块注册表测试')
 
 const bili = getModule('bilibili-live')
 const huya = getModule('huya-live')
+const douyu = getModule('douyu-live')
 
 // ---- 注册表 ----
 
@@ -156,6 +171,13 @@ check('虎牙模块已注册，且只认自己的单段播放引用', () => {
   assert.equal(resolverFor('huya-660101')?.id, 'huya-live')
   assert.equal(resolverFor('huya-lpl')?.id, 'huya-live')
   assert.equal(resolverFor('huya-660101/extra'), null)
+})
+
+check('斗鱼模块已注册，且只认自己的数字播放引用', () => {
+  assert.equal(douyu?.id, 'douyu-live')
+  assert.equal(resolverFor('douyu-9999')?.id, 'douyu-live')
+  assert.equal(resolverFor('douyu-room')?.id, undefined)
+  assert.equal(resolverFor('douyu-9999/extra'), null)
 })
 
 check('id 白名单挡住会破坏 EXTINF 属性的字符', () => {
@@ -1371,6 +1393,141 @@ await checkAsync('虎牙：模块抓取赛事卡片，播放时才刷新签名�
   assert.match(resolved.url, /^https:\/\/al\.hls\.huya\.com\/src\/abc\.m3u8\?/)
   assert.equal(resolved.relayHls, true)
   assert.equal(resolved.upstreamHeaders.Referer, 'https://www.huya.com/')
+})
+
+// ---- 斗鱼直播 ----
+
+const douyuSignerCode = `
+var signerPadding = '${'x'.repeat(120)}';
+function ub98484234(rid, did, tt) {
+  return 'v=250120260830&did=' + did + '&tt=' + tt
+    + '&sign=' + CryptoJS.MD5(String(rid) + did + String(tt)).toString();
+}`
+
+const douyuMobileHtml = `<html><body>
+<script id="vike_pageContext" type="application/json">${JSON.stringify({
+  pageProps: { room: { roomInfo: { roomInfo: {
+    rid: 9999,
+    roomName: '陪伴每一天',
+    nickname: '测试主播',
+    avatar: 'https://img.example/avatar.jpg',
+    roomSrcSixteen: 'https://img.example/cover.jpg',
+    hn: '123.4万',
+    isLive: 1,
+  } } } },
+  crptext: douyuSignerCode,
+})}</script></body></html>`
+
+const douyuCategoryPayload = {
+  code: 0,
+  msg: 'success',
+  data: { rl: [
+    { rid: 9999, rn: '第一名', nn: '主播甲', ol: 2300000, rs16: '//img.example/1.jpg', c2name: 'DOTA2' },
+    { rid: 1234, rn: '第二名', nn: '主播乙', ol: 90000, rs16: 'https://img.example/2.jpg', c2name: '英雄联盟' },
+    { rid: 0, rn: '无效推荐位', ol: 9999999 },
+  ] },
+}
+
+check('斗鱼：房间号、PC/手机/分享地址归一并去重，拒绝外站地址', () => {
+  assert.equal(normalizeDouyuRoom('９９９９'), '9999')
+  assert.equal(normalizeDouyuRoom('https://www.douyu.com/9999?dyshid=1'), '9999')
+  assert.equal(normalizeDouyuRoom('https://m.douyu.com/9999'), '9999')
+  assert.equal(normalizeDouyuRoom('https://www.douyu.com/room/share/171717'), '171717')
+  assert.deepEqual(parseDouyuRoomList('9999\nhttps://www.douyu.com/9999\n# 注释\n1234'), ['9999', '1234'])
+  assert.throws(() => normalizeDouyuRoom('https://example.com/9999'), /不是斗鱼/)
+})
+
+check('斗鱼：官方分类接口字段归一，跳过占位卡片并保留官网人气', () => {
+  const rows = normalizeDouyuCategoryPayload(douyuCategoryPayload)
+  assert.equal(rows.length, 2)
+  assert.deepEqual(rows[0], {
+    roomId: '9999',
+    name: '第一名',
+    nick: '主播甲',
+    logo: 'https://img.example/1.jpg',
+    heat: 2300000,
+    category: 'DOTA2',
+  })
+})
+
+check('斗鱼：移动官网房间数据和动态匿名签名可在受限上下文解析', () => {
+  const room = parseDouyuMobileRoomPage(douyuMobileHtml, '9999')
+  assert.equal(room.roomId, '9999')
+  assert.equal(room.name, '陪伴每一天')
+  assert.equal(room.heat, 1234000)
+  const signed = createDouyuMobileSign(douyuSignerCode, room.roomId, ANONYMOUS_DID, 1700000000)
+  assert.equal(signed.get('v'), '250120260830')
+  assert.equal(signed.get('did'), ANONYMOUS_DID)
+  assert.equal(signed.get('tt'), '1700000000')
+  assert.equal(signed.get('sign'), createHash('md5').update(`9999${ANONYMOUS_DID}1700000000`).digest('hex'))
+  assert.throws(() => createDouyuMobileSign('function ub98484234(){}', '9999'), /不完整/)
+})
+
+check('斗鱼：只接受官方 CDN 的 HLS 地址', () => {
+  assert.equal(isOfficialDouyuStreamUrl('http://openhls-hw.douyucdn2.cn/live/a.m3u8?token=x'), true)
+  assert.equal(isOfficialDouyuStreamUrl('https://stream.example.com/live/a.m3u8'), false)
+  assert.equal(isOfficialDouyuStreamUrl('https://openhls-hw.douyucdn2.cn/live/a.flv'), false)
+})
+
+check('斗鱼：默认配置控制分类、数量、人气与画质，所有频道固定放入斗鱼组', () => {
+  const areas = douyu.configSchema.find(field => field.key === 'topAreas')
+  assert.equal(areas.type, 'multiselect')
+  assert.deepEqual(areas.options.map(option => option.value), ['全部', '网游竞技', '单机热游', '手游休闲', '娱乐'])
+  assert.deepEqual(parseDouyuAreaNames(areas.default), ['网游竞技'])
+  assert.equal(douyu.configSchema.find(field => field.key === 'topPerArea').default, 8)
+  assert.equal(douyu.configSchema.find(field => field.key === 'minHeat').default, DEFAULT_DOUYU_MIN_HEAT)
+  assert.equal(douyu.configSchema.find(field => field.key === 'quality').default, 3)
+  assert.deepEqual(mergeDouyuRooms(
+    [{ roomId: '1', name: '手填' }],
+    [{ roomId: '1', name: '重复' }, { roomId: '2', name: '自动' }],
+  ).map(room => room.name), ['手填', '自动'])
+  assert.equal(DOUYU_GROUP, '斗鱼')
+})
+
+await checkAsync('斗鱼：模块抓取分类热门房间，播放时匿名刷新短效 HLS 并要求清单中继', async () => {
+  clearDouyuResolveCache()
+  const config = resolveConfig(douyu, {})
+  const fetched = await douyu.fetch(config, { fetchImpl: async url => {
+    assert.equal(String(url), 'https://www.douyu.com/gapi/rkc/directory/mixListV1/1_1/1')
+    return { ok: true, status: 200, json: async () => douyuCategoryPayload }
+  } })
+  assert.equal(fetched.groups[0].name, '斗鱼')
+  assert.equal(fetched.groups[0].dataList.length, 1, '默认 10 万人气应过滤第二条')
+  assert.equal(fetched.groups[0].dataList[0].deferredRef, 'douyu-9999')
+  assert.equal(fetched.groups[0].dataList[0].relayHls, true)
+  assert.deepEqual(fetched.groups[0].dataList[0].opts, ['network-caching=3000'])
+
+  let calls = 0
+  const resolved = await resolveDouyuRoom('douyu-9999', {
+    now: 1700000000000,
+    config,
+    fetchImpl: async (url, options = {}) => {
+      calls++
+      if (calls === 1) {
+        assert.equal(String(url), 'https://m.douyu.com/9999')
+        return { ok: true, status: 200, text: async () => douyuMobileHtml }
+      }
+      assert.equal(String(url), 'https://m.douyu.com/hgapi/livenc/room/getStreamUrl')
+      assert.equal(options.method, 'POST')
+      const body = new URLSearchParams(String(options.body))
+      assert.equal(body.get('rid'), '9999')
+      assert.equal(body.get('rate'), '3')
+      assert.equal(body.get('did'), ANONYMOUS_DID)
+      return { ok: true, status: 200, json: async () => ({
+        error: 0,
+        data: {
+          settings: [{ name: '超清', rate: 3 }],
+          rate: 3,
+          pass: 0,
+          url: 'http://openhls-hw.douyucdn2.cn/live/test_2000.m3u8?txSecret=abc',
+        },
+      }) }
+    },
+  })
+  assert.equal(resolved.url, 'https://openhls-hw.douyucdn2.cn/live/test_2000.m3u8?txSecret=abc')
+  assert.match(resolved.desc, /超清地址获取成功/)
+  assert.equal(resolved.relayHls, true)
+  assert.equal(resolved.upstreamHeaders.Referer, 'https://m.douyu.com/')
 })
 
 // ---- 广西网络台 / 浙江新蓝网 ----
