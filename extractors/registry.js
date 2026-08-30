@@ -79,6 +79,7 @@ import beidou from './beidou/index.js'
 import cztv from './cztv/index.js'
 import fjtv from './fjtv/index.js'
 import gdtv from './gdtv/index.js'
+import gztv from './gztv/index.js'
 import gxtv from './gxtv/index.js'
 import hebtv from './hebtv/index.js'
 import hbtv from './hbtv/index.js'
@@ -89,6 +90,8 @@ import iqilu from './iqilu/index.js'
 import kankanews from './kankanews/index.js'
 import mgtv from './mgtv/index.js'
 import migu from './migu/index.js'
+import njtv from './njtv/index.js'
+import qtv from './qtv/index.js'
 import sztv from './sztv/index.js'
 
 // 模块 id 会进 sourceId 并写进 EXTINF 属性值，不消毒就是注入面。
@@ -101,6 +104,7 @@ const MODULES = [
   bilibiliLive,
   beidou,
   gdtv,
+  gztv,
   gxtv,
   fjtv,
   hebtv,
@@ -111,6 +115,8 @@ const MODULES = [
   jstv,
   iqilu,
   sztv,
+  njtv,
+  qtv,
   kankanews,
   mgtv,
 ]
