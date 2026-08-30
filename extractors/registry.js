@@ -73,6 +73,7 @@
  * `xt:` 这个前缀格式是注册表层的事，模块不该知道。
  */
 import bilibiliLive from './bilibili-live/index.js'
+import beidou from './beidou/index.js'
 import cztv from './cztv/index.js'
 import fjtv from './fjtv/index.js'
 import gdtv from './gdtv/index.js'
@@ -95,6 +96,7 @@ const MODULES = [
   // 顺序即后台展示顺序，也是 channelMerger 的合并顺序（先到的分组优先保留）
   migu,
   bilibiliLive,
+  beidou,
   gdtv,
   gxtv,
   fjtv,
