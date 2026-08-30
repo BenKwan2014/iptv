@@ -45,7 +45,26 @@ function dedupeAllChannels(allChannels) {
   return removed
 }
 
-// 地方官方模块的少儿频道统一收到「少儿」组。部分频道
+/** 「纪实」改名为「文旅」，并合并已经使用新名的其它来源。 */
+function normalizeContentGroupNames(groups) {
+  const output = []
+  const byName = new Map()
+  for (const group of Array.isArray(groups) ? groups : []) {
+    const name = group?.name === '纪实' ? '文旅' : group?.name
+    const channels = Array.isArray(group?.dataList) ? group.dataList : []
+    const existing = byName.get(name)
+    if (existing) {
+      existing.dataList.push(...channels)
+      continue
+    }
+    const normalized = { ...group, name, dataList: [...channels] }
+    byName.set(name, normalized)
+    output.push(normalized)
+  }
+  return output
+}
+
+// 地方官方模块的少儿频道在保留省份归属的同时，也收到「少儿」组。部分频道
 // 名字不带「少儿 / 卡通 / 动漫」，需要明确补入，避免漏分。
 const LOCAL_KIDS_EXACT_NAMES = new Set(['哈哈炫动'])
 
@@ -232,6 +251,10 @@ async function getAllChannels() {
       }
     })
 
+    // 平台历史名「纪实」统一显示为「文旅」，外部精选频道
+    // 也合并到同一组，避免新旧名并存。
+    allChannels = normalizeContentGroupNames(allChannels)
+
     // 内容型分组按频道性质统一：地方少儿 / 教育频道分别移入
     // 「少儿」/「教育」，且在同台多源时优先地方官方线路。
     allChannels = consolidateLocalKidsChannels(allChannels)
@@ -358,6 +381,7 @@ export {
   builtInSourceManager,
   dedupeAllChannels,
   primarySourceId,
+  normalizeContentGroupNames,
   consolidateLocalKidsChannels,
   consolidateLocalEducationChannels
 }

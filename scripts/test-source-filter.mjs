@@ -21,6 +21,7 @@ import {
   consolidateLocalEducationChannels,
   consolidateLocalKidsChannels,
   dedupeAllChannels,
+  normalizeContentGroupNames,
   primarySourceId,
 } from '../utils/channelMerger.js'
 import { applyConfig } from '../utils/playlistConfig.js'
@@ -68,6 +69,19 @@ check('dedupeAllChannels：重复频道归属并入保留者 sourceIds', () => {
   const migu = groups[0].dataList.find(c => c.pID)
   assert.equal(primarySourceId(migu), 'migu')                 // 咪咕隐式识别
   assert.deepEqual(migu.sourceIds, ['migu'])                  // 同源重复归并为单元素集合（与写盘回退主来源等价）
+})
+
+check('纪实统一更名为文旅，并与已用新名的来源合并', () => {
+  const input = [
+    { name: '纪实', dataList: [{ name: '中华特产', sourceId: 'migu' }] },
+    { name: '文旅', dataList: [{ name: 'WildEarth', sourceId: 'ext:a' }] },
+    { name: '新闻', dataList: [{ name: '中国天气', sourceId: 'migu' }] },
+  ]
+  const before = JSON.stringify(input)
+  const output = normalizeContentGroupNames(input)
+  assert.deepEqual(output.map(group => group.name), ['文旅', '新闻'])
+  assert.deepEqual(output[0].dataList.map(channel => channel.name), ['中华特产', 'WildEarth'])
+  assert.equal(JSON.stringify(input), before, '不应修改输入分组')
 })
 
 check('地方少儿频道同时归入少儿组，地方组仍保留且同台优先官方源', () => {

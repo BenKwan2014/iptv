@@ -103,6 +103,10 @@ export const MIGU_LOCAL_REASSIGNMENTS = Object.freeze({
 // 中国天气是明确保留项，不在此表。
 export const MIGU_CHANNEL_EXCLUSIONS = new Set([
   '公共新闻频道',
+  '新动力量创一流',
+  '梨园频道',
+  '海南广播电视总台社会与法频道',
+  '海南广播电视总台文旅频道',
   '淮安新闻综合',
   '宿迁新闻综合',
   '徐州新闻综合',

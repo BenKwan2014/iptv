@@ -30,7 +30,7 @@ const DEFAULT_PROFILE = { id: 'default', name: '默认' }
 // groupOrder，下方 applyConfig 仍以用户顺序为最终优先级。
 export const DEFAULT_GROUP_ORDER = [
   '体育', '体育-昨天', '体育-今天', '体育-明天',
-  '央视', '卫视', '亚太', '新闻', '影视', '少儿', '教育', '综艺', '纪实',
+  '央视', '卫视', '亚太', '新闻', '影视', '少儿', '教育', '综艺', '文旅',
   'B站', '虎牙', '斗鱼',
 ]
 
@@ -470,9 +470,15 @@ export function applyConfig(groups, config) {
     
     // 5. 应用分组排序
     if (config.groupOrder && config.groupOrder.length > 0) {
+      const configuredIndex = name => {
+        const direct = config.groupOrder.indexOf(name)
+        // 「纪实」已更名为「文旅」；旧配置档不需重新拖拽也能沿用原位置。
+        if (direct === -1 && name === '文旅') return config.groupOrder.indexOf('纪实')
+        return direct
+      }
       result.sort((a, b) => {
-        const indexA = config.groupOrder.indexOf(a.name)
-        const indexB = config.groupOrder.indexOf(b.name)
+        const indexA = configuredIndex(a.name)
+        const indexB = configuredIndex(b.name)
         
         // 如果都在排序列表中，按列表顺序
         if (indexA !== -1 && indexB !== -1) {

@@ -150,6 +150,23 @@ check('咪咕综艺分组整组移除', () => {
   ])
 })
 
+check('文旅精简会剔除专题轮播和已有地方官方源的副本', () => {
+  const documentary = {
+    name: '纪实',
+    dataList: [
+      { pID: '1', name: '新动力量创一流' },
+      { pID: '2', name: '中华特产' },
+      { pID: '3', name: '环球旅游' },
+      { pID: '4', name: '梨园频道' },
+      { pID: '5', name: '海南广播电视总台社会与法频道' },
+      { pID: '6', name: '海南广播电视总台文旅频道' },
+    ],
+  }
+  assert.deepEqual(shape(redistributeMiguLocalChannels([documentary])), [
+    ['纪实', ['2', '3']],
+  ])
+})
+
 check('重分组会合并已有地区组，且不修改输入', () => {
   const input = [
     { name: '上海', dataList: [{ pID: '1', name: '旧频道' }] },
