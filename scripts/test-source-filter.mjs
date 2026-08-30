@@ -17,7 +17,12 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ensureSourceIds, inheritExistingSourceIds } from '../utils/externalSources.js'
-import { consolidateLocalKidsChannels, dedupeAllChannels, primarySourceId } from '../utils/channelMerger.js'
+import {
+  consolidateLocalEducationChannels,
+  consolidateLocalKidsChannels,
+  dedupeAllChannels,
+  primarySourceId,
+} from '../utils/channelMerger.js'
 import { applyConfig } from '../utils/playlistConfig.js'
 
 for (const k of ['log', 'info', 'warn']) {
@@ -110,6 +115,39 @@ check('原本没有少儿组时自动创建，并放在地方分组之前', () =
   ])
   assert.deepEqual(output.map(group => group.name), ['新闻', '少儿'])
   assert.deepEqual(output[1].dataList.map(channel => channel.name), ['浙江少儿'])
+})
+
+check('地方教育频道统一移入教育组，同台优先地方官方源', () => {
+  const input = [
+    { name: '教育', dataList: [
+      { name: '江苏教育', pID: 'm1' },
+      { name: '山东教育', pID: 'm2' },
+    ] },
+    { name: '纪实', dataList: [{ name: '南京教科频道', pID: 'm3' }] },
+    { name: '江苏', dataList: [
+      { name: '江苏教育', sourceId: 'xt:jstv' },
+      { name: '江苏新闻', sourceId: 'xt:jstv' },
+    ] },
+    { name: '湖北', dataList: [{ name: '湖北教育', sourceId: 'xt:hbtv' }] },
+    { name: '南京', dataList: [{ name: '南京教育科技', sourceId: 'xt:njtv' }] },
+    { name: '辽宁', dataList: [{ name: '辽宁教育青少', sourceId: 'xt:beidou' }] },
+    { name: '河北', dataList: [{ name: '河北少儿科教', sourceId: 'xt:hebtv' }] },
+    { name: '央视', dataList: [{ name: 'CCTV10科教', sourceId: 'migu' }] },
+  ]
+  const before = JSON.stringify(input)
+  const output = consolidateLocalEducationChannels(input)
+  const education = output.find(group => group.name === '教育').dataList
+
+  assert.deepEqual(education.map(channel => channel.name), [
+    '江苏教育', '山东教育', '湖北教育', '南京教育科技', '辽宁教育青少',
+  ])
+  assert.equal(education.find(channel => channel.name === '江苏教育').sourceId, 'xt:jstv')
+  assert.equal(education.find(channel => channel.name === '南京教育科技').sourceId, 'xt:njtv')
+  assert.equal(output.some(group => group.dataList.some(channel => channel.name === '南京教科频道')), false)
+  assert.deepEqual(output.find(group => group.name === '江苏').dataList.map(channel => channel.name), ['江苏新闻'])
+  assert.equal(output.find(group => group.name === '河北').dataList[0].name, '河北少儿科教')
+  assert.equal(output.find(group => group.name === '央视').dataList[0].name, 'CCTV10科教')
+  assert.equal(JSON.stringify(input), before, '不应修改输入分组')
 })
 
 // 3) applyConfig disabledSources 语义

@@ -65,43 +65,50 @@ function kidsChannelKey(channel) {
 }
 
 /**
- * 把地方分组的少儿频道移入「少儿」；如果已有同名/同台条目，
- * 用地方官方源原位替换并去掉重复。返回新分组，不修改输入。
+ * 把符合条件的地方频道收入内容分组；如果其它分组已有同台条目，
+ * 用地方官方源替换并去掉重复。返回新分组，不修改输入。
  */
-function consolidateLocalKidsChannels(groups) {
+function consolidateLocalChannels(groups, { targetGroup, matches, keyOf }) {
   const output = (Array.isArray(groups) ? groups : []).map(group => ({
     ...group,
     dataList: [...(Array.isArray(group?.dataList) ? group.dataList : [])],
   }))
-  const localKids = []
+  const localChannels = []
 
   for (const group of output) {
     if (!isLocalGroup(group.name)) continue
     group.dataList = group.dataList.filter(channel => {
-      if (!isKidsChannel(channel)) return true
-      localKids.push(channel)
+      if (!matches(channel)) return true
+      localChannels.push(channel)
       return false
     })
   }
-  if (!localKids.length) return output
+  if (!localChannels.length) return output
 
   const preferred = new Map()
-  for (const channel of localKids) {
-    const key = kidsChannelKey(channel)
+  for (const channel of localChannels) {
+    const key = keyOf(channel)
     if (key && !preferred.has(key)) preferred.set(key, channel)
   }
 
-  let kidsGroup = output.find(group => group.name === '少儿')
-  if (!kidsGroup) {
-    kidsGroup = { name: '少儿', dataList: [] }
+  // 同台可能被平台放在其它分类（如「南京教科频道」在纪实），
+  // 不能只查目标组，否则重复源会换个分组继续存在。
+  for (const group of output) {
+    if (group.name === targetGroup) continue
+    group.dataList = group.dataList.filter(channel => !preferred.has(keyOf(channel)))
+  }
+
+  let contentGroup = output.find(group => group.name === targetGroup)
+  if (!contentGroup) {
+    contentGroup = { name: targetGroup, dataList: [] }
     const firstLocal = output.findIndex(group => isLocalGroup(group.name))
-    output.splice(firstLocal >= 0 ? firstLocal : output.length, 0, kidsGroup)
+    output.splice(firstLocal >= 0 ? firstLocal : output.length, 0, contentGroup)
   }
 
   const placedPreferred = new Set()
   const merged = []
-  for (const channel of kidsGroup.dataList) {
-    const key = kidsChannelKey(channel)
+  for (const channel of contentGroup.dataList) {
+    const key = keyOf(channel)
     const local = preferred.get(key)
     if (!local) {
       merged.push(channel)
@@ -112,15 +119,45 @@ function consolidateLocalKidsChannels(groups) {
       placedPreferred.add(key)
     }
   }
-  for (const channel of localKids) {
-    const key = kidsChannelKey(channel)
+  for (const channel of localChannels) {
+    const key = keyOf(channel)
     if (placedPreferred.has(key)) continue
     merged.push(preferred.get(key) || channel)
     placedPreferred.add(key)
   }
-  kidsGroup.dataList = merged
+  contentGroup.dataList = merged
 
   return output.filter(group => group.dataList.length > 0)
+}
+
+function consolidateLocalKidsChannels(groups) {
+  return consolidateLocalChannels(groups, {
+    targetGroup: '少儿',
+    matches: isKidsChannel,
+    keyOf: kidsChannelKey,
+  })
+}
+
+function isEducationChannel(channel) {
+  const name = String(channel?.name || '').trim()
+  // 「河北少儿科教」以少儿属性为主，应由上面的少儿规则处理。
+  return !isKidsChannel(channel) && /(教育|科教|教科)/.test(name)
+}
+
+function educationChannelKey(channel) {
+  return String(channel?.name || '')
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/教育科技/g, '教科')
+    .replace(/频道$/, '')
+}
+
+function consolidateLocalEducationChannels(groups) {
+  return consolidateLocalChannels(groups, {
+    targetGroup: '教育',
+    matches: isEducationChannel,
+    keyOf: educationChannelKey,
+  })
 }
 
 /**
@@ -195,9 +232,10 @@ async function getAllChannels() {
       }
     })
 
-    // 内容型分组按频道性质统一：地方少儿频道移入「少儿」，
-    // 且在同台多源时优先地方官方线路。
+    // 内容型分组按频道性质统一：地方少儿 / 教育频道分别移入
+    // 「少儿」/「教育」，且在同台多源时优先地方官方线路。
     allChannels = consolidateLocalKidsChannels(allChannels)
+    allChannels = consolidateLocalEducationChannels(allChannels)
     
     // 频道级去重：同一分组内，name + 播放地址 完全相同的频道只保留第一个
     // （合并顺序为 咪咕 > 内置 > 外部 > 抓取模块，因此优先保留更高优先级的来源）
@@ -320,5 +358,6 @@ export {
   builtInSourceManager,
   dedupeAllChannels,
   primarySourceId,
-  consolidateLocalKidsChannels
+  consolidateLocalKidsChannels,
+  consolidateLocalEducationChannels
 }
