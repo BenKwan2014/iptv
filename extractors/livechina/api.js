@@ -154,7 +154,9 @@ export function buildChannels(rows) {
   return (Array.isArray(rows) ? rows : []).map(row => ({
     name: `${row.region}｜${row.name}`,
     deferredRef: `livechina-${row.id}`,
-    relayHls: true,
+    // 央视 CDN 对媒体分片同样校验 Referer / Origin，播放器直连会收到 403；
+    // 必须让清单和分片都经过本机，由代理补齐 UPSTREAM_HEADERS。
+    proxyHls: true,
     logo: row.logo || '',
     opts: ['network-caching=3000'],
   }))

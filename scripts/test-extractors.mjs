@@ -829,6 +829,25 @@ try {
     assert.deepEqual(channel.opts, ['http-referrer=https://x/'])
   })
 
+  check('输出：平台级 HLS 模式覆盖旧频道缓存', () => {
+    const manager = newManager()
+    manager.cache.modules.livechina = {
+      groups: [{
+        name: '央视景观',
+        dataList: [{
+          name: '西藏｜测试景观',
+          deferredRef: 'livechina-test',
+          relayHls: true,
+        }],
+      }],
+      health: { status: 'ok' },
+    }
+    const group = manager.getValidChannels().find(item => item.name === '央视景观')
+    const [channel] = group.dataList
+    assert.equal(channel.proxyHls, true, '央视景观升级后应立即改为清单与分片全代理')
+    assert.equal(channel.relayHls, false, '旧缓存中的只中转清单标记必须被覆盖')
+  })
+
   check('输出：省市分组与管理卡片同名，旧缓存也立即生效', () => {
     const manager = newManager()
     manager.cache.modules.beidou = {

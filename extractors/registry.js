@@ -25,6 +25,8 @@
  *   refreshDescription    string  可选；自动刷新策略的后台说明
  *   outputGroupName       string  可选；播放列表统一分组名，并合并模块原有的多个子组
  *   preserveGroupSuffixes array   可选；命中这些后缀的特殊分组不被 outputGroupName 覆盖
+ *   channelHlsMode        string  可选；'proxy' 或 'relay'，在输出时覆盖频道缓存中的
+ *                                 HLS 路由标记，适合整个平台统一要求代理的模块
  *   configSchema          array   字段描述，后台据此渲染表单、后端据此校验
  *
  *   async fetch(config, ctx) → { groups: [{ name, dataList }], meta }
@@ -144,6 +146,9 @@ export function validateModule(module) {
   }
   if (module.capabilities?.resolve && typeof module.resolve !== 'function') {
     throw new Error(`抓取模块 ${module.id} 声明了 resolve 能力但没实现 resolve()`)
+  }
+  if (module.channelHlsMode != null && !['proxy', 'relay'].includes(module.channelHlsMode)) {
+    throw new Error(`抓取模块 ${module.id} 的 channelHlsMode 非法: ${JSON.stringify(module.channelHlsMode)}`)
   }
   for (const field of module.configSchema || []) {
     // 单选 / 多选都必须给出可选值，否则校验层无从判断合法性

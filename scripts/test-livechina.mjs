@@ -51,7 +51,7 @@ const row = {
   assert.deepEqual(buildChannels([row]), [{
     name: '西藏｜甲岗拉姆雪山及县城湿地',
     deferredRef: 'livechina-ahhs01',
-    relayHls: true,
+    proxyHls: true,
     logo: row.logo,
     opts: ['network-caching=3000'],
   }])
@@ -95,6 +95,7 @@ assert.equal(manifestUrlFromVdn({ ack: 'no', status: '20', play: '0', manifest: 
   const module = getModule('livechina')
   assert.ok(module)
   assert.equal(module.outputGroupName, '央视景观')
+  assert.equal(module.channelHlsMode, 'proxy')
   assert.equal(module.capabilities.resolve, true)
   assert.equal(resolverFor('livechina-ahhs01')?.id, 'livechina')
   assert.equal(resolverFor('livechina-ahhs01/extra'), null)
