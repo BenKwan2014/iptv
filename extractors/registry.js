@@ -92,10 +92,12 @@ import huyaLive from './huya-live/index.js'
 import jstv from './jstv/index.js'
 import iqilu from './iqilu/index.js'
 import kankanews from './kankanews/index.js'
+import livechina from './livechina/index.js'
 import mgtv from './mgtv/index.js'
 import migu from './migu/index.js'
 import njtv from './njtv/index.js'
 import qtv from './qtv/index.js'
+import songjiang from './songjiang/index.js'
 import sztv from './sztv/index.js'
 
 // 模块 id 会进 sourceId 并写进 EXTINF 属性值，不消毒就是注入面。
@@ -124,6 +126,8 @@ const MODULES = [
   njtv,
   qtv,
   kankanews,
+  songjiang,
+  livechina,
   mgtv,
 ]
 

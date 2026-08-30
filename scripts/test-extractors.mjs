@@ -106,6 +106,8 @@ import {
   buildChannels as buildHebtvChannels,
   clearCache as clearHebtvCache,
   normalizeRows as normalizeHebtvRows,
+  normalizeScenicArticles as normalizeHebtvScenicArticles,
+  normalizeScenicDetail as normalizeHebtvScenicDetail,
   resolveChannel as resolveHebtvChannel,
   signStreamUrl as signHebtvStreamUrl,
 } from '../extractors/hebtv/api.js'
@@ -2523,6 +2525,16 @@ const hebtvArticle = ({ id, title, path, key = 'k5m9p2x8r4b3' }) => ({
   liveVideo: [{ type: 'PC', formats: [{ url: `https://tv.pull.hebtv.com${path}` }] }],
 })
 
+const hebtvScenicArticle = ({ id, title, active = true }) => ({
+  id,
+  title,
+  type: '15',
+  appCustomParams: JSON.stringify({
+    movie: { liveStatus: active ? 1 : 0 },
+    customStyle: { imgPath: ['http://pic.cmc.hebrts.cn/scenic.jpg'] },
+  }),
+})
+
 check('河北：官网直播稿件规范成六套频道，固定排除三佳购物与未知稿件', () => {
   const rows = normalizeHebtvRows([
     hebtvArticle({ id: 10524916, title: '河北卫视', path: '/jishi/weishipindao.m3u8' }),
@@ -2544,6 +2556,36 @@ check('河北：官网直播稿件规范成六套频道，固定排除三佳购�
   assert.equal(channels[0].logo, 'https://pic.cmc.hebrts.cn/logo.png')
 })
 
+check('河北：美丽河北只收城市慢直播稿件，详情严格校验官方 CDN 与签名字段', () => {
+  const articles = normalizeHebtvScenicArticles([
+    hebtvScenicArticle({ id: 11605050, title: '慢直播丨石家庄' }),
+    hebtvScenicArticle({ id: 11605048, title: '慢直播｜雄安新区' }),
+    hebtvScenicArticle({ id: 11417638, title: '慢直播丨秘境精灵' }),
+    hebtvScenicArticle({ id: 1, title: '慢直播丨承德', active: false }),
+  ])
+  assert.deepEqual(articles.map(row => row.name), ['石家庄', '雄安新区'])
+  assert.equal(articles[0].logo, 'https://pic.cmc.hebrts.cn/scenic.jpg')
+
+  const detail = normalizeHebtvScenicDetail({ data: {
+    articleId: 11605050,
+    title: '慢直播丨石家庄',
+    status: '1',
+    livePath: 'https://live.pull.hebtv.com/live/mzb173.m3u8',
+    cdnUri: '/live/mzb173.m3u8',
+    cdnKey: 'k5m9p2x8r4b3',
+  } }, articles[0])
+  assert.equal(detail.name, '石家庄')
+  assert.equal(detail.scenic, true)
+  assert.equal(normalizeHebtvScenicDetail({ data: {
+    articleId: 11605050,
+    title: '慢直播丨石家庄',
+    status: '1',
+    livePath: 'https://evil.example/live/mzb173.m3u8',
+    cdnUri: '/live/mzb173.m3u8',
+    cdnKey: 'k5m9p2x8r4b3',
+  } }, articles[0]), null)
+})
+
 check('河北：两小时 t/k 签名与官网播放器固定样本逐字节一致', () => {
   const signed = new URL(signHebtvStreamUrl(
     'https://tv.pull.hebtv.com/jishi/weishipindao.m3u8',
@@ -2553,6 +2595,14 @@ check('河北：两小时 t/k 签名与官网播放器固定样本逐字节一�
   ))
   assert.equal(signed.searchParams.get('t'), '1720007200')
   assert.equal(signed.searchParams.get('k'), '00496e7b70332f38d30084b44155b50d')
+  const scenic = new URL(signHebtvStreamUrl(
+    'https://live.pull.hebtv.com/live/mzb173.m3u8',
+    '/live/mzb173.m3u8',
+    'k5m9p2x8r4b3',
+    1720000000000,
+  ))
+  assert.equal(scenic.searchParams.get('t'), '1720007200')
+  assert.equal(scenic.searchParams.get('k'), '6f67777fbd80dba9e24ed067cfe74275')
   assert.throws(() => signHebtvStreamUrl(
     'https://example.com/jishi/weishipindao.m3u8',
     '/jishi/weishipindao.m3u8',
@@ -2561,32 +2611,62 @@ check('河北：两小时 t/k 签名与官网播放器固定样本逐字节一�
   ), /不是河北广电/)
 })
 
-await checkAsync('河北：模块按官网 POST 接口取完整频道表，播放时复用频道缓存并现签', async () => {
+await checkAsync('河北：模块同步电视与景观两组，按真实流去重并在播放时复用缓存现签', async () => {
   clearHebtvCache()
   let calls = 0
   const articles = [
     hebtvArticle({ id: 10524916, title: '河北卫视', path: '/jishi/weishipindao.m3u8' }),
     hebtvArticle({ id: 10516513, title: '三佳购物', path: '/zhibo/sanjiagouwu.m3u8' }),
   ]
-  const fetchImpl = async (_url, options) => {
+  const scenicArticles = [
+    hebtvScenicArticle({ id: 11605050, title: '慢直播丨石家庄' }),
+    hebtvScenicArticle({ id: 12348364, title: '慢直播丨平山' }),
+  ]
+  const fetchImpl = async (rawUrl, options) => {
     calls++
-    assert.equal(options.method, 'POST')
-    return fakeResponse({ returnCode: '0000', returnDesc: '成功', returnData: { news: articles } })
+    const url = String(rawUrl)
+    if (url.includes('getArticleList')) {
+      assert.equal(options.method, 'POST')
+      return fakeResponse({ returnCode: '0000', returnDesc: '成功', returnData: { news: articles } })
+    }
+    assert.equal(options.method, 'GET')
+    if (url.includes('findPage')) {
+      return fakeResponse({ data: { pageRecords: scenicArticles } })
+    }
+    const id = new URL(url).searchParams.get('articleId')
+    const article = scenicArticles.find(row => String(row.id) === id)
+    return fakeResponse({ state: 200, data: {
+      articleId: article.id,
+      title: article.title,
+      status: '1',
+      livePath: 'https://live.pull.hebtv.com/live/mzb173.m3u8',
+      cdnUri: '/live/mzb173.m3u8',
+      cdnKey: 'k5m9p2x8r4b3',
+    } })
   }
   const module = getModule('hebtv')
   const result = await module.fetch({}, { fetchImpl, now: 1720000000000 })
   assert.equal(result.groups[0].name, '河北电视台')
   assert.deepEqual(result.groups[0].dataList.map(channel => channel.name), ['河北卫视'])
   assert.ok(result.groups[0].dataList.every(channel => channel.opts?.[0] === 'network-caching=3000'))
+  assert.equal(result.groups[1].name, '河北景观')
+  assert.deepEqual(result.groups[1].dataList.map(channel => channel.name), ['石家庄'])
+  assert.match(result.meta.warnings[0], /平山.*共用直播流/)
 
   const resolved = await resolveHebtvChannel('hebtv-10524916', {
     now: 1720000001000,
     fetchImpl: async () => { throw new Error('已有频道缓存时不该联网') },
   })
-  assert.equal(calls, 1)
+  assert.equal(calls, 4)
   assert.match(resolved.url, /^https:\/\/tv\.pull\.hebtv\.com\/jishi\/weishipindao\.m3u8\?t=1720007201&k=/)
   assert.equal(resolved.relayHls, true)
   assert.equal(resolved.upstreamHeaders.Origin, 'https://www.hebrts.cn')
+
+  const scenicResolved = await resolveHebtvChannel('hebtv-11605050', {
+    now: 1720000001000,
+    fetchImpl: async () => { throw new Error('景观也必须复用同一份缓存') },
+  })
+  assert.match(scenicResolved.url, /^https:\/\/live\.pull\.hebtv\.com\/live\/mzb173\.m3u8\?t=1720007201&k=/)
 
   const bad = await resolveHebtvChannel('hebtv-999', { now: 1720000001000 })
   assert.equal(bad.url, '')

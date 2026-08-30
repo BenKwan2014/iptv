@@ -3,13 +3,17 @@ import { createHash } from 'node:crypto'
 import fetch from 'node-fetch'
 
 export const CHANNEL_LIST_URL = 'https://api.cmc.hebrts.cn/cmsback/api/com/article/getArticleList?catalogId=32557&siteId=1'
+export const SCENIC_LIST_URL = 'https://api.cmc.hebrts.cn/cmsback/api/article/findPage?catalogId=33666&status=30&pageSize=100&pageNumber=1'
+export const SCENIC_DETAIL_URL = 'https://api.cmc.hebrts.cn/cms/api/micro/live/seat/live'
 export const STREAM_HOST = 'tv.pull.hebtv.com'
+export const SCENIC_STREAM_HOST = 'live.pull.hebtv.com'
 
 const CHANNEL_TTL_MS = 4 * 60 * 60 * 1000
 const CHANNEL_RETRY_MS = 60 * 1000
 const STREAM_TTL_SECONDS = 2 * 60 * 60
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
   + '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+const TENANT_ID = '0d91d6cfb98f5b206ac1e752757fc5a9'
 
 export const UPSTREAM_HEADERS = {
   Referer: 'https://www.hebrts.cn/19/19js/st/xdszb/index.shtml',
@@ -25,6 +29,25 @@ const NAME_OVERRIDES = {
   文旅体育: '河北文旅体育',
   少儿科教: '河北少儿科教',
   三农频道: '河北三农',
+}
+
+// 官网隐藏的「24 小时慢直播」栏目仍持续维护；只接城市 / 区县稿件，排除
+// 「秘境精灵」等非城市专题。详情接口会再校验稿件标题、状态、主机和签名字段。
+const SCENIC_NAME_OVERRIDES = {
+  '慢直播丨石家庄': '石家庄',
+  '慢直播丨承德': '承德',
+  '慢直播丨冬奥之城张家口': '张家口',
+  '慢直播丨秦皇岛': '秦皇岛',
+  '慢直播丨唐山': '唐山',
+  '慢直播丨廊坊': '廊坊',
+  '慢直播丨保定': '保定',
+  '慢直播丨沧州': '沧州',
+  '慢直播丨衡水': '衡水',
+  '慢直播丨邢台': '邢台',
+  '慢直播丨邯郸': '邯郸',
+  '慢直播｜雄安新区': '雄安新区',
+  '慢直播丨定州': '定州',
+  '慢直播丨平山': '平山',
 }
 
 let channelCache = null
@@ -44,6 +67,11 @@ function streamUrlOf(row) {
     }
   }
   return ''
+}
+
+function parseCustomParams(value) {
+  if (value && typeof value === 'object') return value
+  try { return JSON.parse(String(value || '')) } catch { return {} }
 }
 
 /** 把 CMS 的直播稿件收窄成播放解析所需字段。 */
@@ -77,14 +105,58 @@ export function normalizeRows(payload) {
   return rows
 }
 
+/** 把慢直播栏目收窄成允许请求详情的官方城市稿件。 */
+export function normalizeScenicArticles(payload) {
+  const rows = []
+  const seen = new Set()
+  for (const item of Array.isArray(payload) ? payload : []) {
+    const id = String(item?.id || item?.articleId || '').trim()
+    const title = String(item?.title || '').trim()
+    const name = SCENIC_NAME_OVERRIDES[title]
+    if (!/^\d{1,12}$/.test(id) || !name || seen.has(id) || String(item?.type) !== '15') continue
+    const params = parseCustomParams(item?.appCustomParams)
+    if (String(params?.movie?.liveStatus) !== '1') continue
+    const logo = String(params?.customStyle?.imgPath?.[0] || item?.logo || '').trim()
+      .replace(/^http:\/\//i, 'https://')
+    seen.add(id)
+    rows.push({ id, title, name, logo })
+  }
+  return rows
+}
+
+/** 校验单个慢直播详情，并规范成与电视稿件相同的签名字段。 */
+export function normalizeScenicDetail(payload, article) {
+  const row = payload?.data || payload
+  const id = String(row?.articleId || '').trim()
+  const title = String(row?.title || '').trim()
+  const liveUri = String(row?.cdnUri || '').trim()
+  const liveKey = String(row?.cdnKey || '').trim()
+  let stream
+  try { stream = new URL(String(row?.livePath || '').trim()) } catch { return null }
+  if (!article || id !== article.id || title !== article.title || String(row?.status) !== '1'
+    || !/^\/[A-Za-z0-9][A-Za-z0-9/_.-]*\.m3u8$/i.test(liveUri)
+    || !/^[A-Za-z0-9]{3,64}$/.test(liveKey)
+    || stream.protocol !== 'https:' || stream.hostname !== SCENIC_STREAM_HOST
+    || stream.pathname !== liveUri) return null
+  return {
+    id,
+    name: article.name,
+    liveUri,
+    liveKey,
+    url: stream.href,
+    logo: article.logo || String(row?.imagepath || '').trim().replace(/^http:\/\//i, 'https://'),
+    scenic: true,
+  }
+}
+
 async function requestWithTimeout(url, options = {}) {
   const controller = new AbortController()
   const timeoutMs = options.timeoutMs || 10000
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
     return await (options.fetchImpl || fetch)(url, {
-      method: 'POST',
-      headers: { ...UPSTREAM_HEADERS, Accept: 'application/json' },
+      method: options.method || 'POST',
+      headers: { ...UPSTREAM_HEADERS, Accept: 'application/json', ...(options.headers || {}) },
       signal: controller.signal,
     })
   } catch (error) {
@@ -106,12 +178,79 @@ export async function fetchChannelList(options = {}) {
   return rows
 }
 
+export async function fetchScenicRows(options = {}) {
+  const listResponse = await requestWithTimeout(SCENIC_LIST_URL, {
+    ...options,
+    method: 'GET',
+    headers: { tenantId: TENANT_ID },
+  })
+  if (!listResponse.ok) throw new Error(`景观栏目接口 HTTP ${listResponse.status}`)
+  const listPayload = await listResponse.json()
+  const articles = normalizeScenicArticles(listPayload?.data?.pageRecords)
+  if (!articles.length) throw new Error('景观栏目没有可用城市直播稿件')
+
+  const details = await Promise.allSettled(articles.map(async article => {
+    const url = new URL(SCENIC_DETAIL_URL)
+    url.searchParams.set('tenantId', TENANT_ID)
+    url.searchParams.set('api_version', '3.7.0')
+    url.searchParams.set('app_version', '4.0.1')
+    url.searchParams.set('client', 'android')
+    url.searchParams.set('cms_app_id', '29')
+    url.searchParams.set('app_id', '2')
+    url.searchParams.set('articleId', article.id)
+    const response = await requestWithTimeout(url.href, {
+      ...options,
+      method: 'GET',
+      headers: { tenantId: TENANT_ID },
+    })
+    if (!response.ok) throw new Error(`${article.name}详情 HTTP ${response.status}`)
+    const payload = await response.json()
+    const row = normalizeScenicDetail(payload, article)
+    if (!row) throw new Error(`${article.name}详情字段异常`)
+    return row
+  }))
+
+  const rows = []
+  const warnings = []
+  const seenPaths = new Set()
+  details.forEach(result => {
+    if (result.status === 'rejected') {
+      warnings.push(result.reason?.message || String(result.reason))
+      return
+    }
+    if (seenPaths.has(result.value.liveUri)) {
+      warnings.push(`${result.value.name}与已有景观共用直播流，已去重`)
+      return
+    }
+    seenPaths.add(result.value.liveUri)
+    rows.push(result.value)
+  })
+  if (!rows.length) throw new Error(`景观详情没有可用直播：${warnings.join('；')}`)
+  return { rows, warnings }
+}
+
+/** 两组接口相互独立；单组临时故障时保留另一组，不让整个河北模块清空。 */
+export async function fetchAllRows(options = {}) {
+  const [tvResult, scenicResult] = await Promise.allSettled([
+    fetchChannelList(options),
+    fetchScenicRows(options),
+  ])
+  const tvRows = tvResult.status === 'fulfilled' ? tvResult.value : []
+  const scenicRows = scenicResult.status === 'fulfilled' ? scenicResult.value.rows : []
+  const warnings = scenicResult.status === 'fulfilled' ? [...scenicResult.value.warnings] : []
+  if (tvResult.status === 'rejected') warnings.push(`河北电视接口不可用：${tvResult.reason?.message || tvResult.reason}`)
+  if (scenicResult.status === 'rejected') warnings.push(`美丽河北接口不可用：${scenicResult.reason?.message || scenicResult.reason}`)
+  if (!tvRows.length && !scenicRows.length) throw new Error(warnings.join('；') || '河北官方接口没有可用频道')
+  return { tvRows, scenicRows, rows: [...tvRows, ...scenicRows], warnings }
+}
+
 async function cachedChannelList(options = {}) {
   const now = Number(options.now ?? Date.now())
   if (channelCache?.expiresAt > now || channelCache?.retryAt > now) return channelCache.rows
   if (!channelPending) {
-    channelPending = fetchChannelList(options)
-      .then(rows => {
+    channelPending = fetchAllRows(options)
+      .then(result => {
+        const rows = result.rows
         channelCache = { rows, expiresAt: now + CHANNEL_TTL_MS, retryAt: 0 }
         return rows
       })
@@ -144,7 +283,7 @@ export function buildChannels(rows) {
 /** 官网播放器算法：k = MD5(liveUri + liveKey + t)，t 为当前秒 + 2 小时。 */
 export function signStreamUrl(rawUrl, liveUri, liveKey, now = Date.now()) {
   const url = new URL(rawUrl)
-  if (url.protocol !== 'https:' || url.hostname !== STREAM_HOST || url.pathname !== liveUri
+  if (url.protocol !== 'https:' || ![STREAM_HOST, SCENIC_STREAM_HOST].includes(url.hostname) || url.pathname !== liveUri
     || !/^\/[A-Za-z0-9][A-Za-z0-9/_.-]*\.m3u8$/i.test(liveUri)
     || !/^[A-Za-z0-9]{3,64}$/.test(String(liveKey || ''))) {
     throw new Error('播放地址不是河北广电 HTTPS 直播路径')
