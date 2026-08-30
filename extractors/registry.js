@@ -33,7 +33,7 @@
  *       分组，不是另一个源）。
  *
  *   async resolve(ref, ctx) → { url, desc, segmentTransform?, upstreamHeaders?,
- *                                upstreamUrlTransform? }
+ *                                upstreamUrlTransform?, manifestText?, manifestUrl? }
  *       可选，capabilities.resolve 为真时必需。用于「播放时才算地址」的模块：
  *       fetch() 里频道给 deferredRef，写盘时落成 ${replace}/<ref>，播放请求
  *       到达时才调 resolve。B 站不需要——它是直链。
@@ -43,6 +43,8 @@
  *       upstreamHeaders 可选；仅由本机清单/分片代理向官方 CDN 发送（防盗链平台）。
  *       upstreamUrlTransform(url) 可选；全代理登记清单内的子清单/分片地址前调用。
  *       用于每条 HLS 路径都要独立签名的平台，函数必须把输入限制在平台自己的主机。
+ *       manifestText + manifestUrl 可选；浏览器能读取、普通 HTTP 客户端会被指纹校验
+ *       拦截的平台可直接交回本轮 HLS 文本及其基准地址，由代理层改写后下发。
  *       ctx: { account: { userId, token }, config }  config 是该模块的生效配置
  *       **绝不能抛异常**——app.js 的请求 handler 没有顶层 try，一个未捕获的
  *       异常等于请求永远不 res.end()、客户端挂死到超时。
@@ -79,6 +81,7 @@ import fjtv from './fjtv/index.js'
 import gdtv from './gdtv/index.js'
 import gxtv from './gxtv/index.js'
 import hebtv from './hebtv/index.js'
+import hbtv from './hbtv/index.js'
 import hnntv from './hnntv/index.js'
 import hntv from './hntv/index.js'
 import jstv from './jstv/index.js'
@@ -101,6 +104,7 @@ const MODULES = [
   gxtv,
   fjtv,
   hebtv,
+  hbtv,
   hnntv,
   hntv,
   cztv,

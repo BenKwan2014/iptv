@@ -6,7 +6,7 @@ import { adminPath, host, pass, port, programInfoUpdateInterval, token, userId, 
 import { getDateTimeStr } from "./utils/time.js";
 import update from "./utils/updateData.js";
 import { printBlue, printGreen, printGrey, printMagenta, printRed, printYellow } from "./utils/colorOut.js";
-import { channel, interfaceStr, fetchManifestDirect, rewriteManifest } from "./utils/appUtils.js";
+import { channel, interfaceStr, fetchManifestDirect, rewriteManifest, inlineResolvedManifest } from "./utils/appUtils.js";
 import { toProxyManifest, lookup as lookupProxyTarget, pipeUpstream, fetchNested } from "./utils/hlsProxy.js";
 import { dataPath } from "./utils/paths.js";
 import { getExtractorManager, getModuleConfig } from "./utils/extractorManager.js";
@@ -1000,7 +1000,8 @@ async function handleRequest(req, res) {
 
   if (relayMode || proxyMode || result.relayHls) {
     // 服务端取回清单、相对路径改写为绝对地址后直出，播放器无需跟随任何跳转
-    let manifest = await fetchManifestDirect(result.playURL, result.upstreamHeaders)
+    let manifest = inlineResolvedManifest(result)
+    if (manifest == null) manifest = await fetchManifestDirect(result.playURL, result.upstreamHeaders)
     // 全代理：再把清单里的绝对地址换成本机同源相对地址，分片改由 /proxy/s<key>.ts 转发
     if (manifest != null && proxyMode) {
       manifest = toProxyManifest(

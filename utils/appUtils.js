@@ -35,6 +35,21 @@ function rewriteManifest(text, finalUrl) {
   }).join('\n')
 }
 
+// 个别 CDN 只向真实 Chromium 返回清单。对应模块可在 resolve() 中直接交回本轮
+// manifestText + manifestUrl；这里仍统一做相对地址绝对化，后续 relay/proxy 逻辑无需分叉。
+function inlineResolvedManifest(result) {
+  const text = typeof result?.manifestText === 'string' ? result.manifestText : ''
+  const base = String(result?.manifestUrl || result?.playURL || '')
+  if (!text.trimStart().startsWith('#EXTM3U') || text.length > 2 * 1024 * 1024) return null
+  try {
+    const url = new URL(base)
+    if (!['http:', 'https:'].includes(url.protocol)) return null
+    return rewriteManifest(text, url.href)
+  } catch {
+    return null
+  }
+}
+
 // 取回一份 HLS 清单文本（跟随 302），非 200 或非 HLS 内容返回 null
 async function fetchHls(url, signal, upstreamHeaders = {}) {
   const resp = await fetch(url, {
@@ -314,9 +329,12 @@ async function channel(url, urlUserId, urlToken) {
   result.upstreamHeaders = resolved.upstreamHeaders
   // 个别平台要求每一条子清单/分片路径分别签名；仅全代理登记上游地址时调用。
   result.upstreamUrlTransform = resolved.upstreamUrlTransform
+  // 浏览器指纹保护平台可直接交回已经读取到的 HLS；只在清单代理链消费。
+  result.manifestText = resolved.manifestText
+  result.manifestUrl = resolved.manifestUrl
   // 平台可要求旧的无后缀入口也直出动态 HLS 清单；用于兼容已收藏/已下发的旧地址。
   result.relayHls = resolved.relayHls === true
   return result
 }
 
-export { interfaceStr, channel, clearUrlCache, fetchManifestDirect, rewriteManifest, firstVariantUrl }
+export { interfaceStr, channel, clearUrlCache, fetchManifestDirect, rewriteManifest, firstVariantUrl, inlineResolvedManifest }
