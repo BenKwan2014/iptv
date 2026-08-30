@@ -47,13 +47,13 @@ iPTV 是一个面向家庭影音与 NAS 用户的**模块化 IPTV 直播源管�
 ## 🖼️ 产品预览
 
 <p align="center"><b>我的频道 · 所有频道一处编排</b></p>
-<p align="center"><img src="https://raw.githubusercontent.com/akiralereal/iptv/main/Resources/dashboard.png" alt="我的频道主面板" width="900"/></p>
+<p align="center"><img src="https://raw.githubusercontent.com/akiralereal/iptv/main/Resources/dashboard.png?v=d3a6d96" alt="我的频道主面板" width="900"/></p>
 
 <p align="center"><b>源管理 · 每个内容来源独立、透明、可控</b></p>
-<p align="center"><img src="https://raw.githubusercontent.com/akiralereal/iptv/main/Resources/source-management.png" alt="源管理" width="900"/></p>
+<p align="center"><img src="https://raw.githubusercontent.com/akiralereal/iptv/main/Resources/source-management.png?v=d3a6d96" alt="源管理" width="900"/></p>
 
 <p align="center"><b>播放器实况 · 输出标准订阅，接入常用客户端</b></p>
-<p align="center"><img src="https://raw.githubusercontent.com/akiralereal/iptv/main/Resources/live-preview.png" alt="实况播放效果" width="900"/></p>
+<p align="center"><img src="https://raw.githubusercontent.com/akiralereal/iptv/main/Resources/live-preview.png?v=d3a6d96" alt="实况播放效果" width="900"/></p>
 
 <details>
 <summary><b>当前版本更新内容</b></summary>
