@@ -75,6 +75,13 @@ import {
   resolveChannel as resolveHntvChannel,
 } from '../extractors/hntv/api.js'
 import {
+  buildChannels as buildHebtvChannels,
+  clearCache as clearHebtvCache,
+  normalizeRows as normalizeHebtvRows,
+  resolveChannel as resolveHebtvChannel,
+  signStreamUrl as signHebtvStreamUrl,
+} from '../extractors/hebtv/api.js'
+import {
   buildChannels as buildKankanewsChannels,
   buildScenicChannels as buildKankanewsScenicChannels,
   buildSignedHeaders as buildKankanewsSignedHeaders,
@@ -536,6 +543,18 @@ check('海南网台模块已注册，频道定时同步且播放时解析签名�
   assert.deepEqual(hnntv.configSchema, [])
   assert.equal(resolverFor('hnntv-13')?.id, 'hnntv')
   assert.equal(resolverFor('hnntv-13/extra'), null)
+})
+
+check('河北冀时模块已注册，完整频道表定时同步且播放时续签', () => {
+  const hebtv = getModule('hebtv')
+  assert.ok(hebtv)
+  assert.equal(hebtv.capabilities.cache, 'disk')
+  assert.equal(hebtv.capabilities.resolve, true)
+  assert.equal(hebtv.defaultRefreshMinutes, 240)
+  assert.equal(hebtv.refreshConfigurable, false)
+  assert.deepEqual(hebtv.configSchema, [])
+  assert.equal(resolverFor('hebtv-10524916')?.id, 'hebtv')
+  assert.equal(resolverFor('hebtv-10524916/extra'), null)
 })
 
 check('深圳广电模块已注册，固定周期刷新且逐路径签名流必须全代理', () => {
@@ -2124,7 +2143,87 @@ await checkAsync('江苏：模块取 Bearer 频道表，缓存后播放时签名
   assert.equal(resolved.upstreamHeaders.Referer, 'https://live.jstv.com/')
 })
 
- // ---- 深圳广电「第一现场」 ----
+// ---- 河北广播电视台「冀时」 ----
+
+const hebtvArticle = ({ id, title, path, key = 'k5m9p2x8r4b3' }) => ({
+  id,
+  title,
+  logo: 'http://pic.cmc.hebrts.cn/logo.png',
+  appCustomParams: { movie: { liveUri: path, liveKey: key } },
+  liveVideo: [{ type: 'PC', formats: [{ url: `https://tv.pull.hebtv.com${path}` }] }],
+})
+
+check('河北：官网直播稿件规范成六套频道，固定排除三佳购物与未知稿件', () => {
+  const rows = normalizeHebtvRows([
+    hebtvArticle({ id: 10524916, title: '河北卫视', path: '/jishi/weishipindao.m3u8' }),
+    hebtvArticle({ id: 10516507, title: '经济生活', path: '/jishi/jingjishenghuo.m3u8' }),
+    hebtvArticle({ id: 10516509, title: '河北都市', path: '/jishi/dushipindao.m3u8' }),
+    hebtvArticle({ id: 10516510, title: '文旅体育', path: '/zhibo/yingshijupindao.m3u8' }),
+    hebtvArticle({ id: 10516511, title: '少儿科教', path: '/jishi/shaoerkejiao.m3u8' }),
+    hebtvArticle({ id: 10516508, title: '三农频道', path: '/jishi/nongminpindao.m3u8' }),
+    hebtvArticle({ id: 10516513, title: '三佳购物', path: '/zhibo/sanjiagouwu.m3u8' }),
+    hebtvArticle({ id: 1, title: '内部测试', path: '/jishi/test.m3u8' }),
+  ])
+  assert.deepEqual(rows.map(row => row.name), [
+    '河北卫视', '河北经济生活', '河北都市', '河北文旅体育', '河北少儿科教', '河北三农',
+  ])
+  const channels = buildHebtvChannels(rows)
+  assert.equal(channels.length, 6)
+  assert.equal(channels[0].deferredRef, 'hebtv-10524916')
+  assert.ok(channels.every(channel => channel.relayHls === true))
+  assert.equal(channels[0].logo, 'https://pic.cmc.hebrts.cn/logo.png')
+})
+
+check('河北：两小时 t/k 签名与官网播放器固定样本逐字节一致', () => {
+  const signed = new URL(signHebtvStreamUrl(
+    'https://tv.pull.hebtv.com/jishi/weishipindao.m3u8',
+    '/jishi/weishipindao.m3u8',
+    'k5m9p2x8r4b3',
+    1720000000000,
+  ))
+  assert.equal(signed.searchParams.get('t'), '1720007200')
+  assert.equal(signed.searchParams.get('k'), '00496e7b70332f38d30084b44155b50d')
+  assert.throws(() => signHebtvStreamUrl(
+    'https://example.com/jishi/weishipindao.m3u8',
+    '/jishi/weishipindao.m3u8',
+    'k5m9p2x8r4b3',
+    1720000000000,
+  ), /不是河北广电/)
+})
+
+await checkAsync('河北：模块按官网 POST 接口取完整频道表，播放时复用频道缓存并现签', async () => {
+  clearHebtvCache()
+  let calls = 0
+  const articles = [
+    hebtvArticle({ id: 10524916, title: '河北卫视', path: '/jishi/weishipindao.m3u8' }),
+    hebtvArticle({ id: 10516513, title: '三佳购物', path: '/zhibo/sanjiagouwu.m3u8' }),
+  ]
+  const fetchImpl = async (_url, options) => {
+    calls++
+    assert.equal(options.method, 'POST')
+    return fakeResponse({ returnCode: '0000', returnDesc: '成功', returnData: { news: articles } })
+  }
+  const module = getModule('hebtv')
+  const result = await module.fetch({}, { fetchImpl, now: 1720000000000 })
+  assert.equal(result.groups[0].name, '河北电视台')
+  assert.deepEqual(result.groups[0].dataList.map(channel => channel.name), ['河北卫视'])
+  assert.ok(result.groups[0].dataList.every(channel => channel.opts?.[0] === 'network-caching=3000'))
+
+  const resolved = await resolveHebtvChannel('hebtv-10524916', {
+    now: 1720000001000,
+    fetchImpl: async () => { throw new Error('已有频道缓存时不该联网') },
+  })
+  assert.equal(calls, 1)
+  assert.match(resolved.url, /^https:\/\/tv\.pull\.hebtv\.com\/jishi\/weishipindao\.m3u8\?t=1720007201&k=/)
+  assert.equal(resolved.relayHls, true)
+  assert.equal(resolved.upstreamHeaders.Origin, 'https://www.hebrts.cn')
+
+  const bad = await resolveHebtvChannel('hebtv-999', { now: 1720000001000 })
+  assert.equal(bad.url, '')
+  assert.match(bad.desc, /不在官网列表/)
+})
+
+// ---- 深圳广电「第一现场」 ----
 
 const sztvRows = () => [
   {
