@@ -35,7 +35,8 @@ import { enableMigu } from "../../config.js"
 import { setSystemFlagAPI } from "../../utils/systemConfigAPI.js"
 
 /**
- * 跨分组去重：同一个 pID 只留在**最先出现**的那个分组里。
+ * 跨分组去重：同一个 pID 只留在**最先出现**的那个分组里；
+ * CCTV5 / CCTV5+ 是明确例外，同时保留在「体育」和「央视」。
  *
  * 咪咕按自己的分类给同一个频道打多个标签：CCTV1 同时出现在 央视/影视/新闻/纪实，
  * 四份**完全一样**——同名、同 tvg-id、同地址，只有 group-title 不同。代价都是实的：
@@ -48,8 +49,8 @@ import { setSystemFlagAPI } from "../../utils/systemConfigAPI.js"
  *
  * 顺序**不在这里定义**，除「地方」经 redistributeMiguLocalChannels
  * 收窄并归类外，原样沿用 fetchList.cateList() 拿到的咪咕分类顺序。所以
- * 「先出现者胜」等价于「按咪咕自己的分类优先级归属」：CCTV5 落在体育、
- * 其余 CCTV 落在央视。
+ * 「先出现者胜」等价于「按咪咕自己的分类优先级归属」；CCTV5 / CCTV5+
+ * 因用户需要在体育和央视两个入口中都能找到，只对这两台放开双分组。
  * 刻意不另立一张优先级表——两处各自定义顺序必然走偏。
  *
  * 去重只在**咪咕模块内部**按 pID 做，绝不跨源：「咪咕的 CCTV1 + 精选频道的 CCTV1」
@@ -60,10 +61,20 @@ import { setSystemFlagAPI } from "../../utils/systemConfigAPI.js"
  */
 export function dedupeAcrossGroups(groups) {
   const seen = new Set()
+  const seenExceptions = new Set()
   const out = []
   for (const group of groups) {
     const dataList = group.dataList.filter(item => {
       const key = String(item.pID)
+      const keepInBoth = (group.name === '体育' || group.name === '央视')
+        && (item.name === 'CCTV5体育' || item.name === 'CCTV5+体育赛事')
+      if (keepInBoth) {
+        const groupKey = `${key}::${group.name}`
+        if (seenExceptions.has(groupKey)) return false
+        seenExceptions.add(groupKey)
+        seen.add(key)
+        return true
+      }
       if (seen.has(key)) return false
       seen.add(key)
       return true
