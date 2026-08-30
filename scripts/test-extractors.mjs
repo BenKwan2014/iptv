@@ -33,11 +33,15 @@ import {
 } from '../extractors/gxtv/api.js'
 import {
   buildChannelGroups as buildFjtvGroups,
+  clearXiamenCache,
   fetchFuzhouChannels,
+  fetchXiamenChannels,
   FUZHOU_CHANNELS,
   hlsOf as fjtvHlsOf,
+  resolveXiamenChannel,
+  XIAMEN_CHANNELS,
 } from '../extractors/fjtv/api.js'
-import { mergeFuzhouChannels } from '../extractors/fjtv/index.js'
+import { mergeFuzhouChannels, mergeXiamenChannels } from '../extractors/fjtv/index.js'
 import {
   buildChannels as buildCztvChannels,
   clearPlayInfoCache as clearCztvPlayInfoCache,
@@ -450,11 +454,11 @@ check('第一阶段两个官方直播模块已注册，缓存/解析能力声明
   assert.deepEqual(cztv.configSchema, [], '浙江不向用户暴露播放缓冲等技术参数')
 })
 
-check('福建模块仍是原 id，固定六小时刷新且播放地址可直出', () => {
+check('福建模块仍是原 id，固定六小时刷新且厦门短效地址可延迟解析', () => {
   const fjtv = getModule('fjtv')
   assert.ok(fjtv)
   assert.equal(fjtv.capabilities.cache, 'disk')
-  assert.equal(fjtv.capabilities.resolve, false)
+  assert.equal(fjtv.capabilities.resolve, true)
   assert.equal(fjtv.defaultRefreshMinutes, 360)
   assert.equal(fjtv.refreshConfigurable, false)
   assert.deepEqual(fjtv.configSchema, [])
@@ -1519,6 +1523,34 @@ const fjtvCityRows = () => [
   fjtvRow('727213159174017024', '宁德新闻综合频道', fjtvCitySort, 'hb_ndtv/sd'),
 ]
 
+const xiamenRow = definition => ({
+  id: Number(definition.id),
+  name: definition.rawNames[0],
+  m3u8: `https://${definition.id === '18' ? 'live4' : 'live1'}.kxm.xmtv.cn/${definition.path}/playlist.m3u8?_upt=deadbeef1999999999`,
+  logo: {
+    square_1: {
+      host: 'https://img1.kxm.xmtv.cn/',
+      filename: `${definition.id}.png`,
+    },
+  },
+  channel_stream: [{
+    is_main: 1,
+    m3u8: `https://${definition.id === '18' ? 'live4' : 'live1'}.kxm.xmtv.cn/${definition.path}/main/live.m3u8?_upt=deadbeef1999999999`,
+  }],
+})
+
+const fakeXiamenFetch = async (requestUrl, options, { failManifestId = '' } = {}) => {
+  const url = new URL(String(requestUrl))
+  assert.equal(options.headers.Referer, 'https://www.xmtv.cn/')
+  if (url.hostname === 'mapi1.kxm.xmtv.cn') {
+    const definition = XIAMEN_CHANNELS.find(channel => channel.id === url.searchParams.get('channel_id'))
+    return fakeResponse(definition ? [xiamenRow(definition)] : [])
+  }
+  const definition = XIAMEN_CHANNELS.find(channel => url.pathname.startsWith(`/${channel.path}/`))
+  if (definition?.id === failManifestId) return { ok: false, status: 503 }
+  return fakeResponse('#EXTM3U\n#EXT-X-TARGETDURATION:6\nsegment.ts\n')
+}
+
 check('福建：只读取官方 streams[].hls，不使用错误备用字段或外站地址', () => {
   assert.equal(
     fjtvHlsOf(fjtvProvinceRows()[0]),
@@ -1535,7 +1567,7 @@ check('福建：只读取官方 streams[].hls，不使用错误备用字段或�
   }), '')
 })
 
-check('福建：固定输出6个省级与10个地市频道，规范名称并排除活动直播', () => {
+check('福建：固定输出6个省级与9个地市频道，排除重复低清厦门卫视与活动直播', () => {
   const groups = buildFjtvGroups([
     {
       sortId: fjtvProvinceSort,
@@ -1554,7 +1586,7 @@ check('福建：固定输出6个省级与10个地市频道，规范名称并排�
   )
   assert.deepEqual(
     groups[1].dataList.map(channel => channel.name),
-    ['厦门卫视', '福州新闻综合', '漳州新闻综合', '三明综合', '泉州新闻综合', '南平综合', '龙岩综合', '莆田新闻综合', '平潭综合', '宁德新闻综合'],
+    ['福州新闻综合', '漳州新闻综合', '三明综合', '泉州新闻综合', '南平综合', '龙岩综合', '莆田新闻综合', '平潭综合', '宁德新闻综合'],
   )
   assert.ok(groups.flatMap(group => group.dataList).every(channel =>
     !channel.proxyHls && !channel.relayHls && !channel.deferredRef))
@@ -1568,14 +1600,43 @@ check('福建：福州三路替换原单路并留在既有福建地市台分组'
   assert.deepEqual(groups.map(group => group.name), ['福建电视台', '福建地市台'])
   assert.deepEqual(
     groups[1].dataList.slice(0, 5).map(channel => channel.name),
-    ['厦门卫视', '福州综合', '福州生活', '福州少儿', '漳州新闻综合'],
+    ['福州综合', '福州生活', '福州少儿', '漳州新闻综合', '三明综合'],
   )
-  assert.equal(groups[1].dataList.length, 12)
+  assert.equal(groups[1].dataList.length, 11)
   assert.ok(!groups[1].dataList.some(channel => channel.name === '福州新闻综合'))
 
   const fallbackOnly = mergeFuzhouChannels([], FUZHOU_CHANNELS)
   assert.deepEqual(fallbackOnly.map(group => group.name), ['福建地市台'])
   assert.deepEqual(fallbackOnly[0].dataList.map(channel => channel.name), ['福州综合', '福州生活', '福州少儿'])
+})
+
+check('福建：排除厦门卫视，只把厦门三个地面频道并入原地市分组', () => {
+  const xiamen = XIAMEN_CHANNELS.map(channel => ({
+    name: channel.name,
+    deferredRef: `fjtv-xiamen-${channel.id}`,
+    proxyHls: true,
+  }))
+  const withXiamen = mergeXiamenChannels(buildFjtvGroups([
+    { sortId: fjtvProvinceSort, rows: fjtvProvinceRows() },
+    { sortId: fjtvCitySort, rows: fjtvCityRows() },
+  ]), xiamen)
+  assert.deepEqual(
+    withXiamen[1].dataList.slice(0, 4).map(channel => channel.name),
+    ['厦视一套', '厦视二套', '厦视三套', '福州新闻综合'],
+  )
+  assert.equal(withXiamen[1].dataList.length, 12)
+
+  const merged = mergeFuzhouChannels(withXiamen, FUZHOU_CHANNELS)
+  assert.deepEqual(
+    merged[1].dataList.slice(0, 7).map(channel => channel.name),
+    ['厦视一套', '厦视二套', '厦视三套', '福州综合', '福州生活', '福州少儿', '漳州新闻综合'],
+  )
+  assert.equal(merged[1].dataList.length, 14)
+
+  const fallbackOnly = mergeFuzhouChannels(mergeXiamenChannels([], xiamen), FUZHOU_CHANNELS)
+  assert.deepEqual(fallbackOnly[0].dataList.map(channel => channel.name), [
+    '厦视一套', '厦视二套', '厦视三套', '福州综合', '福州生活', '福州少儿',
+  ])
 })
 
 await checkAsync('福建：福州固定官方 HLS 逐路探测，单路失败不会拖掉其余频道', async () => {
@@ -1598,11 +1659,40 @@ await checkAsync('福建：福州固定官方 HLS 逐路探测，单路失败不
   )
 })
 
-await checkAsync('福建：仍用一个模块和原有两组；海博失败时回落到福州三路', async () => {
+await checkAsync('福建：厦门官方接口严格选三路，探测失败只跳过单路', async () => {
+  clearXiamenCache()
+  const result = await fetchXiamenChannels({
+    fetchImpl: (url, options) => fakeXiamenFetch(url, options, { failManifestId: '17' }),
+  })
+  assert.deepEqual(result.channels.map(channel => channel.name), ['厦视一套', '厦视三套'])
+  assert.ok(result.channels.every(channel => channel.proxyHls === true && /^fjtv-xiamen-/.test(channel.deferredRef)))
+  assert.match(result.warnings[0], /厦视二套探测失败：HTTP 503/)
+})
+
+await checkAsync('福建：厦门播放时刷新短效地址，并全代理官网 Referer', async () => {
+  clearXiamenCache()
+  let apiCalls = 0
+  const fetchImpl = async (url, options) => {
+    apiCalls++
+    return fakeXiamenFetch(url, options)
+  }
+  const first = await resolveXiamenChannel('fjtv-xiamen-16', { fetchImpl, now: 1900000000000 })
+  const second = await resolveXiamenChannel('fjtv-xiamen-16', { fetchImpl, now: 1900000001000 })
+  assert.equal(apiCalls, 1, '未过期的短效地址应复用，避免每个播放器请求都打官方接口')
+  assert.equal(first.url, second.url)
+  assert.equal(first.proxyHls, true)
+  assert.equal(first.upstreamHeaders.Referer, 'https://www.xmtv.cn/')
+  assert.match(first.url, /^https:\/\/live1\.kxm\.xmtv\.cn\/xmtjs1\/main\/live\.m3u8\?_upt=/)
+})
+
+await checkAsync('福建：仍用一个模块和原有两组；海博失败时回落到厦门、福州六路', async () => {
   const module = getModule('fjtv')
   const calls = []
   const fetchImpl = async (requestUrl, options) => {
     const url = new URL(String(requestUrl))
+    if (url.hostname === 'mapi1.kxm.xmtv.cn' || /^live\d+\.kxm\.xmtv\.cn$/.test(url.hostname)) {
+      return fakeXiamenFetch(requestUrl, options)
+    }
     if (url.hostname === 'live.zohi.tv') {
       assert.equal(options.headers.Referer, 'https://www.zohi.tv/')
       return fakeResponse('#EXTM3U\n#EXT-X-TARGETDURATION:6\n')
@@ -1617,17 +1707,22 @@ await checkAsync('福建：仍用一个模块和原有两组；海博失败时�
   const result = await module.fetch({}, { fetchImpl })
   assert.deepEqual(calls, [fjtvProvinceSort, fjtvCitySort])
   assert.equal(result.groups[0].dataList.length, 6)
-  assert.equal(result.groups[1].dataList.length, 12)
+  assert.equal(result.groups[1].dataList.length, 14)
   assert.deepEqual(result.meta.warnings, [])
 
-  const fallback = await module.fetch({}, { fetchImpl: async requestUrl => {
+  const fallback = await module.fetch({}, { fetchImpl: async (requestUrl, options) => {
     const url = new URL(String(requestUrl))
+    if (url.hostname === 'mapi1.kxm.xmtv.cn' || /^live\d+\.kxm\.xmtv\.cn$/.test(url.hostname)) {
+      return fakeXiamenFetch(requestUrl, options)
+    }
     if (url.hostname === 'live.zohi.tv') return fakeResponse('#EXTM3U\n#EXT-X-TARGETDURATION:6\n')
     const sortId = url.searchParams.get('sort_id')
     return fakeResponse(sortId === fjtvProvinceSort ? fjtvProvinceRows().slice(1) : fjtvCityRows())
   } })
   assert.deepEqual(fallback.groups.map(group => group.name), ['福建地市台'])
-  assert.deepEqual(fallback.groups[0].dataList.map(channel => channel.name), ['福州综合', '福州生活', '福州少儿'])
+  assert.deepEqual(fallback.groups[0].dataList.map(channel => channel.name), [
+    '厦视一套', '厦视二套', '厦视三套', '福州综合', '福州生活', '福州少儿',
+  ])
   assert.match(fallback.meta.warnings[0], /只找到 5\/6 个正式频道/)
 
   await assert.rejects(

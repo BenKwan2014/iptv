@@ -1,12 +1,18 @@
-/** 福建海博TV频道接口，以及福州广电官网的独立直播线路。 */
+/** 福建海博TV频道接口，以及福州、厦门广电官网的独立直播线路。 */
 import fetch from 'node-fetch'
 
 export const CHANNEL_LIST_URL = 'https://mapi-plus.fjtv.net/api/open/haibo8/tv_channel_list.php'
+export const XIAMEN_CHANNEL_URL = 'https://mapi1.kxm.xmtv.cn/api/v1/channel.php'
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
   + '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
 
 const FUZHOU_REFERER = 'https://www.zohi.tv/'
+const XIAMEN_REFERER = 'https://www.xmtv.cn/'
+const XIAMEN_EXPIRY_GUARD_MS = 60 * 1000
+
+const xiamenStreamCache = new Map()
+const xiamenPending = new Map()
 
 // 福视悦动官网播放器公开的三路固定 HLS。它们不经过海博 API，因而海博被
 // 讯飞 WAF 拦截时仍可独立工作。只接受这张固定表，避免把活动直播混进频道组。
@@ -15,6 +21,17 @@ export const FUZHOU_CHANNELS = Object.freeze([
   Object.freeze({ name: '福州生活', url: 'http://live.zohi.tv/video/s10001-fztv-3/index.m3u8' }),
   Object.freeze({ name: '福州少儿', url: 'http://live.zohi.tv/video/s10001-fztv-4/index.m3u8' }),
 ])
+
+// 看厦门官方频道接口当前提供 3 个值得保留的地面频道。厦门卫视清晰度低且
+// 咪咕已有更优来源，与移动电视一起固定排除；第三频道的接口原名是
+// 「直播通道3」，对外使用正式频道名。
+export const XIAMEN_CHANNELS = Object.freeze([
+  Object.freeze({ id: '16', rawNames: Object.freeze(['厦视一套']), name: '厦视一套', path: 'xmtjs1' }),
+  Object.freeze({ id: '17', rawNames: Object.freeze(['厦视二套']), name: '厦视二套', path: 'xmtjs2' }),
+  Object.freeze({ id: '18', rawNames: Object.freeze(['直播通道3', '厦视三套']), name: '厦视三套', path: 'xmtjs3' }),
+])
+
+const XIAMEN_BY_ID = new Map(XIAMEN_CHANNELS.map(channel => [channel.id, channel]))
 
 // sortId 来自海博TV 9.0.3「看电视」频道分类接口。ID + 原始名称双重校验，
 // 防止接口混入活动直播，或后台复用频道 ID 后把其它内容静默写进播放列表。
@@ -35,7 +52,6 @@ const GROUPS = [
     sortId: '665226484646215680',
     name: '福建地市台',
     channels: [
-      { id: '727571808803282944', rawName: '厦门卫视', name: '厦门卫视' },
       { id: '731087090473676800', rawName: '福州新闻综合频道', name: '福州新闻综合' },
       { id: '727214415649083392', rawName: '漳州新闻综合频道', name: '漳州新闻综合' },
       { id: '727216678547394560', rawName: '三明综合频道', name: '三明综合' },
@@ -204,4 +220,166 @@ export async function fetchFuzhouChannels(options = {}) {
   })
   if (!channels.length) throw new Error(`福州广电三路直播全部不可用：${warnings.join('；')}`)
   return { channels, warnings }
+}
+
+function xiamenHeaders({ manifest = false } = {}) {
+  return {
+    'User-Agent': UA,
+    Referer: XIAMEN_REFERER,
+    Accept: manifest
+      ? 'application/vnd.apple.mpegurl, application/x-mpegURL, */*'
+      : 'application/json, text/plain, */*',
+  }
+}
+
+function validXiamenStream(raw, definition) {
+  try {
+    const url = new URL(String(raw || '').trim())
+    if (url.protocol !== 'https:' || !/^live\d+\.kxm\.xmtv\.cn$/.test(url.hostname)) return null
+    if (!url.pathname.startsWith(`/${definition.path}/`) || !/\/(?:live|playlist)\.m3u8$/.test(url.pathname)) return null
+    const token = url.searchParams.get('_upt') || ''
+    const match = /([0-9]{10})$/.exec(token)
+    if (!/^[0-9a-f]+[0-9]{10}$/i.test(token) || !match) return null
+    return { url: url.href, expiresAt: Number(match[1]) * 1000 }
+  } catch {
+    return null
+  }
+}
+
+function xiamenLogo(row) {
+  const logo = row?.logo?.square_1 || row?.logo?.square || row?.snap
+  try {
+    const url = new URL(String(logo?.filename || ''), String(logo?.host || ''))
+    return url.protocol === 'https:' && url.hostname.endsWith('.kxm.xmtv.cn') ? url.href : ''
+  } catch {
+    return ''
+  }
+}
+
+async function requestXiamenChannel(definition, { timeoutMs = 10000, fetchImpl = fetch } = {}) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  const url = new URL(XIAMEN_CHANNEL_URL)
+  url.searchParams.set('channel_id', definition.id)
+  try {
+    const response = await fetchImpl(url.href, {
+      headers: xiamenHeaders(),
+      signal: controller.signal,
+    })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const payload = await response.json()
+    const row = Array.isArray(payload) ? payload[0] : null
+    if (!row || String(row.id) !== definition.id || !definition.rawNames.includes(String(row.name || '').trim())) {
+      throw new Error('频道身份与官方白名单不一致')
+    }
+    const streams = Array.isArray(row.channel_stream) ? row.channel_stream : []
+    const candidates = [
+      ...streams.filter(stream => Number(stream?.is_main) === 1).map(stream => stream?.m3u8 || stream?.url),
+      ...streams.map(stream => stream?.m3u8 || stream?.url),
+      row.m3u8,
+    ]
+    const stream = candidates.map(raw => validXiamenStream(raw, definition)).find(Boolean)
+    if (!stream) throw new Error('没有找到官方短效 HLS')
+    return { ...stream, logo: xiamenLogo(row) }
+  } catch (error) {
+    const reason = error?.name === 'AbortError' ? `超时 ${timeoutMs}ms` : (error?.message || String(error))
+    throw new Error(`${definition.name}接口请求失败：${reason}`)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function probeXiamenManifest(definition, stream, { timeoutMs = 10000, fetchImpl = fetch } = {}) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetchImpl(stream.url, {
+      headers: xiamenHeaders({ manifest: true }),
+      signal: controller.signal,
+    })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const manifest = await response.text()
+    if (!/^\s*#EXTM3U(?:\r?\n|$)/.test(manifest)) throw new Error('返回内容不是 HLS 清单')
+  } catch (error) {
+    const reason = error?.name === 'AbortError' ? `超时 ${timeoutMs}ms` : (error?.message || String(error))
+    throw new Error(`${definition.name}探测失败：${reason}`)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** 厦门三路独立探测；单路异常只跳过该路，全部失败才让调用方决定是否保缓存。 */
+export async function fetchXiamenChannels(options = {}) {
+  const settled = await Promise.allSettled(XIAMEN_CHANNELS.map(async definition => {
+    const stream = await requestXiamenChannel(definition, options)
+    await probeXiamenManifest(definition, stream, options)
+    xiamenStreamCache.set(definition.id, stream)
+    return {
+      name: definition.name,
+      deferredRef: `fjtv-xiamen-${definition.id}`,
+      proxyHls: true,
+      logo: stream.logo,
+    }
+  }))
+  const channels = []
+  const warnings = []
+  settled.forEach((result, index) => {
+    if (result.status === 'fulfilled') channels.push(result.value)
+    else warnings.push(result.reason?.message || `${XIAMEN_CHANNELS[index].name}抓取失败`)
+  })
+  if (!channels.length) throw new Error(`厦门广电三路直播全部不可用：${warnings.join('；')}`)
+  return { channels, warnings }
+}
+
+async function cachedXiamenStream(channelId, options = {}) {
+  const definition = XIAMEN_BY_ID.get(String(channelId || ''))
+  if (!definition) throw new Error('厦门频道 ID 无效')
+  const now = Number(options.now ?? Date.now())
+  const cached = xiamenStreamCache.get(definition.id)
+  if (cached && cached.expiresAt > now + XIAMEN_EXPIRY_GUARD_MS) return cached
+
+  let pending = xiamenPending.get(definition.id)
+  if (!pending) {
+    pending = requestXiamenChannel(definition, options)
+      .then(stream => {
+        xiamenStreamCache.set(definition.id, stream)
+        return stream
+      })
+      .finally(() => {
+        if (xiamenPending.get(definition.id) === pending) xiamenPending.delete(definition.id)
+      })
+    xiamenPending.set(definition.id, pending)
+  }
+  try {
+    return await pending
+  } catch (error) {
+    if (cached && cached.expiresAt > now) return cached
+    throw error
+  }
+}
+
+export async function resolveXiamenChannel(ref, ctx = {}) {
+  try {
+    const match = /^fjtv-xiamen-(16|17|18)$/.exec(String(ref || ''))
+    if (!match) return { url: '', desc: '厦门广电频道引用格式错误' }
+    const stream = await cachedXiamenStream(match[1], {
+      timeoutMs: ctx.timeoutMs,
+      fetchImpl: ctx.fetchImpl,
+      now: ctx.now,
+    })
+    const definition = XIAMEN_BY_ID.get(match[1])
+    return {
+      url: stream.url,
+      desc: `${definition.name}官方地址获取成功`,
+      proxyHls: true,
+      upstreamHeaders: xiamenHeaders({ manifest: true }),
+    }
+  } catch (error) {
+    return { url: '', desc: `厦门广电链接请求失败：${error?.message || String(error)}` }
+  }
+}
+
+export function clearXiamenCache() {
+  xiamenStreamCache.clear()
+  xiamenPending.clear()
 }
