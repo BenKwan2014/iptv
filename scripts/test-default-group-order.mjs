@@ -1,0 +1,56 @@
+#!/usr/bin/env node
+import assert from 'node:assert/strict'
+import { applyConfig, DEFAULT_GROUP_ORDER, sortGroupsByDefault } from '../utils/playlistConfig.js'
+
+const makeGroups = names => names.map((name, index) => ({
+  name,
+  channels: [{ id: `c${index}`, name: `频道${index}` }],
+}))
+
+const baseConfig = () => ({
+  channelGroupMap: {}, channelRenameMap: {}, channelOrder: {}, hiddenChannels: [],
+  customGroups: [], groupOrder: [], deletedGroups: [], groupRenameMap: {}, groupSortMode: {},
+})
+
+let passed = 0
+function check(name, fn) {
+  fn()
+  passed++
+  console.log(`  ✅ ${name}`)
+}
+
+console.log('默认分组顺序测试')
+
+check('内容类按固定顺序置顶，不受来源顺序影响', () => {
+  const shuffled = [
+    '斗鱼', '卫视', '体育-明天', '新闻', '体育', 'B站', '央视',
+    '少儿', '纪实', '体育-昨天', '亚太', '综艺', '虎牙', '影视', '教育', '体育-今天',
+  ]
+  assert.deepEqual(sortGroupsByDefault(makeGroups(shuffled)).map(group => group.name), DEFAULT_GROUP_ORDER)
+})
+
+check('地方台连续放在内容类之后，并保持原相对顺序', () => {
+  const names = ['广东', '自定义', '体育', '地方', '福建地市台', '辽宁', '纪实', '宁夏电视台']
+  assert.deepEqual(
+    sortGroupsByDefault(makeGroups(names)).map(group => group.name),
+    ['体育', '纪实', '广东', '地方', '福建地市台', '辽宁', '宁夏电视台', '自定义'],
+  )
+})
+
+check('景观分组统一放在最后，并保持原相对顺序', () => {
+  const names = ['上海景观', '广东', '青岛景观', '其他', '南京景观', '央视']
+  assert.deepEqual(
+    sortGroupsByDefault(makeGroups(names)).map(group => group.name),
+    ['央视', '广东', '其他', '上海景观', '青岛景观', '南京景观'],
+  )
+})
+
+check('用户手动 groupOrder 仍优先于默认顺序', () => {
+  const result = applyConfig(makeGroups(['体育', '央视', '广东', '上海景观']), {
+    ...baseConfig(),
+    groupOrder: ['上海景观', '广东', '央视', '体育'],
+  })
+  assert.deepEqual(result.map(group => group.name), ['上海景观', '广东', '央视', '体育'])
+})
+
+console.log(`\n全部通过：${passed}/${passed} ✅`)

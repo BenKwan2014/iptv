@@ -26,6 +26,60 @@ const PROFILES_PATH = dataPath('my-playlist-profiles.json')
 const PROFILE_ID_RE = /^[a-z0-9_-]{1,64}$/
 const DEFAULT_PROFILE = { id: 'default', name: '默认' }
 
+// 新建配置档的默认分组顺序。用户在后台手动拖拽后会写入
+// groupOrder，下方 applyConfig 仍以用户顺序为最终优先级。
+export const DEFAULT_GROUP_ORDER = [
+  '体育', '体育-昨天', '体育-今天', '体育-明天',
+  '央视', '卫视', '亚太', '新闻', '影视', '少儿', '教育', '综艺', '纪实',
+  'B站', '虎牙', '斗鱼',
+]
+
+const LOCAL_GROUP_NAMES = new Set([
+  '北京', '天津', '上海', '重庆',
+  '河北', '山西', '辽宁', '吉林', '黑龙江',
+  '江苏', '浙江', '安徽', '福建', '江西', '山东',
+  '河南', '湖北', '湖南', '广东', '海南',
+  '四川', '贵州', '云南', '陕西', '甘肃', '青海',
+  '内蒙古', '广西', '西藏', '宁夏', '新疆',
+  '香港', '澳门', '台湾',
+  '地方',
+  // 当前已接入的城市级模块；广州/深圳电视频道已并入广东。
+  '沈阳', '南京', '青岛', '广州', '深圳', '福州', '厦门',
+])
+
+function isScenicGroup(name) {
+  return String(name || '').includes('景观')
+}
+
+function isLocalGroup(name) {
+  const text = String(name || '').trim()
+  if (/(?:电视台|地市台)$/.test(text)) return true
+  const bare = text.replace(/(?:电视台|地市台|频道)$/, '')
+  return LOCAL_GROUP_NAMES.has(bare)
+}
+
+/**
+ * 默认分组编排：内容类精确顺序 → 地方台连续区块 → 其他 → 景观。
+ * 同一区块内保持来源原始顺序，避免每次刷新时频道乱跳。
+ */
+export function sortGroupsByDefault(groups) {
+  const priority = new Map(DEFAULT_GROUP_ORDER.map((name, index) => [name, index]))
+  return [...groups]
+    .map((group, originalIndex) => ({ group, originalIndex }))
+    .sort((a, b) => {
+      const nameA = a.group?.name || ''
+      const nameB = b.group?.name || ''
+      const exactA = priority.get(nameA)
+      const exactB = priority.get(nameB)
+      const bucketA = exactA !== undefined ? 0 : isScenicGroup(nameA) ? 3 : isLocalGroup(nameA) ? 1 : 2
+      const bucketB = exactB !== undefined ? 0 : isScenicGroup(nameB) ? 3 : isLocalGroup(nameB) ? 1 : 2
+      if (bucketA !== bucketB) return bucketA - bucketB
+      if (bucketA === 0 && exactA !== exactB) return exactA - exactB
+      return a.originalIndex - b.originalIndex
+    })
+    .map(item => item.group)
+}
+
 // 归一化档名：空 / 'default' / 非法 → 默认档（杜绝任意 profile 名经文件名注入）
 function normalizeProfile(profile) {
   if (!profile || profile === 'default' || !PROFILE_ID_RE.test(profile)) return 'default'
@@ -410,6 +464,9 @@ export function applyConfig(groups, config) {
     // 4. 转换为数组并排序
     let result = Object.entries(resultGroups)
       .map(([name, channels]) => ({ name, channels }))
+
+    // 先套用系统默认顺序；下方若有用户 groupOrder，会再覆盖它。
+    result = sortGroupsByDefault(result)
     
     // 5. 应用分组排序
     if (config.groupOrder && config.groupOrder.length > 0) {
