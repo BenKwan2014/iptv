@@ -51,7 +51,7 @@ function isScenicGroup(name) {
   return String(name || '').includes('景观')
 }
 
-function isLocalGroup(name) {
+export function isLocalGroup(name) {
   const text = String(name || '').trim()
   if (/(?:电视台|地市台)$/.test(text)) return true
   const bare = text.replace(/(?:电视台|地市台|频道)$/, '')

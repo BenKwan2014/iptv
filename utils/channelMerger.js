@@ -2,6 +2,7 @@ import externalSourceManager from "./externalSources.js"
 import builtInSourceManager from "./builtInSources.js"
 import { getExtractorManager } from "./extractorManager.js"
 import { printBlue, printGreen, printYellow, printRed } from "./colorOut.js"
+import { isLocalGroup } from "./playlistConfig.js"
 
 // 频道的「主来源」标识（issue #29/#68 按档过滤源）：
 // 外部/内置/抓取模块的频道在 getValidChannels 里带上 sourceId（ext:<id> / bi:<id> / xt:<id>），
@@ -44,6 +45,84 @@ function dedupeAllChannels(allChannels) {
   return removed
 }
 
+// 地方官方模块的少儿频道统一收到「少儿」组。部分频道
+// 名字不带「少儿 / 卡通 / 动漫」，需要明确补入，避免漏分。
+const LOCAL_KIDS_EXACT_NAMES = new Set(['哈哈炫动'])
+
+function isKidsChannel(channel) {
+  const name = String(channel?.name || '').trim()
+  return LOCAL_KIDS_EXACT_NAMES.has(name) || /(少儿|卡通|动漫)/.test(name)
+}
+
+// 只用于少儿组的重复判定：「优漫卡通频道」与「优漫卡通」、
+// 「海南广播电视总台少儿频道」与「海南少儿」应视为同一频道。
+function kidsChannelKey(channel) {
+  return String(channel?.name || '')
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/广播电视总台/g, '')
+    .replace(/频道$/, '')
+}
+
+/**
+ * 把地方分组的少儿频道移入「少儿」；如果已有同名/同台条目，
+ * 用地方官方源原位替换并去掉重复。返回新分组，不修改输入。
+ */
+function consolidateLocalKidsChannels(groups) {
+  const output = (Array.isArray(groups) ? groups : []).map(group => ({
+    ...group,
+    dataList: [...(Array.isArray(group?.dataList) ? group.dataList : [])],
+  }))
+  const localKids = []
+
+  for (const group of output) {
+    if (!isLocalGroup(group.name)) continue
+    group.dataList = group.dataList.filter(channel => {
+      if (!isKidsChannel(channel)) return true
+      localKids.push(channel)
+      return false
+    })
+  }
+  if (!localKids.length) return output
+
+  const preferred = new Map()
+  for (const channel of localKids) {
+    const key = kidsChannelKey(channel)
+    if (key && !preferred.has(key)) preferred.set(key, channel)
+  }
+
+  let kidsGroup = output.find(group => group.name === '少儿')
+  if (!kidsGroup) {
+    kidsGroup = { name: '少儿', dataList: [] }
+    const firstLocal = output.findIndex(group => isLocalGroup(group.name))
+    output.splice(firstLocal >= 0 ? firstLocal : output.length, 0, kidsGroup)
+  }
+
+  const placedPreferred = new Set()
+  const merged = []
+  for (const channel of kidsGroup.dataList) {
+    const key = kidsChannelKey(channel)
+    const local = preferred.get(key)
+    if (!local) {
+      merged.push(channel)
+      continue
+    }
+    if (!placedPreferred.has(key)) {
+      merged.push(local)
+      placedPreferred.add(key)
+    }
+  }
+  for (const channel of localKids) {
+    const key = kidsChannelKey(channel)
+    if (placedPreferred.has(key)) continue
+    merged.push(preferred.get(key) || channel)
+    placedPreferred.add(key)
+  }
+  kidsGroup.dataList = merged
+
+  return output.filter(group => group.dataList.length > 0)
+}
+
 /**
  * 获取所有频道数据（咪咕 + 外部源）
  * @param {Object} options - 选项
@@ -69,7 +148,7 @@ async function getAllChannels() {
     // 合并数据：抓取模块（咪咕居首）+ 内置源 + 外部源
     // 组内去重保留先入者，所以打底的顺序即优先级——咪咕在注册表 MODULES 里
     // 排第一，其频道的优先级与收编前一致。
-    const allChannels = extractorChannels.map(group => ({
+    let allChannels = extractorChannels.map(group => ({
       ...group,
       dataList: [...group.dataList]
     }))
@@ -115,6 +194,10 @@ async function getAllChannels() {
         })
       }
     })
+
+    // 内容型分组按频道性质统一：地方少儿频道移入「少儿」，
+    // 且在同台多源时优先地方官方线路。
+    allChannels = consolidateLocalKidsChannels(allChannels)
     
     // 频道级去重：同一分组内，name + 播放地址 完全相同的频道只保留第一个
     // （合并顺序为 咪咕 > 内置 > 外部 > 抓取模块，因此优先保留更高优先级的来源）
@@ -236,5 +319,6 @@ export {
   externalSourceManager,
   builtInSourceManager,
   dedupeAllChannels,
-  primarySourceId
+  primarySourceId,
+  consolidateLocalKidsChannels
 }

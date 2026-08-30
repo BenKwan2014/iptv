@@ -17,7 +17,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ensureSourceIds, inheritExistingSourceIds } from '../utils/externalSources.js'
-import { dedupeAllChannels, primarySourceId } from '../utils/channelMerger.js'
+import { consolidateLocalKidsChannels, dedupeAllChannels, primarySourceId } from '../utils/channelMerger.js'
 import { applyConfig } from '../utils/playlistConfig.js'
 
 for (const k of ['log', 'info', 'warn']) {
@@ -63,6 +63,53 @@ check('dedupeAllChannels：重复频道归属并入保留者 sourceIds', () => {
   const migu = groups[0].dataList.find(c => c.pID)
   assert.equal(primarySourceId(migu), 'migu')                 // 咪咕隐式识别
   assert.deepEqual(migu.sourceIds, ['migu'])                  // 同源重复归并为单元素集合（与写盘回退主来源等价）
+})
+
+check('地方少儿频道统一移入少儿组，同台优先地方官方源', () => {
+  const input = [
+    { name: '少儿', dataList: [
+      { name: '嘉佳卡通', pID: 'm1' },
+      { name: '优漫卡通频道', pID: 'm2' },
+      { name: '经典动画大集合', pID: 'm3' },
+      { name: '新动漫', pID: 'm4' },
+      { name: '海南广播电视总台少儿频道', pID: 'm5' },
+    ] },
+    { name: '广东', dataList: [
+      { name: '广东少儿', sourceId: 'xt:gdtv' },
+      { name: '嘉佳卡通', sourceId: 'xt:gdtv' },
+      { name: '广东新闻', sourceId: 'xt:gdtv' },
+      { name: '深圳少儿', sourceId: 'xt:sztv' },
+    ] },
+    { name: '江苏', dataList: [{ name: '优漫卡通', sourceId: 'xt:jstv' }] },
+    { name: '辽宁', dataList: [{ name: '新动漫', sourceId: 'xt:beidou' }] },
+    { name: '海南', dataList: [{ name: '海南少儿', sourceId: 'xt:hnntv' }] },
+    { name: '上海', dataList: [{ name: '哈哈炫动', sourceId: 'xt:kankanews' }] },
+    { name: '央视', dataList: [{ name: 'CCTV14少儿', sourceId: 'migu' }] },
+  ]
+  const before = JSON.stringify(input)
+  const output = consolidateLocalKidsChannels(input)
+  const kids = output.find(group => group.name === '少儿').dataList
+
+  assert.deepEqual(kids.map(channel => channel.name), [
+    '嘉佳卡通', '优漫卡通', '经典动画大集合', '新动漫', '海南少儿',
+    '广东少儿', '深圳少儿', '哈哈炫动',
+  ])
+  assert.equal(kids.find(channel => channel.name === '嘉佳卡通').sourceId, 'xt:gdtv')
+  assert.equal(kids.find(channel => channel.name === '优漫卡通').sourceId, 'xt:jstv')
+  assert.equal(kids.find(channel => channel.name === '新动漫').sourceId, 'xt:beidou')
+  assert.equal(kids.find(channel => channel.name === '海南少儿').sourceId, 'xt:hnntv')
+  assert.deepEqual(output.find(group => group.name === '广东').dataList.map(channel => channel.name), ['广东新闻'])
+  assert.equal(output.find(group => group.name === '央视').dataList[0].name, 'CCTV14少儿')
+  assert.equal(JSON.stringify(input), before, '不应修改输入分组')
+})
+
+check('原本没有少儿组时自动创建，并放在地方分组之前', () => {
+  const output = consolidateLocalKidsChannels([
+    { name: '新闻', dataList: [{ name: '国际新闻' }] },
+    { name: '浙江', dataList: [{ name: '浙江少儿', sourceId: 'xt:cztv' }] },
+  ])
+  assert.deepEqual(output.map(group => group.name), ['新闻', '少儿'])
+  assert.deepEqual(output[1].dataList.map(channel => channel.name), ['浙江少儿'])
 })
 
 // 3) applyConfig disabledSources 语义
@@ -149,4 +196,4 @@ console.log('ROUNDTRIP_OK')
   }
 })
 
-console.log(`\n全部通过：${passed}/9 ✅`)
+console.log(`\n全部通过：${passed}/${passed} ✅`)
