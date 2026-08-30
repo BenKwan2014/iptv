@@ -64,6 +64,11 @@ import {
   resolveChannel as resolveIqiluChannel,
 } from '../extractors/iqilu/api.js'
 import {
+  buildChannels as buildHnntvChannels,
+  clearCache as clearHnntvCache,
+  resolveChannel as resolveHnntvChannel,
+} from '../extractors/hnntv/api.js'
+import {
   buildChannels as buildHntvChannels,
   buildSignedHeaders as buildHntvSignedHeaders,
   clearCache as clearHntvCache,
@@ -495,6 +500,18 @@ check('河南大象新闻模块已注册，使用固定两小时刷新且排除�
   assert.equal(hntv.refreshConfigurable, false)
   assert.deepEqual(hntv.configSchema, [])
   assert.equal(resolverFor('hntv-145')?.id, 'hntv')
+})
+
+check('海南网台模块已注册，频道定时同步且播放时解析签名地址', () => {
+  const hnntv = getModule('hnntv')
+  assert.ok(hnntv)
+  assert.equal(hnntv.capabilities.cache, 'disk')
+  assert.equal(hnntv.capabilities.resolve, true)
+  assert.equal(hnntv.defaultRefreshMinutes, 240)
+  assert.equal(hnntv.refreshConfigurable, false)
+  assert.deepEqual(hnntv.configSchema, [])
+  assert.equal(resolverFor('hnntv-13')?.id, 'hnntv')
+  assert.equal(resolverFor('hnntv-13/extra'), null)
 })
 
 check('芒果 TV 模块已注册，固定刷新策略且不暴露技术设置', () => {
@@ -1729,6 +1746,72 @@ await checkAsync('福建：仍用一个模块和原有两组；海博失败时�
     () => module.fetch({}, { fetchImpl: async () => ({ ok: false, status: 403 }) }),
     /全部抓取失败.*HTTP 403/,
   )
+})
+
+// ---- 海南网络广播电视台 ----
+
+const hnntvRows = () => [
+  { id: 13, name: '海南卫视', code: 'STHaiNan_channel_lywsgq', type: 1, liveUrl: 'https://live2.hnntv.cn/srs/tv/lywsgq.m3u8' },
+  { id: 5, name: '三沙卫视', code: 'STHaiNan_channel_ssws', type: 1, liveUrl: 'https://livessws.hnntv.cn/live/ssws_260111hnntv.m3u8' },
+  { id: 1, name: '海南自贸', code: 'jjpd', type: 1, liveUrl: 'https://live2.hnntv.cn/srs/tv/jjpd.m3u8' },
+  { id: 3, name: '海南新闻', code: 'STHaiNan_channel_xwpd', type: 1, liveUrl: 'https://live2.hnntv.cn/srs/tv/xwpd.m3u8' },
+  { id: 4, name: '海南社会与法', code: 'ggpd', type: 1, liveUrl: 'https://live2.hnntv.cn/srs/tv/ggpd.m3u8' },
+  { id: 6, name: '海南文旅', code: 'wlpd', type: 1, liveUrl: 'https://live2.hnntv.cn/srs/tv/wlpd.m3u8' },
+  { id: 7, name: '海南少儿', code: 'sepd', type: 1, liveUrl: 'https://live2.hnntv.cn/srs/tv/sepd.m3u8' },
+]
+
+check('海南：只输出固定七套电视，保持官网顺序并拒绝身份错配', () => {
+  const rows = hnntvRows()
+  rows.reverse()
+  rows.push(
+    { id: 8, name: '海南交通广播', code: 'jtgb', type: 2, liveUrl: 'https://live2.hnntv.cn/srs/radio/jtgb.m3u8' },
+    { id: 13, name: '伪造卫视', code: 'STHaiNan_channel_lywsgq', type: 1, liveUrl: 'https://live2.hnntv.cn/srs/tv/lywsgq.m3u8' },
+    { id: 5, name: '三沙卫视', code: 'wrong', type: 1, liveUrl: 'https://example.com/ssws.m3u8' },
+  )
+  const channels = buildHnntvChannels(rows)
+  assert.deepEqual(channels.map(channel => channel.name), [
+    '海南卫视', '三沙卫视', '海南自贸', '海南新闻', '海南社会与法', '海南文旅', '海南少儿',
+  ])
+  assert.deepEqual(channels.map(channel => channel.deferredRef), [
+    'hnntv-13', 'hnntv-5', 'hnntv-1', 'hnntv-3', 'hnntv-4', 'hnntv-6', 'hnntv-7',
+  ])
+  assert.ok(channels.every(channel => !channel.proxyHls && !channel.relayHls))
+})
+
+await checkAsync('海南：抓取七套频道，播放时签名并在有效期内复用地址', async () => {
+  clearHnntvCache()
+  const startedAt = 1720000000000
+  const signedUrl = 'https://live2.hnntv.cn/srs/tv/lywsgq.m3u8?_upt=deadbeef1720007200'
+  let listCalls = 0
+  let playCalls = 0
+  const fetchImpl = async (requestUrl, options = {}) => {
+    const url = new URL(String(requestUrl))
+    assert.equal(options.headers.Origin, 'https://www.hnntv.cn')
+    if (url.hostname === 'www.hnntv.cn') {
+      listCalls++
+      assert.equal(url.searchParams.get('type'), '1')
+      return fakeResponse({ businessCode: '00000', resultSet: hnntvRows() })
+    }
+    playCalls++
+    assert.equal(url.hostname, 'ps.hnntv.cn')
+    assert.equal(url.searchParams.get('channelCode'), 'STHaiNan_channel_lywsgq')
+    assert.equal(url.searchParams.get('appCode'), '')
+    assert.equal(url.searchParams.get('token'), '')
+    return fakeResponse({ businessCode: 200, resultSet: [{ url: signedUrl }] })
+  }
+
+  const module = getModule('hnntv')
+  const result = await module.fetch({}, { fetchImpl, now: startedAt })
+  assert.equal(result.groups[0].name, '海南电视台')
+  assert.equal(result.groups[0].dataList.length, 7)
+
+  const first = await resolveHnntvChannel('hnntv-13', { fetchImpl, now: startedAt + 1000 })
+  const cached = await resolveHnntvChannel('hnntv-13', { fetchImpl, now: startedAt + 2000 })
+  assert.equal(first.url, signedUrl)
+  assert.equal(cached.url, signedUrl)
+  assert.equal(first.upstreamHeaders, undefined)
+  assert.equal(listCalls, 1)
+  assert.equal(playCalls, 1)
 })
 
 // ---- 河南大象新闻 ----

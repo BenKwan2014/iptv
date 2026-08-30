@@ -74,6 +74,7 @@ import cztv from './cztv/index.js'
 import fjtv from './fjtv/index.js'
 import gdtv from './gdtv/index.js'
 import gxtv from './gxtv/index.js'
+import hnntv from './hnntv/index.js'
 import hntv from './hntv/index.js'
 import jstv from './jstv/index.js'
 import iqilu from './iqilu/index.js'
@@ -92,6 +93,7 @@ const MODULES = [
   gdtv,
   gxtv,
   fjtv,
+  hnntv,
   hntv,
   cztv,
   jstv,
