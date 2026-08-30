@@ -1,6 +1,6 @@
 FROM node:22-alpine
 
-WORKDIR /migu
+WORKDIR /iptv
 
 # 先复制 package 文件并安装依赖
 COPY package*.json ./
@@ -43,12 +43,18 @@ RUN apk add --no-cache tzdata \
   && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
   && echo $TZ > /etc/timezone
 
-# 默认把运行时配置/数据写到 /migu/data，并声明为数据卷。
+# 默认把运行时配置/数据写到 /iptv/data，并声明为数据卷。
 # 这样即使用户不在 compose 里挂卷，常规 `docker compose pull && up -d` 升级也会
 # 自动复用同一个卷、不丢配置（系统配置/账号/订阅源/我的频道等）。
-# 仍推荐在 compose 里用 `-v ./data:/migu/data` 绑定到宿主机，便于备份与跨 down/up 持久化。
-ENV mdataDir=/migu/data
-VOLUME ["/migu/data"]
+# 仍推荐在 compose 里用 `-v ./data:/iptv/data` 绑定到宿主机，便于备份与跨 down/up 持久化。
+#
+# 兼容旧路径 /migu/data（≤ v4.1.0 镜像的数据目录，早年项目只有咪咕时起的名）：
+# - /migu/data 仍保留在 VOLUME 声明里，老部署（不挂卷、数据在旧路径匿名卷）升级后
+#   compose 会继续把旧匿名卷挂回原位；
+# - 老 compose 挂 ./data:/migu/data 的照常生效；
+# - 两种情况都由 utils/paths.js 检测「新默认路径无数据、旧路径有数据」自动沿用旧路径，零操作不丢配置。
+ENV mdataDir=/iptv/data
+VOLUME ["/iptv/data", "/migu/data"]
 
 # 通过 tini 启动，确保僵尸进程被回收、信号被正确转发
 ENTRYPOINT ["/sbin/tini", "--"]

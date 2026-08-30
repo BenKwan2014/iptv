@@ -113,7 +113,7 @@ services:
       # - mhost=                  # 可选：外部访问地址（如 http://192.168.1.100:1905）
       # - mpass=                  # 可选：访问密码，设置后访问 http://ip:port/密码/...
     volumes:
-      - ./data:/migu/data         # 数据持久化，不挂载则重建容器 / 升级镜像会丢配置
+      - ./data:/iptv/data         # 数据持久化，不挂载则重建容器 / 升级镜像会丢配置
     restart: always
 ```
 
@@ -229,7 +229,7 @@ docker compose pull && docker compose up -d
 | mport | 1905 | 容器监听端口 |
 | mhost | | 公网 / NAS 访问地址，如 `http://192.168.1.100:1905` |
 | mpass | | 访问密码（可选），设置后访问 `http://ip:port/密码/...` |
-| mdataDir | /migu/data | 数据持久化目录（镜像已默认此值并声明数据卷）；建议 `-v ./data:/migu/data` 绑定宿主机便于备份 |
+| mdataDir | /iptv/data | 数据持久化目录（镜像已默认此值并声明数据卷）；建议 `-v ./data:/iptv/data` 绑定宿主机便于备份。老部署挂的 `/migu/data` 继续兼容，无需改动 |
 
 <details>
 <summary><b>📋 完整配置表（全部环境变量）</b></summary>
@@ -239,7 +239,7 @@ docker compose pull && docker compose up -d
 | mport | 1905 | number | 本地运行端口号 |
 | mhost | | string | 公网/自定义访问地址<br>格式<http://ip:port> |
 | mpass | | string | 访问密码 大小写字母和数字<br>添加后访问格式 <http://ip:port/mpass/>... |
-| mdataDir | 镜像内 `/migu/data`；node 直跑为当前目录 | string | 配置 / 数据持久化目录（**仅环境变量可设**） |
+| mdataDir | 镜像内 `/iptv/data`；node 直跑为当前目录 | string | 配置 / 数据持久化目录（**仅环境变量可设**）<br>旧镜像路径 `/migu/data` 继续兼容：新路径无数据、旧路径有数据时自动沿用旧路径 |
 | madminPath | admin | string | 管理页面自定义路径，如填 `console` 则用 `/console` 访问后台（`/admin` 失效）<br>保留字 api/player/favicon.ico 与非法值会回退 admin |
 | muserId | | string | 咪咕模块的账号 ID（仅需高画质 / 会员内容时配置）<br>**推荐改在后台模块卡片里配置**（附书签工具一键获取） |
 | mtoken | | string | 咪咕模块的登录 token（同上） |
