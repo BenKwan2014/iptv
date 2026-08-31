@@ -67,10 +67,13 @@ check('导出只含白名单配置（含配置档动态名），不含缓存', (
 
 // 2) 导入白名单：未知名/穿越名/非对象内容全部跳过
 check('导入拒绝白名单外文件与非对象内容', () => {
+  // 穿越名不能用 ../../etc/passwd 之类真实系统路径：tmpdir 直接挂在 / 下的环境里
+  // （Linux 容器 /tmp），existsSync 会命中真实的 /etc/passwd，断言变成环境相关。
+  // 用一个不可能预先存在的探针名，专测「导入没有把文件写出数据目录」。
   const r = importConfigAPI({
     format: BACKUP_FORMAT, version: 1,
     files: {
-      '../../etc/passwd': { evil: true },
+      '../../iptv-escape-probe.json': { evil: true },
       'pe-cache.json': { evil: true },
       'system-config.json; rm -rf': { evil: true },
       'channel-aliases.json': 'not-an-object',
@@ -80,7 +83,7 @@ check('导入拒绝白名单外文件与非对象内容', () => {
   assert.equal(r.success, true)
   assert.deepEqual(r.imported, ['epg-sources.json'])
   assert.equal(r.skipped.length, 4)
-  assert.equal(existsSync(join(DIR, '../../etc/passwd')), false)
+  assert.equal(existsSync(join(DIR, '../../iptv-escape-probe.json')), false)
 })
 
 // 3) 全部非法时整体失败
