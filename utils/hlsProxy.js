@@ -259,6 +259,10 @@ async function probeUpstream(url, req, res, transform, upstreamHeaders = {}) {
 
   if (transform) return synthetic('分片需转换，不能透传上游长度')
 
+  // 嵌套子清单 key（/proxy/s<hex>.m3u8）的 GET 会把上游清单改写后再下发，长度必然与
+  // 上游不同——透传上游长度反而让 HEAD 与随后的 GET 自相矛盾，对长度较真的播放器有害
+  if (/\.m3u8(?:\?|$)/i.test(req.url || '')) return synthetic('嵌套子清单会改写，长度以 GET 为准')
+
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), 10000)
   try {
@@ -276,6 +280,12 @@ async function probeUpstream(url, req, res, transform, upstreamHeaders = {}) {
     // 常见于 CDN 不实现/拦截 HEAD，维持旧行为回退合成 200，GET 链路不受影响。
     if (!upstream.ok && upstream.status !== 404 && upstream.status !== 410) {
       return synthetic(`上游 HEAD ${upstream.status}`)
+    }
+
+    // 部分 CDN 对流媒体路径的 HEAD 回 200 但 Content-Length: 0——透传会让严格播放器
+    // 把分片当空文件跳过。长度不可信时视同上游不支持 HEAD，回退合成 200
+    if (upstream.ok && upstream.headers.get('content-length') === '0') {
+      return synthetic('上游 HEAD 长度为 0，不可信')
     }
 
     const out = responseHeaders(upstream, url)

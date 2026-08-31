@@ -153,6 +153,13 @@ const cdn = http.createServer((req, res) => {
     res.end(SEG_BODY)
     return
   }
+  if (path === '/live/zero-head.ts') {
+    // 部分 CDN 对流媒体路径的 HEAD 回 200 但长度为 0
+    if (req.method === 'HEAD') { res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Content-Length': 0 }); res.end(); return }
+    res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Content-Length': SEG_BODY.length })
+    res.end(SEG_BODY)
+    return
+  }
   if (path.startsWith('/protected/')) {
     if (req.headers.origin !== 'https://live.jstv.com' || req.headers.referer !== 'https://live.jstv.com/') {
       res.writeHead(403); res.end('missing anti-hotlink headers'); return
@@ -287,6 +294,26 @@ await checkAsync('上游不支持 HEAD 时回退合成 200，后续 GET 仍能�
   const get = await fetch(`${nasBase}/proxy/${key}.ts`)
   assert.equal(get.status, 200)
   assert.deepEqual(Buffer.from(await get.arrayBuffer()), SEG_BODY)
+})
+
+await checkAsync('上游 HEAD 长度为 0 视为不可信：回退合成 200，不误报空分片', async () => {
+  const key = register(`http://127.0.0.1:${cdn.address().port}/live/zero-head.ts`, 'zero-head')
+  const head = await fetch(`${nasBase}/proxy/${key}.ts`, { method: 'HEAD' })
+  assert.equal(head.status, 200)
+  assert.equal(head.headers.get('content-type'), 'video/mp2t')
+  assert.equal(head.headers.get('content-length'), null, '长度为 0 的上游应答不能透传给播放器')
+
+  const get = await fetch(`${nasBase}/proxy/${key}.ts`)
+  assert.equal(get.status, 200)
+  assert.deepEqual(Buffer.from(await get.arrayBuffer()), SEG_BODY)
+})
+
+await checkAsync('嵌套子清单 key 的 HEAD 走合成应答：GET 会改写清单，上游长度不可透传', async () => {
+  const key = register(`http://127.0.0.1:${cdn.address().port}/live/01.m3u8`, 'nested-head')
+  const head = await fetch(`${nasBase}/proxy/${key}.m3u8`, { method: 'HEAD' })
+  assert.equal(head.status, 200)
+  assert.equal(head.headers.get('content-type'), 'application/vnd.apple.mpegurl')
+  assert.equal(head.headers.get('content-length'), null, '透传上游长度会与改写后的 GET 正文自相矛盾')
 })
 
 await checkAsync('未登记 / 已过期的分片地址回 404，播放器会重新拉清单', async () => {

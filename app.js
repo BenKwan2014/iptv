@@ -82,7 +82,9 @@ function logProxySegmentResult(pid, req, result, elapsedMs) {
   const client = clientOf(req)
   const key = `seg-result|${result.ok ? 'ok' : 'fail'}|${pid}|${client.key}|${req.method}`
   if (logOncePer(key, result.ok ? 60 * 1000 : 10 * 1000)) {
-    const detail = result.error ? ` error:${result.error}` : ''
+    // 无 error 却不完整 = 传输中途断开（多为客户端切台提前挂断）——标出来，
+    // 否则黄行里「-> 200」和「失败」并存会让读日志的人困惑
+    const detail = result.error ? ` error:${result.error}` : (result.complete ? '' : ' 未完整')
     const line = `全代理：${pid} ${req.method} 分片 -> ${result.status}，${result.bytes} bytes，${elapsedMs}ms${detail}｜${client.tag}`
     if (result.ok) printGrey(line); else printYellow(line)
   }
