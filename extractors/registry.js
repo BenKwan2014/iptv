@@ -45,6 +45,8 @@
  *       segmentTransform(buffer) 可选；仅供必须全代理、且分片需要平台特有处理的
  *       模块使用。函数可原地修改 Buffer，也可返回新的 Buffer。
  *       upstreamHeaders 可选；仅由本机清单/分片代理向官方 CDN 发送（防盗链平台）。
+ *       注意 User-Agent 是例外：代理层统一改写成自己的 UA，这里声明了也不会生效，
+ *       原因见 utils/hlsProxy.js 里 UA 常量上方的说明。Referer / Origin 等其余头正常透传。
  *       upstreamUrlTransform(url) 可选；全代理登记清单内的子清单/分片地址前调用。
  *       用于每条 HLS 路径都要独立签名的平台，函数必须把输入限制在平台自己的主机。
  *       manifestText + manifestUrl 可选；浏览器能读取、普通 HTTP 客户端会被指纹校验

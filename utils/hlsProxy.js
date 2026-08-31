@@ -127,6 +127,19 @@ function toProxyManifest(text, pid = '', transform, upstreamHeaders, upstreamUrl
   }).join('\n')
 }
 
+/**
+ * 代理向上游取流时统一使用的 UA。
+ *
+ * ⚠️ 下面三处都写作 `{ ...upstreamHeaders, 'User-Agent': UA }`——后写的键覆盖先展开的，
+ * 所以**模块在 upstreamHeaders 里声明的 User-Agent 不会生效**，一律被换成这个值。
+ * 这与 registry.js 中「upstreamHeaders 是平台要求的上游请求头」的说法有出入，特此说明，
+ * 免得下一个人照着声明 UA 却查不出为何没起作用。
+ *
+ * 保持现状是有意的：目前声明了 UA 的模块（mgtv/songjiang/douyu-live 等）全都是在这个
+ * Chrome UA 下开发并验证通过的，它们声明的 Mac / Android / iPhone UA 从未真正发出过。
+ * 调换顺序等于把一批正常工作的模块换到未经验证的取流路径上——移动端 UA 很可能拿到不同的
+ * 码率或流格式。真遇到某个平台因 UA 取流异常，就针对那一个模块改并实测，不要整体翻。
+ */
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
 
 // 上游 → 客户端要原样带过去的响应头（其余一律不带，避免上游的 CORS / 缓存策略干扰播放器）
