@@ -30,25 +30,56 @@ import { updateBuiltInSources, updateExternalSources, updateExtractors, external
 import { GITHUB_RAW_MIRRORS, isBuiltInSubscriptionSource } from "./utils/externalSources.js";
 import { startProbe, getProbeStatus, cancelProbe } from "./utils/sourceProbe.js";
 
-// 全代理模式（issue #98）的服务端可观测性：清单下发时每频道每分钟至多打一行，
-// 带这一分钟内转发的分片数。用户报「还是播不了」时，一眼能分清三种情况：
-// 日志里没有行 = 播放器压根没来取清单；有行但分片数 0 = 取了清单却不取分片（清单解析/地址解析问题）；
-// 分片数正常 = 服务端这条链路已经跑通，问题在播放器解码或其他环节。
-const proxyStats = new Map()   // pid -> { segments, lastLog }
-
-function noteProxySegment(pid) {
-  const stat = proxyStats.get(pid) || { segments: 0, lastLog: 0 }
-  stat.segments++
-  proxyStats.set(pid, stat)
+// 全代理/兼容模式（issue #98）的服务端可观测性。上一版的日志设计在实战里分不清三种情况
+// （首行不带分片数、每 pid 每分钟一行会让 curl 与播放器互吞对方的行、分片 404 与上游失败全静默），
+// 用户回报「还是播不了」时日志无法归属。这一版：
+//   - 每行都带来源 IP + UA，curl 与播放器一眼可分；
+//   - 限流键为「事件|pid|来源IP」，不同客户端互不吞行；
+//   - 分片计数拆「请求次数 / 转发成功数」，取了清单却不取分片（0/0）与取了分片但上游失败（N/0）可分。
+const logWindows = new Map()   // 「事件|pid|IP」 -> 上次打行时间
+function logOncePer(key, ms) {
+  const now = Date.now()
+  if (now - (logWindows.get(key) || 0) < ms) return false
+  if (logWindows.size > 5000) logWindows.clear()   // 诊断辅助表，粗暴清空即可
+  logWindows.set(key, now)
+  return true
 }
 
-function logProxyManifest(pid) {
+function clientOf(req) {
+  const ip = (req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || '?').replace(/^::ffff:/, '')
+  const ua = req.headers['user-agent'] || '无UA'
+  return { ip, tag: `${ip} UA:${ua.slice(0, 60)}` }
+}
+
+const proxyStats = new Map()   // pid -> { attempts, ok, since }  自上一条清单日志行以来的分片计数
+
+function proxyStat(pid) {
+  let stat = proxyStats.get(pid)
+  if (!stat) { stat = { attempts: 0, ok: 0, since: 0 }; proxyStats.set(pid, stat) }
+  return stat
+}
+
+function noteProxySegment(pid, req) {
+  proxyStat(pid).attempts++
+  // 每客户端每分钟报一次「分片请求确实到达了」——这是「取了清单却零分片」与否的直接分界
+  const client = clientOf(req)
+  if (logOncePer(`seg|${pid}|${client.ip}`, 60 * 1000)) printGrey(`全代理：${pid} 收到分片请求｜${client.tag}`)
+}
+
+function noteProxySegmentOk(pid) {
+  proxyStat(pid).ok++
+}
+
+function logProxyManifest(pid, req) {
+  const client = clientOf(req)
+  if (!logOncePer(`manifest|${pid}|${client.ip}`, 60 * 1000)) return
+  const stat = proxyStat(pid)
   const now = Date.now()
-  const stat = proxyStats.get(pid) || { segments: 0, lastLog: 0 }
-  if (now - stat.lastLog < 60 * 1000) { proxyStats.set(pid, stat); return }
-  const since = stat.lastLog ? Math.round((now - stat.lastLog) / 1000) : 0
-  printGrey(`全代理：${pid} 下发清单${since ? `（近 ${since} 秒转发 ${stat.segments} 个分片）` : ''}`)
-  proxyStats.set(pid, { segments: 0, lastLog: now })
+  const counts = stat.since
+    ? `近 ${Math.round((now - stat.since) / 1000)} 秒分片请求 ${stat.attempts} 次、转发成功 ${stat.ok} 次`
+    : '开始计数'
+  printGrey(`全代理：${pid} 下发清单（${counts}）｜${client.tag}`)
+  stat.attempts = 0; stat.ok = 0; stat.since = now
 }
 
 // 运行时长
@@ -853,7 +884,8 @@ async function handleRequest(req, res) {
   // （极空间极影视：兼容版清单本身完全合法却仍播不了，而同一条 CDN 地址直接填就能播）。
   // key 带 s 前缀，与频道 ref 天然不冲突；两条路由都必须先于下方「/userId/token」两段解析匹配，
   // 否则会被拆成账号段。
-  const proxySegMatch = routeUrl.match(/^.*\/proxy\/(s[0-9a-f]{16})\.[a-z0-9]{1,8}(?:\?.*)?$/)
+  // i 标志与清单路由对齐：个别播放器会把相对地址大写化，漏匹配会静默落进下方账号段解析
+  const proxySegMatch = routeUrl.match(/^.*\/proxy\/(s[0-9a-f]{16})\.[a-z0-9]{1,8}(?:\?.*)?$/i)
   if (proxySegMatch) {
     if (method === "HEAD" || method === "OPTIONS") {
       // 探测请求不必回源：按后缀应答类型即可，否则一次 HEAD 会把整片从 CDN 拉一遍
@@ -866,9 +898,11 @@ async function handleRequest(req, res) {
       res.end()
       return
     }
-    const target = lookupProxyTarget(proxySegMatch[1])
+    const target = lookupProxyTarget(proxySegMatch[1].toLowerCase())
     if (!target) {
-      // 只可能是清单过期后播放器还在拿老地址重试：回 404，播放器会重新拉清单
+      // 只可能是清单过期后播放器还在拿老地址重试：回 404，播放器会重新拉清单。
+      // 必须打行：这曾是完全静默的分支，「key 过期/被淘汰」与「播放器压根没来」在日志里分不出来
+      if (logOncePer(`seg404|${clientOf(req).ip}`, 10 * 1000)) printYellow(`全代理分片 key 未登记/已过期，回 404: ${proxySegMatch[1]}｜${clientOf(req).tag}`)
       res.writeHead(404, { 'Content-Type': 'text/plain;charset=UTF-8' })
       res.end('分片地址已过期')
       return
@@ -894,9 +928,16 @@ async function handleRequest(req, res) {
         res.end(body)
         return
       }
+      // 子清单取回失败时不能落到下方分片透传：那会把未改写的清单（内含 CDN 相对路径）
+      // 原样 pipe 给播放器——正是上面注释声明必须避免的形态。回 502 让播放器重试。
+      printYellow(`嵌套子清单取回失败，回 502: ${target.url.split('?')[0]}`)
+      res.writeHead(502, { 'Content-Type': 'text/plain;charset=UTF-8' })
+      res.end('上游子清单获取失败')
+      return
     }
-    noteProxySegment(target.pid)
-    await pipeUpstream(target.url, req, res, target.transform, target.upstreamHeaders)
+    noteProxySegment(target.pid, req)
+    const piped = await pipeUpstream(target.url, req, res, target.transform, target.upstreamHeaders)
+    if (piped) noteProxySegmentOk(target.pid)
     return
   }
 
@@ -909,6 +950,18 @@ async function handleRequest(req, res) {
     proxyMode = true
     proxyPid = proxyMatch[2]
     routeUrl = `${proxyMatch[1]}/${proxyMatch[2]}${proxyMatch[3]}`
+  }
+
+  // 带 relay/proxy 段却没被上面任何一条路由认出（播放器把清单地址当目录拼相对路径、
+  // 多余斜杠等畸形解析）：必须 404 收口。落到下方账号段解析会把 relay/proxy 误当
+  // userId、返回整份订阅 + HTTP 200——播放器拿订阅文本当分片解码必失败且全程无痕。
+  // 豁免 /relay/<pid>/playback.xml：v3.15 时代订阅曾把 relay 段拼进 x-tvg-url，
+  // 存量播放器缓存的 EPG 地址仍走账号段解析取 playback.xml，不能 404。
+  if (!relayMode && !proxyMode && /\/(?:relay|proxy)\//i.test(routeUrl) && !/\/playback\.xml(?:\?|$)/.test(routeUrl)) {
+    printYellow(`无法识别的 relay/proxy 路径，回 404: ${routeUrl.split('?')[0]}｜${clientOf(req).tag}`)
+    res.writeHead(404, { 'Content-Type': 'text/plain;charset=UTF-8' })
+    res.end('地址格式不正确')
+    return
   }
 
   let urlToken = ""
@@ -967,6 +1020,9 @@ async function handleRequest(req, res) {
     // 兼容版订阅（issue #98）：?relay=1 输出 /relay/<pid> 清单直出路径；?relay=2 输出
     // /proxy/<pid> 全代理路径（分片也经服务器转发）。其他取值按不开启处理。
     const relayParam = routeUrl.match(/[?&]relay=([12])(?:&|$)/)?.[1] || ''
+    // 订阅拉取留痕（issue #98）：核心排查判据是「播放器拉订阅时带没带 ?relay=、是谁在拉」，
+    // 此前这里零日志，App 二次拉订阅丢参数的场景完全无痕
+    printGrey(`订阅拉取: ${routeUrlPath}${relayParam ? `?relay=${relayParam}` : '（无 relay 参数）'}｜${clientOf(req).tag}`)
     const interfaceObj = interfaceStr(routeUrlPath, headers, urlUserId, urlToken, effectiveProfile, accessPrefix, relayParam)
     if (interfaceObj.content == null) {
       interfaceObj.content = "获取失败"
@@ -1022,7 +1078,7 @@ async function handleRequest(req, res) {
         // 显式 Content-Length（避免 chunked 传输）：部分简易播放器的 HTTP 客户端对分块传输支持不佳
         'Content-Length': body.length,
       });
-      if (proxyMode) logProxyManifest(proxyPid)
+      if (proxyMode) logProxyManifest(proxyPid, req)
       res.end(body)
       return
     }
@@ -1031,6 +1087,13 @@ async function handleRequest(req, res) {
     printYellow(`清单直出取回失败，回退 302（不跟随跳转的播放器将无法播放）: ${routeUrl.split('?')[0]}`)
   }
 
+  // 302 成功下发此前全程零日志（issue #98）：播放器拿着旧形态地址回退播放时服务端毫无痕迹。
+  // 每频道每客户端每分钟一行，既留痕又不被 6 秒一次的清单轮询刷屏
+  {
+    const client = clientOf(req)
+    const pidPath = routeUrl.split('?')[0]
+    if (logOncePer(`302|${pidPath}|${client.ip}`, 60 * 1000)) printGrey(`302 跳转下发: ${pidPath}｜${client.tag}`)
+  }
   res.writeHead(302, {
     'Content-Type': 'application/json;charset=UTF-8',
     location: result.playURL
@@ -1054,6 +1117,12 @@ const server = http.createServer((req, res) => {
     } catch { /* 连接可能已断 */ }
   })
 })
+
+// Node 默认 keepAliveTimeout 5 秒，而直播媒体清单 TARGETDURATION=6 秒——简易播放器复用
+// 刚被服务端 FIN 掉的连接会撞 RST（issue #98 H5）。拉长到 65 秒覆盖轮询节拍；
+// headersTimeout 必须大于 keepAliveTimeout，否则空闲连接上的下一个请求会被误杀
+server.keepAliveTimeout = 65 * 1000
+server.headersTimeout = 66 * 1000
 
 // 客户端发送畸形 HTTP 或在请求中途断开时，优雅丢弃连接而不是让进程崩溃
 server.on('clientError', (err, socket) => {

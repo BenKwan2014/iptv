@@ -23,6 +23,10 @@ function clearUrlCache() {
 // 覆盖两类位置：URI 行（非 # 开头的行）与标签内的 URI="..." 属性（EXT-X-KEY/MEDIA/MAP 等）。
 // 纯字符串处理、无副作用，便于单测。
 function rewriteManifest(text, finalUrl) {
+  // 行尾/BOM 归一化：上游若是 \r\n，按 \n 切分后 # 标签行会保留 \r 而 URI 行被 trim 成
+  // 裸 \n——混合行尾清单会让严格按 \r\n 分行的播放器拿到脏 URI（issue #98）。
+  // 这里是 relay/proxy 全部清单的必经点，归一次即可覆盖所有下发路径。
+  text = text.replace(/^\uFEFF/, '').replace(/\r/g, '')
   return text.split('\n').map(line => {
     const t = line.trim()
     if (!t) return line

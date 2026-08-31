@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
-import { printDebug, printRed } from "./colorOut.js";
+import { printRed, printYellow } from "./colorOut.js";
 
 /**
  * 全代理模式（issue #98 续）：清单里的地址全部改写成「本机同源相对地址」，分片由服务器转发。
@@ -60,6 +60,9 @@ function sweep() {
 function register(url, pid = '', transform, upstreamHeaders, upstreamUrlTransform) {
   const key = 's' + createHash('md5').update(url).digest('hex').slice(0, 16)
   const targetUrl = upstreamUrlTransform ? upstreamUrlTransform(url) : url
+  // 先删再插：Map 的 set 覆盖不改变迭代位置，重复登记（清单每 6 秒刷新）会让最活跃
+  // 频道的 key 恒在队首，超上限淘汰时反而最先被丢。删后重插把迭代序变成「最近登记在尾」
+  registry.delete(key)
   registry.set(key, {
     url: targetUrl,
     pid,
@@ -129,8 +132,18 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 // 上游 → 客户端要原样带过去的响应头（其余一律不带，避免上游的 CORS / 缓存策略干扰播放器）
 const PASS_THROUGH = ['content-type', 'content-length', 'accept-ranges', 'content-range']
 
+// 分片失败此前只走 printDebug（默认不可见），CDN 拒绝服务器代取时排查者对着空日志没法定位
+// （issue #98）。改为可见黄行，10 秒限一行防止播放器高频重试刷屏。
+let lastPipeFailLog = 0
+function logPipeFail(msg) {
+  const now = Date.now()
+  if (now - lastPipeFailLog < 10 * 1000) return
+  lastPipeFailLog = now
+  printYellow(msg)
+}
+
 /**
- * 把上游分片流式转发给客户端。
+ * 把上游分片流式转发给客户端。返回是否成功转发（含字节送达），供调用方统计。
  *
  * 不缓冲整片：分片几百 KB 到几 MB，直播长跑时缓冲会顶着内存跑；直接 pipe 过去。
  * 客户端切台 / 关闭连接时中止上游请求，否则一次切台会留下一串还在下载的孤儿请求。
@@ -147,6 +160,7 @@ async function pipeUpstream(url, req, res, transform, upstreamHeaders = {}) {
     if (!transform && req.headers.range) headers.range = req.headers.range
     const upstream = await fetch(url, { redirect: 'follow', signal: ctrl.signal, headers })
     clearTimeout(timer)
+    if (!upstream.ok) logPipeFail(`分片上游回 ${upstream.status}: ${new URL(url).host}`)
 
     const out = { 'Access-Control-Allow-Origin': '*' }
     for (const name of PASS_THROUGH) {
@@ -163,11 +177,11 @@ async function pipeUpstream(url, req, res, transform, upstreamHeaders = {}) {
       out['content-length'] = body.length
       res.writeHead(200, out)
       res.end(body)
-      return
+      return true
     }
 
     res.writeHead(upstream.status, out)
-    if (!upstream.body) { res.end(); return }
+    if (!upstream.body) { res.end(); return upstream.ok }
     await new Promise((resolve, reject) => {
       const src = Readable.fromWeb(upstream.body)
       src.on('error', reject)
@@ -175,16 +189,18 @@ async function pipeUpstream(url, req, res, transform, upstreamHeaders = {}) {
       res.on('close', () => src.destroy())
       src.pipe(res).on('finish', resolve).on('close', resolve)
     })
+    return upstream.ok
   } catch (error) {
     clearTimeout(timer)
     // 客户端自己断开（切台 / 关闭播放器）是常态，不当错误刷屏
-    if (ctrl.signal.aborted && res.destroyed) return
-    printDebug(`分片转发失败: ${error?.message || error}`)
+    if (ctrl.signal.aborted && res.destroyed) return false
+    logPipeFail(`分片转发失败: ${error?.message || error}`)
     if (!res.headersSent) {
       try { res.writeHead(502, { 'Content-Type': 'text/plain;charset=UTF-8' }); res.end('上游分片获取失败') } catch { /* 连接可能已断 */ }
     } else {
       try { res.end() } catch { /* 连接可能已断 */ }
     }
+    return false
   } finally {
     res.off('close', onClose)
   }

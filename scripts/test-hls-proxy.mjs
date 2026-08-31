@@ -22,7 +22,7 @@ const DATA_DIR = mkdtempSync(join(tmpdir(), 'iptv-proxy-test-'))
 process.env.mdataDir = DATA_DIR
 
 const { toProxyManifest, lookup, register, pipeUpstream } = await import('../utils/hlsProxy.js')
-const { fetchManifestDirect, interfaceStr } = await import('../utils/appUtils.js')
+const { fetchManifestDirect, interfaceStr, rewriteManifest } = await import('../utils/appUtils.js')
 
 let passed = 0
 const check = (n, fn) => { fn(); passed++; console.log('  ✅ ' + n) }
@@ -102,6 +102,16 @@ check('逐路径签名器在登记前改写上游地址，同时分片 key 仍�
   const second = lookup(secondRef.replace(/\.ts$/, ''))
   assert.equal(secondRef, firstRef, '短效签名变化不能让代理地址表 key 跟着变化')
   assert.equal(second.url, `${unsigned}?sign=v2`, '重复登记应把上游短签名刷新为最新值')
+})
+
+check('CRLF/BOM 上游清单归一化：改写后无 \\r 残留、分片相对地址干净', () => {
+  const src = '\uFEFF#EXTM3U\r\n#EXT-X-TARGETDURATION:6\r\n#EXTINF:6.000000,\r\nseg-1.ts?t=1\r\n'
+  const abs = rewriteManifest(src, 'http://cdn.example.com/live/index.m3u8')
+  assert.ok(!abs.includes('\r') && !abs.includes('\uFEFF'), JSON.stringify(abs))
+  const out = toProxyManifest(abs, '608807420')
+  assert.ok(!out.includes('\r'), '混合行尾会让严格按 \\r\\n 分行的播放器拿到脏 URI：' + JSON.stringify(out))
+  const segLine = out.split('\n').map(l => l.trim()).find(l => l && !l.startsWith('#'))
+  assert.match(segLine, /^s[0-9a-f]{16}\.ts$/)
 })
 
 // ---------- 2. 订阅输出 ----------
@@ -245,6 +255,25 @@ await checkAsync('分片变换函数随清单地址登记，并在回给播放�
 await checkAsync('未登记 / 已过期的分片地址回 404，播放器会重新拉清单', async () => {
   const resp = await fetch(`${nasBase}/proxy/s00112233445566ff.ts`)
   assert.equal(resp.status, 404)
+})
+
+await checkAsync('上游分片 4xx 原样透传状态码，pipeUpstream 报告转发失败', async () => {
+  const key = register(`http://127.0.0.1:${cdn.address().port}/live/missing.ts`, 'fail-test')
+  const resp = await fetch(`${nasBase}/proxy/${key}.ts`)
+  assert.equal(resp.status, 404)
+})
+
+// 放在所有会 lookup 既有 key 的用例之后：本用例灌入 5000+ 条登记，会把早前的测试 key 挤掉
+check('注册表超上限从最久未登记端淘汰：反复续期的活跃频道 key 不被误伤', () => {
+  const activeUrl = 'http://cdn.example.com/live/active-channel.ts'
+  const active = register(activeUrl, 'evict-test')
+  for (let i = 0; i < 5100; i++) {
+    register(`http://cdn.example.com/live/bulk-${i}.ts`, 'evict-test')
+    // 直播清单每 6 秒一刷，活跃 key 会被反复重新登记
+    if (i % 500 === 0) register(activeUrl, 'evict-test')
+  }
+  register(activeUrl, 'evict-test')
+  assert.ok(lookup(active), '活跃 key 不应先于一次性垃圾条目被淘汰')
 })
 
 await new Promise(r => cdn.close(r))
