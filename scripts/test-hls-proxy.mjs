@@ -21,7 +21,7 @@ import { join } from 'node:path'
 const DATA_DIR = mkdtempSync(join(tmpdir(), 'iptv-proxy-test-'))
 process.env.mdataDir = DATA_DIR
 
-const { toProxyManifest, lookup, register, pipeUpstream } = await import('../utils/hlsProxy.js')
+const { toProxyManifest, lookup, register, pipeUpstream, probeUpstream } = await import('../utils/hlsProxy.js')
 const { fetchManifestDirect, interfaceStr, rewriteManifest } = await import('../utils/appUtils.js')
 
 let passed = 0
@@ -147,6 +147,12 @@ const SEG_BODY = Buffer.from('FAKE-TS-PAYLOAD-0123456789', 'utf-8')
 
 const cdn = http.createServer((req, res) => {
   const path = req.url.split('?')[0]
+  if (path === '/live/no-head.ts') {
+    if (req.method === 'HEAD') { res.writeHead(405); res.end(); return }
+    res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Content-Length': SEG_BODY.length })
+    res.end(SEG_BODY)
+    return
+  }
   if (path.startsWith('/protected/')) {
     if (req.headers.origin !== 'https://live.jstv.com' || req.headers.referer !== 'https://live.jstv.com/') {
       res.writeHead(403); res.end('missing anti-hotlink headers'); return
@@ -175,7 +181,7 @@ const cdn = http.createServer((req, res) => {
     return
   }
   if (path === '/live/seg-100.ts') {
-    res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Content-Length': SEG_BODY.length })
+    res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Content-Length': SEG_BODY.length, 'Accept-Ranges': 'bytes' })
     res.end(SEG_BODY)
     return
   }
@@ -188,6 +194,10 @@ const nas = http.createServer(async (req, res) => {
   if (seg) {
     const target = lookup(seg[1])
     if (!target) { res.writeHead(404); res.end('分片地址已过期'); return }
+    if (req.method === 'HEAD') {
+      await probeUpstream(target.url, req, res, target.transform, target.upstreamHeaders)
+      return
+    }
     await pipeUpstream(target.url, req, res, target.transform, target.upstreamHeaders)
     return
   }
@@ -224,6 +234,15 @@ await checkAsync('端到端：清单直出后播放器按相对地址取分片�
   // 播放器的解析方式：相对于清单地址解析
   const segUrl = new URL(segRef, manifestUrl).href
   assert.equal(segUrl, `${nasBase}/proxy/${segRef}`)
+
+  // 严格播放器会先 HEAD 第一片：代理必须带回 CDN 的长度与 Range 能力，但不能发送正文。
+  const headResp = await fetch(segUrl, { method: 'HEAD' })
+  assert.equal(headResp.status, 200)
+  assert.equal(headResp.headers.get('content-type'), 'video/mp2t')
+  assert.equal(headResp.headers.get('content-length'), String(SEG_BODY.length))
+  assert.equal(headResp.headers.get('accept-ranges'), 'bytes')
+  assert.equal((await headResp.arrayBuffer()).byteLength, 0)
+
   const segResp = await fetch(segUrl)
   assert.equal(segResp.status, 200)
   assert.equal(segResp.headers.get('content-type'), 'video/mp2t')
@@ -250,6 +269,24 @@ await checkAsync('分片变换函数随清单地址登记，并在回给播放�
   const resp = await fetch(`${nasBase}/proxy/${key}.ts`)
   assert.equal(resp.status, 200)
   assert.equal(await resp.text(), SEG_BODY.toString('utf8').toUpperCase())
+
+  // 变换后长度不保证与上游一致，HEAD 维持合成 200，不能误报上游 Content-Length。
+  const head = await fetch(`${nasBase}/proxy/${key}.ts`, { method: 'HEAD' })
+  assert.equal(head.status, 200)
+  assert.equal(head.headers.get('content-type'), 'video/mp2t')
+  assert.equal(head.headers.get('content-length'), null)
+})
+
+await checkAsync('上游不支持 HEAD 时回退合成 200，后续 GET 仍能完整转发', async () => {
+  const key = register(`http://127.0.0.1:${cdn.address().port}/live/no-head.ts`, 'head-fallback')
+  const head = await fetch(`${nasBase}/proxy/${key}.ts`, { method: 'HEAD' })
+  assert.equal(head.status, 200)
+  assert.equal(head.headers.get('content-type'), 'video/mp2t')
+  assert.equal(head.headers.get('content-length'), null)
+
+  const get = await fetch(`${nasBase}/proxy/${key}.ts`)
+  assert.equal(get.status, 200)
+  assert.deepEqual(Buffer.from(await get.arrayBuffer()), SEG_BODY)
 })
 
 await checkAsync('未登记 / 已过期的分片地址回 404，播放器会重新拉清单', async () => {

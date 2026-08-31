@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import { printRed, printYellow } from "./colorOut.js";
 
 /**
@@ -132,6 +132,24 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 // 上游 → 客户端要原样带过去的响应头（其余一律不带，避免上游的 CORS / 缓存策略干扰播放器）
 const PASS_THROUGH = ['content-type', 'content-length', 'accept-ranges', 'content-range']
 
+function fallbackType(url) {
+  return /\.m3u8(?:\?|$)/i.test(url) ? 'application/vnd.apple.mpegurl' : 'video/mp2t'
+}
+
+function responseHeaders(upstream, url) {
+  const out = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, HEAD, OPTIONS',
+    'Access-Control-Allow-Headers': '*',
+  }
+  for (const name of PASS_THROUGH) {
+    const value = upstream.headers.get(name)
+    if (value != null) out[name] = value
+  }
+  if (!out['content-type']) out['content-type'] = fallbackType(url)
+  return out
+}
+
 // 分片失败此前只走 printDebug（默认不可见），CDN 拒绝服务器代取时排查者对着空日志没法定位
 // （issue #98）。改为可见黄行，10 秒限一行防止播放器高频重试刷屏。
 let lastPipeFailLog = 0
@@ -143,7 +161,8 @@ function logPipeFail(msg) {
 }
 
 /**
- * 把上游分片流式转发给客户端。返回是否成功转发（含字节送达），供调用方统计。
+ * 把上游分片流式转发给客户端。
+ * 返回 { ok, status, bytes, complete, error? }，供调用方输出一次即可判定的诊断日志。
  *
  * 不缓冲整片：分片几百 KB 到几 MB，直播长跑时缓冲会顶着内存跑；直接 pipe 过去。
  * 客户端切台 / 关闭连接时中止上游请求，否则一次切台会留下一串还在下载的孤儿请求。
@@ -152,6 +171,8 @@ async function pipeUpstream(url, req, res, transform, upstreamHeaders = {}) {
   const ctrl = new AbortController()
   const onClose = () => ctrl.abort()
   res.on('close', onClose)
+  let bytes = 0
+  let upstreamStatus = 0
   // 只给「拿到响应头」设超时，拿到之后是流式传输，不能再掐
   const timer = setTimeout(() => ctrl.abort(), 15000)
   try {
@@ -159,15 +180,11 @@ async function pipeUpstream(url, req, res, transform, upstreamHeaders = {}) {
     // 要做整片变换时不能把 Range 片段单独交给解码器；回完整 200 对播放器仍合法。
     if (!transform && req.headers.range) headers.range = req.headers.range
     const upstream = await fetch(url, { redirect: 'follow', signal: ctrl.signal, headers })
+    upstreamStatus = upstream.status
     clearTimeout(timer)
     if (!upstream.ok) logPipeFail(`分片上游回 ${upstream.status}: ${new URL(url).host}`)
 
-    const out = { 'Access-Control-Allow-Origin': '*' }
-    for (const name of PASS_THROUGH) {
-      const value = upstream.headers.get(name)
-      if (value != null) out[name] = value
-    }
-    if (!out['content-type']) out['content-type'] = 'video/mp2t'
+    const out = responseHeaders(upstream, url)
     if (transform && upstream.ok) {
       const input = Buffer.from(await upstream.arrayBuffer())
       const transformed = await transform(input)
@@ -177,32 +194,105 @@ async function pipeUpstream(url, req, res, transform, upstreamHeaders = {}) {
       out['content-length'] = body.length
       res.writeHead(200, out)
       res.end(body)
-      return true
+      return { ok: true, status: 200, bytes: body.length, complete: true }
     }
 
     res.writeHead(upstream.status, out)
-    if (!upstream.body) { res.end(); return upstream.ok }
+    if (!upstream.body) {
+      res.end()
+      return { ok: upstream.ok, status: upstream.status, bytes: 0, complete: true }
+    }
+    let complete = false
     await new Promise((resolve, reject) => {
       const src = Readable.fromWeb(upstream.body)
+      const meter = new Transform({
+        transform(chunk, encoding, callback) {
+          bytes += chunk.length
+          callback(null, chunk)
+        },
+      })
       src.on('error', reject)
+      meter.on('error', reject)
       res.on('error', reject)
-      res.on('close', () => src.destroy())
-      src.pipe(res).on('finish', resolve).on('close', resolve)
+      res.on('close', () => { src.destroy(); meter.destroy() })
+      src.pipe(meter).pipe(res)
+        .on('finish', () => { complete = true; resolve() })
+        .on('close', resolve)
     })
-    return upstream.ok
+    return { ok: upstream.ok && complete, status: upstream.status, bytes, complete }
   } catch (error) {
     clearTimeout(timer)
     // 客户端自己断开（切台 / 关闭播放器）是常态，不当错误刷屏
-    if (ctrl.signal.aborted && res.destroyed) return false
+    if (ctrl.signal.aborted && res.destroyed) {
+      return { ok: false, status: upstreamStatus || res.statusCode || 0, bytes, complete: false, error: '客户端提前断开' }
+    }
     logPipeFail(`分片转发失败: ${error?.message || error}`)
     if (!res.headersSent) {
       try { res.writeHead(502, { 'Content-Type': 'text/plain;charset=UTF-8' }); res.end('上游分片获取失败') } catch { /* 连接可能已断 */ }
     } else {
       try { res.end() } catch { /* 连接可能已断 */ }
     }
-    return false
+    return { ok: false, status: upstreamStatus || (res.headersSent ? res.statusCode : 502), bytes, complete: false, error: error?.message || String(error) }
   } finally {
     res.off('close', onClose)
+  }
+}
+
+/**
+ * 回答播放器对代理分片的 HEAD 探测。
+ *
+ * 普通分片向上游发送真实 HEAD，带回 Content-Length / Accept-Ranges 等信息；这与极影视
+ * 直接访问咪咕 CDN 时拿到的响应一致。需要 segmentTransform 的平台不能照搬上游长度，
+ * 因此保留旧的合成 200。上游不支持 HEAD 或临时失败时同样回退合成响应，不破坏原有 GET。
+ */
+async function probeUpstream(url, req, res, transform, upstreamHeaders = {}) {
+  const synthetic = (reason) => {
+    res.writeHead(200, {
+      'Content-Type': fallbackType(req.url || url),
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, HEAD, OPTIONS',
+      'Access-Control-Allow-Headers': '*',
+    })
+    res.end()
+    return { ok: true, status: 200, bytes: 0, complete: true, mode: 'fallback', reason }
+  }
+
+  if (transform) return synthetic('分片需转换，不能透传上游长度')
+
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 10000)
+  try {
+    const headers = { ...upstreamHeaders, 'User-Agent': UA }
+    if (req.headers.range) headers.range = req.headers.range
+    const upstream = await fetch(url, {
+      method: 'HEAD',
+      redirect: 'follow',
+      signal: ctrl.signal,
+      headers,
+    })
+    clearTimeout(timer)
+
+    // 404/410 表示清单里的短效分片确实失效，应让播放器重新取清单；其余非 2xx
+    // 常见于 CDN 不实现/拦截 HEAD，维持旧行为回退合成 200，GET 链路不受影响。
+    if (!upstream.ok && upstream.status !== 404 && upstream.status !== 410) {
+      return synthetic(`上游 HEAD ${upstream.status}`)
+    }
+
+    const out = responseHeaders(upstream, url)
+    res.writeHead(upstream.status, out)
+    res.end()
+    return {
+      ok: upstream.ok,
+      status: upstream.status,
+      bytes: 0,
+      complete: true,
+      mode: 'upstream',
+      contentLength: upstream.headers.get('content-length') || '',
+      acceptRanges: upstream.headers.get('accept-ranges') || '',
+    }
+  } catch (error) {
+    clearTimeout(timer)
+    return synthetic(error?.name === 'AbortError' ? '上游 HEAD 超时' : `上游 HEAD 失败: ${error?.message || error}`)
   }
 }
 
@@ -228,4 +318,4 @@ async function fetchNested(url, upstreamHeaders = {}) {
   }
 }
 
-export { toProxyManifest, register, lookup, registrySize, pipeUpstream, fetchNested }
+export { toProxyManifest, register, lookup, registrySize, pipeUpstream, probeUpstream, fetchNested }

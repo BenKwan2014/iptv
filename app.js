@@ -7,7 +7,7 @@ import { getDateTimeStr } from "./utils/time.js";
 import update from "./utils/updateData.js";
 import { printBlue, printGreen, printGrey, printMagenta, printRed, printYellow } from "./utils/colorOut.js";
 import { channel, interfaceStr, fetchManifestDirect, rewriteManifest, inlineResolvedManifest } from "./utils/appUtils.js";
-import { toProxyManifest, lookup as lookupProxyTarget, pipeUpstream, fetchNested } from "./utils/hlsProxy.js";
+import { toProxyManifest, lookup as lookupProxyTarget, pipeUpstream, probeUpstream, fetchNested } from "./utils/hlsProxy.js";
 import { dataPath } from "./utils/paths.js";
 import { getExtractorManager, getModuleConfig } from "./utils/extractorManager.js";
 import { getExtractorsAPI, startModuleLoginAPI, pollModuleLoginAPI, setExtractorEnabledAPI,
@@ -34,9 +34,9 @@ import { startProbe, getProbeStatus, cancelProbe } from "./utils/sourceProbe.js"
 // （首行不带分片数、每 pid 每分钟一行会让 curl 与播放器互吞对方的行、分片 404 与上游失败全静默），
 // 用户回报「还是播不了」时日志无法归属。这一版：
 //   - 每行都带来源 IP + UA，curl 与播放器一眼可分；
-//   - 限流键为「事件|pid|来源IP」，不同客户端互不吞行；
+//   - 限流键为「事件|pid|来源IP|UA|方法」，同一 IP 下 curl 与播放器也不会互吞；
 //   - 分片计数拆「请求次数 / 转发成功数」，取了清单却不取分片（0/0）与取了分片但上游失败（N/0）可分。
-const logWindows = new Map()   // 「事件|pid|IP」 -> 上次打行时间
+const logWindows = new Map()   // 「事件|pid|IP|UA|方法」 -> 上次打行时间
 function logOncePer(key, ms) {
   const now = Date.now()
   if (now - (logWindows.get(key) || 0) < ms) return false
@@ -47,39 +47,69 @@ function logOncePer(key, ms) {
 
 function clientOf(req) {
   const ip = (req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || '?').replace(/^::ffff:/, '')
-  const ua = req.headers['user-agent'] || '无UA'
-  return { ip, tag: `${ip} UA:${ua.slice(0, 60)}` }
+  const ua = String(req.headers['user-agent'] || '无UA').replace(/[\r\n]/g, ' ')
+  return { ip, key: `${ip}|${ua.slice(0, 120)}`, tag: `${ip} UA:${ua.slice(0, 80)}` }
 }
 
-const proxyStats = new Map()   // pid -> { attempts, ok, since }  自上一条清单日志行以来的分片计数
+const proxyStats = new Map()   // pid|client -> { head, get, ok, since }  自该客户端上一条清单日志以来的计数
 
-function proxyStat(pid) {
-  let stat = proxyStats.get(pid)
-  if (!stat) { stat = { attempts: 0, ok: 0, since: 0 }; proxyStats.set(pid, stat) }
+function proxyStat(pid, req) {
+  const key = `${pid}|${clientOf(req).key}`
+  let stat = proxyStats.get(key)
+  if (!stat) {
+    if (proxyStats.size > 5000) proxyStats.clear()
+    stat = { head: 0, get: 0, ok: 0, since: 0 }
+    proxyStats.set(key, stat)
+  }
   return stat
 }
 
 function noteProxySegment(pid, req) {
-  proxyStat(pid).attempts++
+  const stat = proxyStat(pid, req)
+  if (req.method === 'HEAD') stat.head++
+  else stat.get++
   // 每客户端每分钟报一次「分片请求确实到达了」——这是「取了清单却零分片」与否的直接分界
   const client = clientOf(req)
-  if (logOncePer(`seg|${pid}|${client.ip}`, 60 * 1000)) printGrey(`全代理：${pid} 收到分片请求｜${client.tag}`)
+  if (logOncePer(`seg|${pid}|${client.key}|${req.method}`, 60 * 1000)) {
+    const range = req.headers.range ? ` Range:${req.headers.range}` : ''
+    printGrey(`全代理：${pid} ${req.method} 分片请求${range}｜${client.tag}`)
+  }
 }
 
-function noteProxySegmentOk(pid) {
-  proxyStat(pid).ok++
-}
-
-function logProxyManifest(pid, req) {
+function logProxySegmentResult(pid, req, result, elapsedMs) {
+  const stat = proxyStat(pid, req)
+  if (result.ok) stat.ok++
   const client = clientOf(req)
-  if (!logOncePer(`manifest|${pid}|${client.ip}`, 60 * 1000)) return
-  const stat = proxyStat(pid)
+  const key = `seg-result|${result.ok ? 'ok' : 'fail'}|${pid}|${client.key}|${req.method}`
+  if (logOncePer(key, result.ok ? 60 * 1000 : 10 * 1000)) {
+    const detail = result.error ? ` error:${result.error}` : ''
+    const line = `全代理：${pid} ${req.method} 分片 -> ${result.status}，${result.bytes} bytes，${elapsedMs}ms${detail}｜${client.tag}`
+    if (result.ok) printGrey(line); else printYellow(line)
+  }
+}
+
+function logProxyProbe(pid, req, result, elapsedMs) {
+  const client = clientOf(req)
+  const key = `probe|${result.ok ? 'ok' : 'fail'}|${pid}|${client.key}|${req.method}`
+  if (logOncePer(key, result.ok ? 60 * 1000 : 10 * 1000)) {
+    const length = result.contentLength ? ` Content-Length:${result.contentLength}` : ''
+    const ranges = result.acceptRanges ? ` Accept-Ranges:${result.acceptRanges}` : ''
+    const fallback = result.mode === 'fallback' ? ` 回退:${result.reason}` : ' 上游HEAD'
+    const line = `全代理：${pid} HEAD 分片 -> ${result.status}，${elapsedMs}ms${length}${ranges}${fallback}｜${client.tag}`
+    if (result.ok) printGrey(line); else printYellow(line)
+  }
+}
+
+function logProxyManifest(pid, req, contentLength) {
+  const client = clientOf(req)
+  if (!logOncePer(`manifest|${pid}|${client.key}|${req.method}`, 60 * 1000)) return
+  const stat = proxyStat(pid, req)
   const now = Date.now()
   const counts = stat.since
-    ? `近 ${Math.round((now - stat.since) / 1000)} 秒分片请求 ${stat.attempts} 次、转发成功 ${stat.ok} 次`
+    ? `近 ${Math.round((now - stat.since) / 1000)} 秒分片 HEAD ${stat.head} 次、GET ${stat.get} 次、成功 ${stat.ok} 次`
     : '开始计数'
-  printGrey(`全代理：${pid} 下发清单（${counts}）｜${client.tag}`)
-  stat.attempts = 0; stat.ok = 0; stat.since = now
+  printGrey(`全代理：${pid} ${req.method} 清单 -> 200，Content-Length:${contentLength}（${counts}）｜${client.tag}`)
+  stat.head = 0; stat.get = 0; stat.ok = 0; stat.since = now
 }
 
 // 运行时长
@@ -887,8 +917,11 @@ async function handleRequest(req, res) {
   // i 标志与清单路由对齐：个别播放器会把相对地址大写化，漏匹配会静默落进下方账号段解析
   const proxySegMatch = routeUrl.match(/^.*\/proxy\/(s[0-9a-f]{16})\.[a-z0-9]{1,8}(?:\?.*)?$/i)
   if (proxySegMatch) {
-    if (method === "HEAD" || method === "OPTIONS") {
-      // 探测请求不必回源：按后缀应答类型即可，否则一次 HEAD 会把整片从 CDN 拉一遍
+    if (method === "OPTIONS") {
+      const client = clientOf(req)
+      if (logOncePer(`options|segment|${client.key}`, 60 * 1000)) {
+        printGrey(`全代理：OPTIONS 分片探测 -> 200｜${client.tag}`)
+      }
       res.writeHead(200, {
         'Content-Type': /\.m3u8(?:\?|$)/i.test(routeUrl) ? 'application/vnd.apple.mpegurl' : 'video/mp2t',
         'Access-Control-Allow-Origin': '*',
@@ -902,9 +935,21 @@ async function handleRequest(req, res) {
     if (!target) {
       // 只可能是清单过期后播放器还在拿老地址重试：回 404，播放器会重新拉清单。
       // 必须打行：这曾是完全静默的分支，「key 过期/被淘汰」与「播放器压根没来」在日志里分不出来
-      if (logOncePer(`seg404|${clientOf(req).ip}`, 10 * 1000)) printYellow(`全代理分片 key 未登记/已过期，回 404: ${proxySegMatch[1]}｜${clientOf(req).tag}`)
+      const client = clientOf(req)
+      if (logOncePer(`seg404|${proxySegMatch[1]}|${client.key}|${method}`, 10 * 1000)) {
+        printYellow(`全代理分片 key 未登记/已过期，${method} 回 404: ${proxySegMatch[1]}｜${client.tag}`)
+      }
       res.writeHead(404, { 'Content-Type': 'text/plain;charset=UTF-8' })
       res.end('分片地址已过期')
+      return
+    }
+    if (method === "HEAD") {
+      // 极影视等严格播放器会先 HEAD 第一个分片；向上游取真实 Content-Length / Accept-Ranges。
+      // 上游不支持 HEAD 或分片需要转换时 probeUpstream 会回退旧的合成 200，GET 行为不变。
+      noteProxySegment(target.pid, req)
+      const started = Date.now()
+      const result = await probeUpstream(target.url, req, res, target.transform, target.upstreamHeaders)
+      logProxyProbe(target.pid, req, result, Date.now() - started)
       return
     }
     // 上游若给的是嵌套子清单（拍平失败时才会出现），同样改写成同源相对地址再下发，
@@ -936,8 +981,9 @@ async function handleRequest(req, res) {
       return
     }
     noteProxySegment(target.pid, req)
-    const piped = await pipeUpstream(target.url, req, res, target.transform, target.upstreamHeaders)
-    if (piped) noteProxySegmentOk(target.pid)
+    const started = Date.now()
+    const result = await pipeUpstream(target.url, req, res, target.transform, target.upstreamHeaders)
+    logProxySegmentResult(target.pid, req, result, Date.now() - started)
     return
   }
 
@@ -983,8 +1029,16 @@ async function handleRequest(req, res) {
     urlToken = migu.token || ""
   }
 
-  // 允许HEAD、OPTIONS预检请求
-  if (method === "HEAD" || method === "OPTIONS") {
+  // OPTIONS 一律本地回答。标准频道的 HEAD 维持原行为；relay/proxy 清单的 HEAD 则继续走
+  // 下方真实清单生成链，返回准确 Content-Length，避免严格播放器在入口探测阶段就停止。
+  if (method === "OPTIONS" || (method === "HEAD" && !relayMode && !proxyMode)) {
+    if (relayMode || proxyMode) {
+      const client = clientOf(req)
+      const kind = proxyMode ? '全代理' : '兼容'
+      if (logOncePer(`options|manifest|${routeUrl}|${client.key}`, 60 * 1000)) {
+        printGrey(`${kind}：OPTIONS 清单探测 -> 200｜${client.tag}`)
+      }
+    }
     res.writeHead(200, {
       // 清单直出地址按 HLS 类型应答 HEAD 探测：部分播放器播放前先 HEAD 判断类型，
       // 回 application/json 会被判定「不可播放」（issue #98）
@@ -997,8 +1051,8 @@ async function handleRequest(req, res) {
     return
   }
 
-  // 其他非GET/POST请求才报错
-  if (method != "GET" && method != "POST") {
+  // relay/proxy 的 HEAD 已获准走真实清单生成；其他非 GET/POST 请求才报错
+  if (method != "GET" && method != "POST" && !(method === "HEAD" && (relayMode || proxyMode))) {
     res.writeHead(405, { 'Content-Type': 'application/json;charset=UTF-8' });
     res.end(JSON.stringify({
       data: '请使用GET或POST请求',
@@ -1022,7 +1076,7 @@ async function handleRequest(req, res) {
     const relayParam = routeUrl.match(/[?&]relay=([12])(?:&|$)/)?.[1] || ''
     // 订阅拉取留痕（issue #98）：核心排查判据是「播放器拉订阅时带没带 ?relay=、是谁在拉」，
     // 此前这里零日志，App 二次拉订阅丢参数的场景完全无痕
-    printGrey(`订阅拉取: ${routeUrlPath}${relayParam ? `?relay=${relayParam}` : '（无 relay 参数）'}｜${clientOf(req).tag}`)
+    printGrey(`订阅拉取: ${method} ${routeUrlPath}${relayParam ? `?relay=${relayParam}` : '（无 relay 参数）'}｜${clientOf(req).tag}`)
     const interfaceObj = interfaceStr(routeUrlPath, headers, urlUserId, urlToken, effectiveProfile, accessPrefix, relayParam)
     if (interfaceObj.content == null) {
       interfaceObj.content = "获取失败"
@@ -1078,8 +1132,9 @@ async function handleRequest(req, res) {
         // 显式 Content-Length（避免 chunked 传输）：部分简易播放器的 HTTP 客户端对分块传输支持不佳
         'Content-Length': body.length,
       });
-      if (proxyMode) logProxyManifest(proxyPid, req)
-      res.end(body)
+      if (proxyMode) logProxyManifest(proxyPid, req, body.length)
+      // HEAD 返回与 GET 完全一致的响应头但不发正文；避免为了探测把整份清单写到连接上。
+      res.end(method === "HEAD" ? undefined : body)
       return
     }
     // 取清单失败（网络抖动/非 HLS 内容）：回退 302，能跟随跳转的播放器仍可播。
@@ -1092,7 +1147,7 @@ async function handleRequest(req, res) {
   {
     const client = clientOf(req)
     const pidPath = routeUrl.split('?')[0]
-    if (logOncePer(`302|${pidPath}|${client.ip}`, 60 * 1000)) printGrey(`302 跳转下发: ${pidPath}｜${client.tag}`)
+    if (logOncePer(`302|${pidPath}|${client.key}|${method}`, 60 * 1000)) printGrey(`302 跳转下发: ${method} ${pidPath}｜${client.tag}`)
   }
   res.writeHead(302, {
     'Content-Type': 'application/json;charset=UTF-8',
